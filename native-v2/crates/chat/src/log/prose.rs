@@ -88,8 +88,9 @@ pub fn blink_after(v: &mut LogView, cx: &mut Context<LogView>) {
         let _ = this.update(cx, |v, cx| {
             v.ui.blink.task = None;
             v.ui.blink.on = !v.ui.blink.on;
-            // (The caret is painted, not laid out: its rows keep their sizes.)
-            cx.notify();
+            // (The caret is painted, not laid out: its rows keep their sizes;
+            // under the streaming tail it is that view's alone: tail.rs.)
+            if !super::tail::redraw(v, cx) { cx.notify(); }
         });
     }));
 }

@@ -152,20 +152,48 @@ pub struct Workbench {
     /// The last press moved a pane (its title's click is then no rename).
     moved: bool,
     ghost: Option<Entity<Ghost>>,
+    /// The mosaic laid out (F99): once per change of the mosaic, the
+    /// project or the area, not on every frame the Workbench renders.
+    laid: Option<Rc<Laid>>,
 }
+
+/// The mosaic's rectangles for a project and an area (the grid's width,
+/// the leaves, the gutters).
+struct Laid { project: String, area: (f32, f32), gw: f32, leaves: Vec<LeafRect>, gutters: Vec<crundi_core::mosaic::GutterRect> }
 
 impl Workbench {
     pub fn new(stores: Stores, cx: &mut Context<Self>) -> Self {
         cx.set_global(Handle(cx.entity().downgrade()));
         let project = stores.projects.read(cx).open.clone();
         Workbench { stores, project, layouts: HashMap::new(), panes: HashMap::new(), area: (0., 0.), focused: 0, armed: 0, arm_gen: 0, full: None, gutter: None, scroll: ScrollHandle::new(), frames: HashMap::new(), seeded: None, pend: 0, protect: HashMap::new(), chip_leaf: None,
-            origin: Rc::new(Cell::new((0., 0.))), press: None, drag: None, moved: false, ghost: None }
+            origin: Rc::new(Cell::new((0., 0.))), press: None, drag: None, moved: false, ghost: None, laid: None }
     }
 
-    /// The open project's mosaic (loaded from the saved layouts the first time).
+    /// The open project's mosaic (loaded from the saved layouts the first
+    /// time), to change: its layout is made again on the next render.
     pub fn mosaic(&mut self) -> &mut Mosaic {
+        self.laid = None;
+        self.mosaic_ro_mut()
+    }
+
+    fn mosaic_ro_mut(&mut self) -> &mut Mosaic {
         let p = self.project.clone();
         self.layouts.entry(p.clone()).or_insert_with(|| store::load().layouts.get(&p).and_then(|v| serde_json::from_value::<Mosaic>(v.clone()).ok()).unwrap_or_default())
+    }
+
+    /// The open project's mosaic, to read (its layout stays).
+    fn mosaic_ro(&mut self) -> &Mosaic { self.mosaic_ro_mut() }
+
+    /// The mosaic laid out for the workbench's area (kept until it changes).
+    fn laid(&mut self) -> Rc<Laid> {
+        if let Some(l) = self.laid.as_ref().filter(|l| l.project == self.project && l.area == self.area) { return l.clone(); }
+        let (aw, ah) = self.area;
+        let m = self.mosaic_ro();
+        let gw = m.content_width(aw);
+        let (leaves, gutters) = m.layout(gw, ah);
+        let l = Rc::new(Laid { project: self.project.clone(), area: self.area, gw, leaves, gutters });
+        self.laid = Some(l.clone());
+        l
     }
 
     fn save(&mut self) {
@@ -229,7 +257,7 @@ impl Workbench {
     /// A workbench with no panes gets a launcher (the web's placeholder
     /// cell). Laid out in the same frame; saved with the next change.
     fn ensure_launcher(&mut self) {
-        let keys = self.mosaic().keys();
+        let keys = self.mosaic_ro().keys();
         if !keys.is_empty() { if self.seeded.as_ref().is_some_and(|s| !keys.contains(s)) { self.seeded = None; } return; }
         let n = keys.iter().filter_map(|k| k.strip_prefix("pend:")?.parse::<u32>().ok()).max().unwrap_or(0).max(self.pend) + 1;
         self.pend = n;
@@ -239,13 +267,14 @@ impl Workbench {
         self.seeded = Some(k);
     }
 
-    pub fn keys(&mut self) -> Vec<String> { self.mosaic().keys() }
+    pub fn keys(&mut self) -> Vec<String> { self.mosaic_ro().keys() }
 
     /// The laid-out leaves (the grid's own coordinates).
     fn leaves(&mut self) -> Vec<LeafRect> {
         let (w, h) = self.area;
-        let gw = self.mosaic().content_width(w.max(1.));
-        self.mosaic().layout(gw, h.max(1.)).0
+        let m = self.mosaic_ro();
+        let gw = m.content_width(w.max(1.));
+        m.layout(gw, h.max(1.)).0
     }
 
     /// The focused pane's key (else the first pane's).
@@ -579,9 +608,9 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("workbench");
         if !self.project.is_empty() { self.ensure_launcher(); }
-        let (aw, ah) = self.area;
-        let gw = self.mosaic().content_width(aw);
-        let (leaves, gutters) = self.mosaic().layout(gw, ah);
+        let laid = self.laid();
+        let (gw, ah) = (laid.gw, self.area.1);
+        let (leaves, gutters) = (&laid.leaves, &laid.gutters);
         let open: Vec<String> = leaves.iter().filter_map(|l| l.key.as_deref()).filter_map(|k| k.strip_prefix("panel:").map(|r| r.split(':').next().unwrap_or("").to_string())).collect();
         // Panes no longer laid out drop their views.
         let keys: Vec<String> = leaves.iter().filter_map(|l| l.key.clone()).collect();
@@ -629,7 +658,7 @@ impl Render for Workbench {
             self.full = None;
         }
         let mut grid = div().relative().w(px(gw)).h(px(ah));
-        for l in &leaves {
+        for l in leaves {
             let id = l.id;
             // The leaf is the pane's panel itself (one element less per pane).
             let leaf = match &l.key {
@@ -640,7 +669,7 @@ impl Render for Workbench {
                 .children(self.drag_outline(id))
                 .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| this.focus_pane(id, cx))));
         }
-        for (n, g) in gutters.into_iter().enumerate() {
+        for (n, g) in gutters.iter().enumerate() {
             let (split, index, row, span, locked) = (g.split, g.index, g.dir == Dir::Row, g.span, g.locked);
             grid = grid.child(div().id(("gutter", n)).absolute().left(px(g.x)).top(px(g.y)).w(px(g.w)).h(px(g.h))
                 .when(!locked, |d| d.when(row, |d| d.cursor_col_resize()).when(!row, |d| d.cursor_row_resize()).hover(|s| s.bg(T::accent_edge())))

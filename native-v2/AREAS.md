@@ -225,7 +225,9 @@ blurs first (or waits out the rest).
   `native-gpui/tools/test-server.sh <port> --bare` on the run's ports
   (4880-4889), with the frame meter on (`T.frames`). Never on the owner's
   PC: no window of the app there, no test server, until the Manager says
-  the owner said go. The owner's sign-in and tokens are never read or used:
+  the owner said go. Where it is allowed, a suite that starts chats runs
+  against `tools/stub-server.sh <port>` there, never `test-server.sh
+  --bare` (the PC's `claude` is the owner's own CLI: F142). The owner's sign-in and tokens are never read or used:
   test servers have their own fresh accounts.
 - **Frames**: `ZED_MEASUREMENTS=1` (set by `test/lib.mjs` and
   `tools/smoke.mjs`); `tools/frames.mjs` sums them up. Every suite reports

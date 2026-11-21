@@ -98,7 +98,19 @@ pub struct ChatStore {
     /// Batches applied (the driver's count) and the rows spliced.
     pub batches: u64,
     pub spliced: u64,
+    /// What the last change did to the rows (the log's streaming tail reads
+    /// it: a delta that only grew the last row redraws that row alone).
+    pub touch: Touch,
 }
+
+/// The rows a change touched: from which row on (`usize::MAX`: none), how
+/// many rows there were before it, or everything (a rebuild, a remeasure).
+/// `seq` grows with each change, so a notify that is no change of rows
+/// (nothing recorded) is never taken for the last one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Touch { pub seq: u64, pub from: usize, pub before: usize, pub all: bool }
+
+impl Default for Touch { fn default() -> Self { Touch { seq: 0, from: usize::MAX, before: 0, all: true } } }
 
 impl ChatStore {
     pub fn new(id: &str, cx: &mut Context<Self>) -> Self {
@@ -107,7 +119,7 @@ impl ChatStore {
         let list = ListState::new(0, ListAlignment::Top, T::LOG_OVERDRAW);
         list.set_follow_mode(FollowMode::Tail);
         let meta = cx.new(|_| ChatMeta(Meta::default()));
-        ChatStore { id: id.to_string(), conv, rows: vec![], span: HashMap::new(), cuts: HashMap::new(), jobs: HashMap::new(), budget: INLINE_PARSE, list, log: Default::default(), meta, batches: 0, spliced: 0 }
+        ChatStore { id: id.to_string(), conv, rows: vec![], span: HashMap::new(), cuts: HashMap::new(), jobs: HashMap::new(), budget: INLINE_PARSE, list, log: Default::default(), meta, batches: 0, spliced: 0, touch: Touch::default() }
     }
 
     /// This frame's messages for this chat (ui-history, ui-event), applied in
@@ -128,6 +140,7 @@ impl ChatStore {
         if !any { return; }
         self.batches += 1;
         self.budget = INLINE_PARSE;
+        self.begin_touch();
         let (reloaded, changed) = self.conv.take_changes();
         if reloaded { self.rebuild(cx); } else { self.update_rows(&changed, cx); }
         crate::log::follow(self, reloaded, &changed, cx);
@@ -141,6 +154,7 @@ impl ChatStore {
     /// synced; the log notified only when a row changed.
     pub fn edit_conv(&mut self, f: impl FnOnce(&mut Conversation), cx: &mut Context<Self>) {
         f(&mut self.conv);
+        self.begin_touch();
         let (reloaded, changed) = self.conv.take_changes();
         let rows = reloaded || !changed.is_empty();
         if reloaded { self.rebuild(cx); } else if rows { self.update_rows(&changed, cx); }
@@ -187,6 +201,7 @@ impl ChatStore {
         // The text moved on meanwhile: the next batch extends this cut.
         self.cuts.insert(id.clone(), Cut { text, cut });
         self.budget = INLINE_PARSE;
+        self.touch_all();
         self.update_rows(&[id], cx);
         cx.notify();
     }
@@ -232,6 +247,7 @@ impl ChatStore {
     /// A new history: every row again (the rows and cuts of entries that are
     /// still there are kept, so nothing is parsed again).
     fn rebuild(&mut self, cx: &mut Context<Self>) {
+        self.touch_all();
         // Where the reader was (the web's applyHistory): following the end,
         // it stays there; else on the same block of the same entry, at the
         // same offset (a reset alone would put the log back at its top).
@@ -314,7 +330,16 @@ impl ChatStore {
         }
     }
 
-    fn splice(&self, range: std::ops::Range<usize>, n: usize) { self.list.splice(range, n); }
+    fn splice(&mut self, range: std::ops::Range<usize>, n: usize) {
+        self.touch.from = self.touch.from.min(range.start);
+        self.list.splice(range, n);
+    }
+
+    /// A change of rows begins (a batch, an edit): nothing touched yet.
+    fn begin_touch(&mut self) { self.touch = Touch { seq: self.touch.seq + 1, from: usize::MAX, before: self.rows.len(), all: false }; }
+
+    /// Every row may have changed (a rebuild, a remeasure, a cut landing).
+    fn touch_all(&mut self) { self.touch = Touch { seq: self.touch.seq + 1, from: 0, before: self.rows.len(), all: true }; }
 
     /// An entry's rows measured again (what a row draws
     /// changed height without its text changing: a thinking block folded, a
@@ -390,6 +415,7 @@ impl ChatStore {
         self.set_meta(m, cx);
         // The rows' heights change with the text size.
         self.list.remeasure();
+        self.touch_all();
         cx.notify();
     }
 }
@@ -435,6 +461,31 @@ mod tests {
         // Nothing this chat shows: no update at all.
         store.update(cx, |s, cx| s.apply_batch(&[json!({ "type": "ui-event", "id": "c1", "event": { "type": "delta", "id": "nope", "text": "x" } })], cx));
         store.read_with(cx, |s, _| assert_eq!(s.batches, 3));
+    }
+
+    /// The change record the log's streaming tail reads (log/tail.rs): a
+    /// delta to the last block touches the last row only; a new block, a
+    /// history, a zoom touch more; every change has its own number.
+    #[gpui::test]
+    fn a_batch_records_the_rows_it_touched(cx: &mut TestAppContext) {
+        let store = cx.new(|cx| ChatStore::new("c1", cx));
+        let history = json!({ "type": "ui-history", "id": "c1", "session": { "id": "c1", "state": "working", "messages": [
+            { "id": "u1", "kind": "user", "text": "hi" },
+            { "id": "a1", "kind": "assistant-text", "text": "One.\n\nTw", "streaming": true },
+        ] } });
+        store.update(cx, |s, cx| s.apply_batch(&[history], cx));
+        let t0 = store.read_with(cx, |s, _| { assert_eq!(s.rows.len(), 3); assert!(s.touch.all); s.touch });
+        let delta = |t: &str| json!({ "type": "ui-event", "id": "c1", "event": { "type": "delta", "id": "a1", "text": t } });
+        store.update(cx, |s, cx| s.apply_batch(&[delta("o and")], cx));
+        let t1 = store.read_with(cx, |s, _| s.touch);
+        assert!(!t1.all && t1.from == 2 && t1.before == 3 && t1.seq > t0.seq, "{t1:?}");
+        // A new block: the row before it (no longer the last) and the new one.
+        store.update(cx, |s, cx| s.apply_batch(&[delta(" more.\n\nThree")], cx));
+        let t2 = store.read_with(cx, |s, _| { assert_eq!(s.rows.len(), 4); s.touch });
+        assert!(!t2.all && t2.from <= 2 && t2.before == 3 && t2.seq > t1.seq, "{t2:?}");
+        store.update(cx, |s, cx| s.zoom(1, cx));
+        let t3 = store.read_with(cx, |s, _| s.touch);
+        assert!(t3.all && t3.seq > t2.seq, "{t3:?}");
     }
 
     /// A history again (a reconnect): following the end, the log stays

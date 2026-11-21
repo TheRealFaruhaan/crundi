@@ -18,4 +18,8 @@ node tools/frames.mjs <stderr log>                      # a ZED_MEASUREMENTS=1 l
 ```
 
 End-to-end suites (`test/*.mjs`) run on the Crundi server under Xvfb
-against a fresh test server; see `test/lib.mjs`.
+against a fresh test server; see `test/lib.mjs`. On the owner's PC (when
+the owner has said go), a suite that starts chats runs against
+`tools/stub-server.sh <port>`, never `test-server.sh --bare`: there the
+bare server's `claude` is the owner's own CLI, and its chats would run real
+turns on the owner's account (F142). The same for `tools/measure-pc.mjs`.

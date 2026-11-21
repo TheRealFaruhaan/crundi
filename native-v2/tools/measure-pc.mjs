@@ -27,6 +27,12 @@
 //                        /tmp/crundi-devtest-<MEASURE_SERVER_PORT>/proj, the
 //                        port defaulting to MEASURE_SERVER's)
 //   MEASURE_STREAM=0     skip the streaming scenario (no fifth chat)
+//   MEASURE_QUICK=1      the CR's scenarios only (planning+stream+scroll,
+//                        cr-sweep, cr-scroll, and the drawer's unless
+//                        MEASURE_DRAWER=0) with the setup they need (the
+//                        shell's screen filled as the two streams leave
+//                        it); the rest skipped: about 3 minutes, for A/B
+//                        runs (compare quick runs with quick runs only)
 //   MEASURE_TIMEOUT=<s>  the whole run's limit (default 2400): past it, it
 //                        fails, stops the client and cleans up
 //
@@ -212,6 +218,9 @@ const stats = (name, from, until = Date.now()) => {
   return r;
 };
 const W = 1920, H = 1040;
+// MEASURE_QUICK=1: the CR's scenarios (planning+stream+scroll, cr-sweep, cr-scroll,
+// and the drawer's unless MEASURE_DRAWER=0) with the setup they need, the others skipped.
+const QUICK = process.env.MEASURE_QUICK === '1';
 // The wheel over a grid of points across the workbench: tools/sweep.mjs.
 
 try {
@@ -230,17 +239,17 @@ try {
   report.setup = { server: SERVER, project: s.project, panes: s.panes, chats: (s.chats || []).length, window: `${W}x${H}` };
   console.log('setup', JSON.stringify(report.setup));
 
-  let m = fm.mark(); await sleep(8000); stats('idle-open', m);
+  let m = fm.mark(); if (!QUICK) { await sleep(8000); stats('idle-open', m); }
   const drew = (r0, s) => Object.fromEntries(Object.entries(s.renders || {}).map(([k, v]) => [k, v - (r0[k] || 0)]).filter(([, v]) => v));
   let r0 = s.renders || {};
-  ppStart('scroll-panes'); m = fm.mark(); const n1 = await sweep(d, 8000); await sleep(300); stats('scroll-panes', m); report['scroll-panes'].wheelEvents = n1;
-  s = await state(); report['scroll-panes'].renders = Object.fromEntries(Object.entries(s.renders || {}).map(([k, v]) => [k, v - (r0[k] || 0)]));
+  if (!QUICK) { ppStart('scroll-panes'); m = fm.mark(); const n1 = await sweep(d, 8000); await sleep(300); stats('scroll-panes', m); report['scroll-panes'].wheelEvents = n1; }
+  s = await state(); if (!QUICK) report['scroll-panes'].renders = Object.fromEntries(Object.entries(s.renders || {}).map(([k, v]) => [k, v - (r0[k] || 0)]));
   // The focused chat's log scrolled (as the slice suite), up then down, 7 ms apart.
   const scrollChat = async (ms) => { const end = Date.now() + ms; let i = 0; while (Date.now() < end) { await d.send({ cmd: 'ui', name: 'log-scroll', args: [(i % 60) < 30 ? '-50' : '50'] }); i++; await sleep(7); } return i; };
   report.setup.focused = s.chat; report.setup.focusedRows = s.rows;
   r0 = (await state()).renders || {};
-  m = fm.mark(); await scrollChat(8000); await sleep(300); stats('scroll-chat', m);
-  s = await state(); report['scroll-chat'].renders = drew(r0, s);
+  if (!QUICK) { m = fm.mark(); await scrollChat(8000); await sleep(300); stats('scroll-chat', m); }
+  s = await state(); if (!QUICK) report['scroll-chat'].renders = drew(r0, s);
   if (process.env.PROFILE && process.env.PROFILE_AT !== 'planning') {
     // A stack sampler on the UI thread while the wheel sweeps (gdb; the
     // binary built with -C force-frame-pointers=yes; see perf/README.md).
@@ -264,22 +273,24 @@ try {
     for (let i = 0; i < 600; i++) { s = await state(); if (s.entries?.some((e) => e.kind === 'assistant' && e.text?.length > 20)) break; await sleep(200); }
     r0 = s.renders || {};
     const st = fm.mark();
-    const n2 = await sweep(d, 8000); stats('stream+scroll', st); report['stream+scroll'].wheelEvents = n2;
+    if (!QUICK) { const n2 = await sweep(d, 8000); stats('stream+scroll', st); report['stream+scroll'].wheelEvents = n2; }
     const so = fm.mark();
     for (let i = 0; i < 900; i++) { s = await state(); if (s.chatState === 'idle') break; await sleep(200); }
-    stats('stream', so);
-    report.stream.renders = Object.fromEntries(Object.entries(s.renders || {}).map(([k, v]) => [k, v - (r0[k] || 0)]));
+    if (!QUICK) stats('stream', so);
+    if (!QUICK) report.stream.renders = Object.fromEntries(Object.entries(s.renders || {}).map(([k, v]) => [k, v - (r0[k] || 0)]));
     report.setup.batches = (s.batches || 0) - b0; report.setup.spliced = s.spliced; report.setup.rows = s.rows;
     report.setup.replyChars = (s.entries || []).filter((e) => e.kind === 'assistant').map((e) => e.text.length).reduce((a, b) => a + b, 0);
     await sleep(2000);
     // F30: a frame here should be a real change; which views drew, and
     // whether the chat's events brought anything (its batches, its head).
     const e0 = await state();
+    if (!QUICK) {
     m = fm.mark(); await sleep(8000); stats('idle-end', m);
     s = await state();
     report['idle-end'].renders = drew(e0.renders || {}, s);
     report['idle-end'].batches = (s.batches || 0) - (e0.batches || 0);
     report['idle-end'].head = { before: e0.head, after: s.head };
+    }
   }
 
   if (process.env.MEASURE_TERMINAL !== '0') {
@@ -320,8 +331,12 @@ try {
       console.log(`  ${name} screen: ${np} paints, ${np ? Math.round(us / np) : 0} µs each (render + paint)`);
       if (scroll) report[name].wheelEvents = wheel;
     };
-    await streamTerm('term-stream', false);
-    await streamTerm('term-stream+scroll', true);
+    if (!QUICK || process.env.MEASURE_QUICK_TERM === '1') { if (!QUICK) await streamTerm('term-stream', false); await streamTerm('term-stream+scroll', true); }
+    else {
+      // (Quick: the screen full of the same lines, as after the two streams.)
+      await ws('term-send', key, `for ((i=1;i<=600;i++)); do printf 'line %d ..........................................................\\n' $i; done`);
+      for (let i = 0; i < 100; i++) { if (TS(await state(), key)?.screen.some((l) => l.startsWith('line 600 '))) break; await sleep(200); }
+    }
     if (process.env.PROFILE && process.env.PROFILE_AT === 'term') {
       // PROFILE_AT=term: the sampler on the UI thread while the shell prints
       // and the wheel sweeps (after the numbers above are taken).
@@ -335,8 +350,8 @@ try {
     }
     await sleep(2000);
     const i0 = (await state()).renders || {};
-    m = fm.mark(); await sleep(6000); stats('idle-terminal', m);
-    report['idle-terminal'].renders = drew(i0, await state());
+    if (!QUICK) { m = fm.mark(); await sleep(6000); stats('idle-terminal', m);
+    report['idle-terminal'].renders = drew(i0, await state()); }
   }
 
   if (process.env.MEASURE_PLANNING !== '0') {
@@ -352,9 +367,9 @@ try {
     report.setup.kanban = { columns: cols.length, cards: (K(s)?.columns || []).reduce((a, c) => a + c.cards.length, 0) };
     r0 = s.renders || {};
     m = fm.mark();
-    { const end = Date.now() + 8000; let i = 0; while (Date.now() < end && cols.length) { const c = cols[Math.floor(i / 40) % cols.length]; await d.send({ cmd: 'mouse', kind: 'wheel', x: c.x + c.w / 2, y: c.y + Math.min(c.h / 2, 400), dy: (i % 40) < 20 ? -60 : 60 }); i++; await sleep(7); } }
-    await sleep(300); stats('scroll-kanban', m);
-    s = await state(); report['scroll-kanban'].renders = drew(r0, s);
+    { const end = Date.now() + (QUICK ? 0 : 8000); let i = 0; while (Date.now() < end && cols.length) { const c = cols[Math.floor(i / 40) % cols.length]; await d.send({ cmd: 'mouse', kind: 'wheel', x: c.x + c.w / 2, y: c.y + Math.min(c.h / 2, 400), dy: (i % 40) < 20 ? -60 : 60 }); i++; await sleep(7); } }
+    await sleep(300); if (!QUICK) stats('scroll-kanban', m);
+    s = await state(); if (!QUICK) report['scroll-kanban'].renders = drew(r0, s);
     // The Mindmap tab: the wheel down and up, then sideways (Shift), over the map.
     await ui('tab', 'mindmap');
     for (let i = 0; i < 60; i++) { s = await state(); if (MM(s)?.state === 'ok' && MM(s).view?.[1] > 0) break; await sleep(250); }
@@ -366,10 +381,12 @@ try {
     report.setup.mindmap = { ideas: (MM(s)?.nodes || []).filter((n) => n.kind === 'node').length, drawn: (MM(s)?.drawn || []).length, view: [vw, vh] };
     r0 = s.renders || {};
     m = fm.mark();
-    { const end = Date.now() + 8000; let i = 0; while (Date.now() < end) { const side = Math.floor(i / 80) % 2 === 1; await d.send({ cmd: 'mouse', kind: 'wheel', x: cx0 + vw - 30, y: cy0 + vh / 2, dy: (i % 40) < 20 ? -60 : 60, mods: side ? ['shift'] : [] }); i++; await sleep(7); } }
+    { const end = Date.now() + (QUICK ? 0 : 8000); let i = 0; while (Date.now() < end) { const side = Math.floor(i / 80) % 2 === 1; await d.send({ cmd: 'mouse', kind: 'wheel', x: cx0 + vw - 30, y: cy0 + vh / 2, dy: (i % 40) < 20 ? -60 : 60, mods: side ? ['shift'] : [] }); i++; await sleep(7); } }
+    if (!QUICK) {
     await sleep(300); stats('pan-mindmap', m);
     s = await state(); report['pan-mindmap'].renders = drew(r0, s); report['pan-mindmap'].drawnAtEnd = (MM(s)?.drawn || []).length; report['pan-mindmap'].relayouts = MM(s)?.relayouts;
     m = fm.mark(); await sleep(6000); stats('idle-planning', m);
+    }
     // The workbench with both panels beside the chats, a chat streaming.
     await ui('tab', 'workbench');
     await ui('open-pane', 'kanban');
@@ -393,6 +410,8 @@ try {
     r0 = s.renders || {};
     ppStart('planning+stream+scroll'); m = fm.mark(); const n3 = await sweep(d, 8000); stats('planning+stream+scroll', m); report['planning+stream+scroll'].wheelEvents = n3;
     s = await state(); report['planning+stream+scroll'].renders = drew(r0, s);
+    // The streaming chat's tail (crates/chat/src/log/tail.rs) as the sweep left it.
+    report['planning+stream+scroll'].tail = s.log?.tail;
     // The panes the sweep really had (an open terminal comes back into the
     // layout after measure-layout: the workspace's sync places it again).
     report['planning+stream+scroll'].panes = s.panes;
@@ -475,7 +494,7 @@ try {
     ppStart('cr-scroll'); m = fm.mark();
     { const end = Date.now() + 9000; let i = 0; while (Date.now() < end) { const [x, y] = pts[Math.floor(i / 40) % pts.length]; await d.send({ cmd: 'mouse', kind: 'wheel', x, y, dy: (i % 40) < 20 ? -60 : 60 }); i++; await sleep(7); } report.crWheel = i; }
     stats('cr-scroll', m);
-    s = await state(); report['cr-scroll'].renders = drew(r0, s); report['cr-scroll'].streaming = s.chatState;
+    s = await state(); report['cr-scroll'].renders = drew(r0, s); report['cr-scroll'].streaming = s.chatState; report['cr-scroll'].tail = s.log?.tail;
     for (let i = 0; i < 900; i++) { s = await state(); if (s.chatState !== 'working') break; await sleep(200); }
     // The same with the browser drawer open beside the panes (MEASURE_DRAWER=0
     // skips it; the Desktop area's): a static page from this harness in a

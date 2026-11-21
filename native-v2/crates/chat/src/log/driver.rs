@@ -89,6 +89,7 @@ fn state(cx: &mut App) -> Value {
         "copy": v.ui.copy.on.as_ref().map(|t| json!({ "what": t.what, "text": t.text, "x": f32::from(t.at.x), "y": f32::from(t.at.y), "done": v.ui.copy.done })),
         "hot": v.hot.as_ref().map(|h| json!([h.0, h.1, h.2.start, h.2.end])),
         "blink": v.ui.blink.on,
+        "tail": super::tail::state(v, cx),
         "question": super::questions::state(v, cx),
         "agentDock": super::agents::state(v, cx),
         "goal": super::goal::state(v, cx),

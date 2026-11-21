@@ -148,7 +148,9 @@ software Vulkan under Xvfb give the *idle* check and relative numbers.
 4. The views that show the store were observing it: only they re-render.
    A streaming chat redraws its log's visible rows and its pane's head
    when the state changes; the top bar, the sidebar, the other panes and
-   the drawer are reused from their caches.
+   the drawer are reused from their caches. While the log follows the end,
+   a batch that only grew the reply's last block, at the same height,
+   redraws that block alone (the streaming tail, below).
 
 ## The view tree and where it is cached
 
@@ -167,6 +169,7 @@ Root (gpui-component)
    │     ├─ PaneHead     cached   one per pane: grip, dot, title, badge, tools, ×
    │     ├─ (chat body)  elements (a pane kind's body, no view) log over composer
    │     │  ├─ LogView   cached   the virtualised log (list): only visible rows
+   │     │  ├─ TailView  cached   while a reply streams at the log's end: its last block
    │     │  └─ Composer  cached   the box, Send / Stop
    │     └─ Launcher     cached   ("pend:" panes) New terminal: Empty Shell, UI Mode, Terminal
    ├─ Drawer             cached   the browser drawer (Desktop)
@@ -183,6 +186,24 @@ Root (gpui-component)
   the LogView re-renders its visible rows, and every other cached leaf
   (the top bar, the sidebar, every head, the other logs, every composer,
   the drawer) is reused from its cache.
+- **The streaming tail** (`chat::log::tail`, F99): while a reply
+  streams and the log follows its end, the reply's last block (a
+  paragraph, a heading, a quote line, a list item) is drawn by a
+  TailView, a sibling of the LogView in the chat's body, placed at the
+  log's foot where the list puts that row; the list keeps a room of the
+  same height in its place. The store records which rows a batch touched
+  (`ChatStore::touch`); the LogView's observer shapes the block at the
+  log's width before the frame (the BlockEl's own `lay`, into the same
+  `laid` cache), and when only that block changed and its height did not,
+  it notifies the TailView alone: the LogView is replayed, the frame lays
+  out and paints one block. A new block, a height that changed (a line
+  wrapped), a scroll, a hover, a selection or the stream's end redraws
+  the LogView as before, and the TailView with it (it observes the
+  LogView). The last row's place is read from the row itself (a canvas
+  on that one row; the list's `bounds_for_item` is provisional while it
+  follows the end). A code block, a table, a goal bar or a parked card,
+  a side question under the reply, or a log not at its end keeps the
+  last row in the list. test/chat-tail.mjs checks it.
 - A wheel tick over a log is the same: the list notifies the LogView, and
   GPUI marks every ancestor view dirty with it (`Window::mark_view_dirty`
   walks the view path up; Zed's workspace does the same), so the Workbench
@@ -325,6 +346,22 @@ inside theirs.
 - **What stays outside**: the layout views' own boxes (the panel frames,
   gutters), a few quads a frame; a text box with the focus; whatever a view
   draws over its own text (a scrollbar thumb draws its own layer).
+- **Caching is one level deep in GPUI 0.3.12** (perf/pc-2026-11-21-architect-bisect.md):
+  a notify dirties the view and every view above it, and a cached view
+  that re-renders draws every cached view inside it again
+  (`window.refreshing`). So a cached view's cache is only worth anything
+  when the views above it are not cached: the Shell (the window's root,
+  drawn every frame) and the Workbench render every frame, and the
+  leaves (heads, logs, composers, the panels' views) are the cached
+  level. A pane made a cached view of its own would draw its log, its
+  composer and its head again on every frame that any one of them
+  changes. What a frame costs is the dirty leaves' work plus replaying
+  every clean leaf (scene, hitboxes, element states, text layouts) and
+  presenting it all; keeping the dirty leaves small (the tail, a block per
+  element, the map's paint) is what is left to us without a fork.
+- **The mosaic is laid out once per change** (`Workbench::laid`): the
+  leaves' and gutters' rectangles are kept until the mosaic, the project
+  or the area changes; the Workbench's render places them.
 - **Fewer elements in the layout views**: the Workbench re-renders on
   every frame that draws any pane (GPUI marks every ancestor of a notified
   view dirty), and a cached view under a dirty cached view is drawn again,

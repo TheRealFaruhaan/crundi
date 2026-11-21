@@ -58,6 +58,7 @@ pub mod aside;
 pub mod resume;
 pub mod parked;
 pub mod driver;
+pub mod tail;
 
 pub use shared::{follow, Shared};
 pub use goal::{open_plan, plan_status};
@@ -114,6 +115,9 @@ pub struct LogView {
     /// This log notes where its suggestion, badges and parked card are, for
     /// Mini (the chat pane's log; not a second one's).
     pub(crate) spots: bool,
+    /// The streaming tail (tail.rs): the reply's last block drawn by a view
+    /// of its own while the log follows the end.
+    pub(crate) tail: tail::Tail,
     _subs: Vec<Subscription>,
 }
 
@@ -137,7 +141,8 @@ impl LogView {
         let subs = vec![
             // A store change redraws the log; something new below while the
             // reader is up the log lights the jump button's dot.
-            cx.observe(&store, |this: &mut Self, _, cx| { prose::arrived(this, cx); cx.notify(); }),
+            // (Once the pane watches the tail, its own observer decides: tail.rs.)
+            cx.observe(&store, |this: &mut Self, _, cx| if !this.tail.watched { prose::arrived(this, cx); cx.notify(); }),
             // The parked card follows the projects store (a chat parked, or live again).
             cx.observe(&projects, |this: &mut Self, _, cx| parked::follow(this, cx)),
             // The text size changes every row.
@@ -147,7 +152,7 @@ impl LogView {
         let focus = cx.focus_handle();
         let zoom = Some(store.read(cx).meta.read(cx).0.zoom);
         let seen = store.read(cx).conv.entries.len();
-        let mut v = LogView { store, list, open: Default::default(), zoom, focus, sel: None, drag: None, hits: Default::default(), mouse: Point::default(), edge: false, edge_task: None, over_link: false, range: None, laid: Default::default(), tables: Default::default(), hot: None, ui: Ui::default(), spots: false, _subs: subs };
+        let mut v = LogView { store, list, open: Default::default(), zoom, focus, sel: None, drag: None, hits: Default::default(), mouse: Point::default(), edge: false, edge_task: None, over_link: false, range: None, laid: Default::default(), tables: Default::default(), hot: None, ui: Ui::default(), spots: false, tail: Default::default(), _subs: subs };
         v.ui.jump.seen = seen;
         parked::follow(&mut v, cx);
         v
@@ -406,6 +411,15 @@ impl LogView {
     }
 
     fn item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let n = self.store.read(cx).rows.len();
+        let el = self.item_el(ix, window, cx);
+        tail::mark_last(self, ix, n, el)
+    }
+
+    fn item_el(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.tail.max_ix = self.tail.max_ix.max(ix);
+        // The streaming tail draws itself (tail.rs): its room, at its height.
+        if let Some(t) = self.tail.drawn.filter(|t| t.ix == ix) { return div().w_full().h(t.h).into_any_element(); }
         let Some(r) = self.store.read(cx).rows.get(ix).cloned() else { return div().into_any_element() };
         let body = self.row_el(ix, &r, window, cx);
         // Side questions asked after this entry (2.21), under its last row.
@@ -467,6 +481,15 @@ impl LogView {
             let el = TableEl { slot, blk, parts: r.parts.clone(), sels, fs, pad, edge, sf, row: ix, hits: self.hits.clone(), hot }.into_any_element();
             return Some(match caret { Some(c) => div().w_full().child(el).child(div().px(T::SP_16).pb(below).child(prose::caret_line(c, fs))).into_any_element(), None => el });
         }
+        self.block_raw(ix, r, fs, pad, sf, caret).map(|b| b.into_any_element())
+    }
+
+    /// A block of Claude's text other than a table or code as its element
+    /// (`pad` snapped), unpainted: the streaming tail measures it (tail.rs).
+    pub(crate) fn block_raw(&mut self, ix: usize, r: &Row, fs: f32, pad: (Pixels, Pixels), sf: f32, caret: Option<(Pixels, bool)>) -> Option<BlockEl> {
+        let blk = r.blk.clone()?;
+        let sn = |v: Pixels| snap(v, sf);
+        let edge = sn(T::SP_16);
         let (font_size, bold, left, color, bar, rule, marker) = match &blk.kind {
             Kind::Para => (T::TEXT_13 * fs, false, edge, T::text(), false, false, None),
             Kind::Heading(lv) => (heading_size(*lv, fs), true, edge, T::text(), false, false, None),
@@ -484,7 +507,7 @@ impl LogView {
             slot, blk, text, look: Look { color, mono: false, bold, link: Some(T::accent_hover()) }, sel, fs, font_size, pad, left, edge, bar, rule,
             marker, marker_right: edge + sn(T::MD_LIST_INDENT) - sn(T::MD_MARKER_GAP * fs), row: ix, hits: self.hits.clone(),
             hot: self.hot.as_ref().filter(|h| h.0 == ix && h.1 == 0).map(|h| h.2.clone()), caret,
-        }.into_any_element())
+        })
     }
 
     /// A row's space above and below: the log's 12 px over the first row;
@@ -601,8 +624,12 @@ impl Render for LogView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("log");
         if self.spots { let g = format!("log:{}", self.chat(cx)); crundi_shell::spots::begin(cx, &g); }
-        // The texts report themselves again as the list lays them out.
-        self.hits.borrow_mut().clear();
+        // The texts report themselves again as the list lays them out (the
+        // streaming tail's own view keeps its row's: tail.rs).
+        // (Asked once here: the list's rows are made while it holds its state.)
+        self.tail.drawn = self.tail_live(cx);
+        self.tail.max_ix = 0;
+        match self.tail.drawn { Some(t) => self.hits.borrow_mut().retain(|h| h.row == t.ix), None => self.hits.borrow_mut().clear() }
         self.range = self.ordered(cx);
         // Layouts of blocks no longer in the store (only the cache holds them).
         if self.laid.len() > 2 * self.store.read(cx).rows.len() + 256 {
@@ -612,20 +639,25 @@ impl Render for LogView {
             self.tables.retain(|_, s| s.borrow().as_ref().is_none_or(|l| Rc::strong_count(&l.blk) > 1));
         }
         let me = cx.entity().downgrade();
+        // Where the last row ended up (tail.rs: the streaming tail may draw
+        // itself only where the list puts it, at the log's foot).
+        // The floating dock's room at the end (the newest line scrolls clear of it).
+        let room = agents::room(self);
+        self.tail.room = room;
+        let geo = tail::measure(self, cx);
         // The pointer while a press is held, wherever it goes (over the
         // window, past the log's edges): every frame's, cheap when idle.
-        let track = canvas(|_, _, _| {}, move |_, _, window, _| {
+        let track = canvas(geo, move |_, _, window, _| {
             let m = me.clone();
             window.on_mouse_event(move |e: &MouseMoveEvent, phase, _, cx| if phase == DispatchPhase::Bubble && e.pressed_button == Some(MouseButton::Left) { let _ = m.update(cx, |this, cx| this.drag_to(e.position, cx)); });
             let m = me.clone();
             window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| if phase == DispatchPhase::Bubble && e.button == MouseButton::Left { let _ = m.update(cx, |this, cx| this.release(e, cx)); });
         }).absolute().size_full();
-        // The floating dock's room at the end (the newest line scrolls clear of it).
-        let room = agents::room(self);
         let lst = list(self.list.clone(), cx.processor(|this, ix: usize, window, cx| this.item(ix, window, cx))).size_full().pb(room);
         // A text box in a card has the keyboard: its caret is a quad over its
         // text, so the log is not one paint layer meanwhile (ARCHITECTURE.md).
         let typing = self.focus.contains_focused(window, cx) && !self.focus.is_focused(window);
+        self.tail.typing = typing;
         let lst: AnyElement = if typing { lst.into_any_element() } else { w::layer(lst).into_any_element() };
         // Over the log, each only while it exists, each in a paint layer of
         // its own (drawn over the list's): the copy button, "Go to the newest
@@ -634,7 +666,9 @@ impl Render for LogView {
         let mut over: Vec<AnyElement> = vec![];
         if self.store.read(cx).rows.is_empty() { over.extend(aside::orphans(self, window, cx)); }
         over.extend(copy::button(self, cx).map(|e| w::layer(e).into_any_element()));
-        over.extend(prose::jump(self, cx).map(|e| w::layer(e).into_any_element()));
+        let jump = prose::jump(self, cx);
+        self.tail.jump_shown = jump.is_some();
+        over.extend(jump.map(|e| w::layer(e).into_any_element()));
         over.extend(agents::dock(self, window, cx).map(|e| w::layer(e).into_any_element()));
         over.extend(goal::panel(self, window, cx));
         over.extend(agents::sheet(self, window, cx));
@@ -649,6 +683,7 @@ impl Render for LogView {
         // or, with the goal bar under it or a parked card over it, a box of
         // its own that clips what floats over it.
         let boxed = bar.is_some() || parked;
+        self.tail.boxed = boxed;
         let logbox = div().id(if boxed { "log-box" } else { "log" }).relative()
             .when(self.over_link, |d| d.cursor_pointer())
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, window, cx| this.press(e, window, cx)))

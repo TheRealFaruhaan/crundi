@@ -33,6 +33,8 @@ impl ChatPane {
         composer.update(cx, |c, _| c.spots = true);
         let id = store.read(cx).id.clone();
         let mini = Some(crate::mini::attach(&id, &store, &composer, &log, cx));
+        // The streaming reply's last block draws itself (log/tail.rs).
+        crate::log::tail::watch(&log, window, cx);
         ChatPane { store, log, composer, mini }
     }
 
@@ -47,6 +49,12 @@ impl ChatPane {
         let (h, sched) = (c.height, c.sched.clone());
         // A parked chat shows no composer unless peeked at (2.23).
         let parked = self.log.read(cx).hides_composer();
+        // The streaming tail at the log's foot (log/tail.rs), over the list's
+        // room for it: its own cached view, so a delta redraws it alone.
+        let tail = self.log.read(cx).tail_place(cx).map(|(v, th, gap)| {
+            let foot = if parked { px(0.) } else { h };
+            v.cached(StyleRefinement::default().absolute().left_0().right_0().bottom(foot + gap).h(th))
+        });
         // The whole chat takes a drop (the web's cc-root): files from the
         // system (the dashed outline) and a reference dragged from another
         // panel (w::ref_target); either goes in at the box's caret (2.7).
@@ -54,6 +62,7 @@ impl ChatPane {
         let chat = self.store.read(cx).id.clone();
         let body = div().id(("chat-body", self.store.entity_id().as_u64() as usize)).relative().flex().flex_col().size_full().min_h_0().bg(T::bg())
             .child(self.log.clone().cached(StyleRefinement::default().w_full().flex_1().min_h_0()))
+            .children(tail)
             .when(!parked, |d| d.child(self.composer.clone().cached(StyleRefinement::default().w_full().h(h).flex_none())))
             .when_some(sched.filter(|_| !parked), |d, (v, sh)| d.child(v.cached(StyleRefinement::default().absolute().left(T::SP_8).right(T::SP_8).bottom(T::SP_8).h(sh).max_h(relative(0.82)))))
             // Mini (F101): its own leaf over the whole chat; a key in the
