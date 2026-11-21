@@ -471,8 +471,7 @@ impl Render for Composer {
         let input = self.input.clone();
         let switch = enter::switch(self.ctrl, move |window, cx| input.update(cx, |st, cx| st.focus(window, cx)));
         let sid = (!narrow && !m.session_id.is_empty()).then(|| {
-            w::tip(div().id("sid").font_family(T::MONO).cursor_pointer().border_b_1().border_dashed().border_color(T::border())
-                .hover(|d| d.text_color(T::text_secondary())).child(m.session_id.chars().take(8).collect::<String>()),
+            w::tip(w::id_link("sid", m.session_id.chars().take(8).collect::<String>()),
                 format!("Claude session {}  — click to copy (use it to resume this conversation)", m.session_id))
                 .on_click(cx.listener(|this, _, window, cx| this.copy_sid(window, cx)))
         });

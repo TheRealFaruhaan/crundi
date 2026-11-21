@@ -7,7 +7,7 @@
 
 use super::{text::{caret_room, Look, CARET_H, CARET_W}, LogView};
 use crate::store::Row;
-use crundi_theme::{IconName, T};
+use crundi_theme::T;
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
 use std::time::Duration;
@@ -47,9 +47,9 @@ pub fn plain(v: &LogView, ix: usize, r: &Row, fs: f32) -> AnyElement {
 pub fn result(r: &Row, fs: f32) -> AnyElement {
     let e = &r.shown;
     if e.error { return error_box(fs).child(if e.text.is_empty() { SharedString::from("Error") } else { r.text.clone() }).into_any_element(); }
-    div().flex().flex_col().w_full()
-        .child(div().w_full().h(px(1.)).bg(T::border_subtle()))
-        .child(div().w_full().py(T::SP_4).text_center().text_size(T::TEXT_11 * fs).text_color(T::text_muted()).child(e.detail.clone()))
+    // (.cc-result: a dashed hairline over it.)
+    div().w_full().border_t_1().border_dashed().border_color(T::border_subtle())
+        .py(px(3.)).text_center().text_size(T::TEXT_11 * fs).text_color(T::text_muted()).child(e.detail.clone())
         .into_any_element()
 }
 
@@ -134,12 +134,8 @@ pub fn jump(v: &mut LogView, cx: &mut Context<LogView>) -> Option<AnyElement> {
     if !shown(d, f32::from(v.list.viewport_bounds().size.height)) { return None; }
     let new = v.ui.jump.new;
     Some(div().absolute().bottom(T::SP_10).left_0().right_0().flex().justify_center()
-        .child(div().id("log-jump").occlude().relative().size(T::LOG_JUMP).rounded_full().flex().items_center().justify_center().cursor_pointer()
-            .bg(T::bg_secondary()).border_1().border_color(if new { T::accent() } else { T::border() }).shadow_lg().text_color(T::text())
-            .hover(|d| d.border_color(T::accent()).bg(T::accent_dim()))
+        .child(w::log_jump("log-jump", new)
             .tooltip(w::tooltip("Go to the newest message"))
-            .child(w::icon(IconName::ArrowDown, T::LOG_JUMP_ICON))
-            .when(new, |d| d.child(div().absolute().top(-T::SP_2).right(-T::SP_2).size(T::SP_10).rounded_full().bg(T::accent()).border_2().border_color(T::bg())))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|v, _, _, cx| go_newest(v, cx))))
         .into_any_element())

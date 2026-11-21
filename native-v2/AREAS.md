@@ -95,13 +95,24 @@ crundi_shell::register(cx, Area::new("planning")
   drawn as tables and code blocks keep syntax colours (`core::syntax`, the
   theme's `syn_*` tokens), with no language label. Any area showing
   Claude's text in the web's way uses `core::webmd`, not a TextView.
-- **The shell's slots** (`crundi_shell::slots`): `register_top_item(cx, "approvals" | "chips", &entity, draw)` (the top bar's approvals button beside the connection badge; the panel chips after the spacer), `register_tab_badge(cx, tab, &entity, draw)` (a project-bar tab's badge: Secrets, Factories, Settings), `register_login_restore(cx, &entity, open, draw)` (the sign-in page's "Restore from a backup instead" and its layer). Each slot redraws only its own piece when its entity notifies.
-- **Where things are, for Mini** (`crundi_shell::spots`, F101): a view that draws something Mini walks to calls `spots::begin(cx, group)` at the top of its render and puts `spots::spot(cx, group, name)` (a canvas, no layout) over it; `spots(cx).borrow().get(name)` gives its window bounds in handlers (a spot not drawn in its group's last render is gone). The shell's: `logo`, `usage:<wk|5h>[:fill]`, `approvals`, `tabbar`, `tab:<id>`, `tab-badge:<id>`, `sidebar:<input|->:<alias>`; the chat's: `composer|send|input|inrow|queue|sug|badge-cmd|badge-ag|pk-resume|pk-compact|pk-veil:<chat>`. `spots::set_logo_away` empties the logo's head while Mini is out (the TopBar observes it); `spots::tabs` is the project bar's scroll (Mini hauls it).
+- **The shell's slots** (`crundi_shell::slots`): `register_top_item(cx, "approvals" | "chips", &entity, draw)` (the top bar's approvals button beside the connection badge; the panel chips after the spacer), `register_tab_badge(cx, tab, &entity, draw)` (a project-bar tab's badge: Secrets, Factories, Settings), `register_login_restore(cx, &entity, open, draw)` (the sign-in page's "Restore from a backup instead"; while open, `draw` gives the form the box shows in the setup form's place, titled "Restore from a backup", F158). Each slot redraws only its own piece when its entity notifies.
+- **Where things are, for Mini** (`crundi_shell::spots`, F101): a view that draws something Mini walks to calls `spots::begin(cx, group)` at the top of its render and puts `spots::spot(cx, group, name)` (a canvas, no layout) over it; `spots(cx).borrow().get(name)` gives its window bounds in handlers (a spot not drawn in its group's last render is gone). The shell's: `logo`, `usage:<wk|5h>[:fill]`, `approvals`, `tabbar`, `tab:<id>`, `tab-badge:<id>`, `sidebar:<input|->:<alias>`; the chat's: `composer|send|input|inrow|queue|sug|badge-cmd|badge-ag|pk-resume|pk-compact|pk-veil:<chat>`, and in the group `act:<chat>` the activity row `activity:<chat>` and its words `activity-w:<chat>` (F159). `spots::set_logo_away` empties the logo's head while Mini is out (the TopBar observes it); `spots::tabs` is the project bar's scroll (Mini hauls it).
 - **Pane heads** (`crundi_workbench::register_head(cx, prefix, KindHead)`): a kind's icon, its head buttons (`HeadButton::icon` / `text`, run through `on_action`), and per pane its tags and lock (`HeadExtra`: the chat tag, the plan pill, collaborator and factory tags, "Secrets for this chat"). The web's panel head is icon, title, the kind's buttons ("?" for the mind map), Refresh, pin, ×.
 - **The "+" menu** is the workbench's (`add-menu`); `add-pane <kind>` is its driver action.
 - **The drawer**: Desktop gives the shell its view
   (`Shell::set_drawer_view(Some(Drawer { view, left }))`); the shell draws
   it beside the project area with the divider; `nav.set_drawer(open)`.
+- **The chat outside a workbench pane** (crundi_chat): `ChatPane::plain(store,
+  window, cx)` is a chat's log and box with no Mini and no spots (the
+  factory panel's transcript, F169), placed with `body(cx)`;
+  `log::media::reply_media(session, id, items, host, window, cx)` draws a
+  session's stored media items as a chat's (Cru's replies, F149: `host` is
+  the view redrawn when a picture lands) and `log::media::host_overlay`
+  its picture viewer and download rows.
+- **Settings kept on this PC** (`core::store::Saved`): `chat_enter` (the
+  chats' Enter switch), `term_newline` (the terminal's newline key, "ctrl"
+  or Shift: Operations' Settings writes it, Workspace's terminals read it,
+  F147), the drafts, the server.
 
 ### What every view does (ARCHITECTURE.md's rules, in practice)
 
@@ -145,7 +156,7 @@ screen): `button`, `primary`, `danger`, `ghost`, `icon_button`,
 `primary_icon`, `liquid_mic`, `meter`, `spark`, `kbd`, `key_row`, `link`,
 `disclosure`, `filter_chip`, `seg_tabs`, `segmented_icons`, `icon_tag`,
 `page_item`, `round_button`, `arm_button`, `choice_row`, `choice_mark`,
-`label_icon_button`, `leaf_chip` / `leaf_act` (an empty pane's launch chips and actions), `launch_button` (the launcher's Empty Shell, UI Mode, Terminal and shields), `drag_ref` / `drag_ref_row` / `ref_target` / `ref_target_drag` / `edge_scroll` (dragging a reference, dropping one, scrolling at the edges while dragging), `layer` / `text_box` / `watch_focus` (paint layers: ARCHITECTURE.md),
+`label_icon_button`, the chat's own controls (`chat_controls`: `log_jump`, `log_copy`, `call_mark`, `call_head`, `call_aside`, `call_card`, `agent_row`, `agent_list_row`, `dock_badge`, `pick_card`, `suggest_caption`, `suggest_bubble`, `id_link`, F159), `leaf_chip` / `leaf_act` (an empty pane's launch chips and actions), `launch_button` (the launcher's Empty Shell, UI Mode, Terminal and shields), `drag_ref` / `drag_ref_row` / `ref_target` / `ref_target_drag` / `edge_scroll` (dragging a reference, dropping one, scrolling at the edges while dragging), `layer` / `text_box` / `watch_focus` (paint layers: ARCHITECTURE.md),
 `number_input`, `date_input` (date, and date with time), `time_input`, `option_buttons` (the web's wrapping `.sm-seg`), `ReadOnly` / `readonly_box` (a URL or secret, selected whole on a click), `armed` (a danger button kept red), and `paint` (a row painted as one element: `Draw`, `Txt`, and the controls at rest: `button_at`, `check_at`, `count_badge_at`, `icon_tag_at`, `lite_button`).
 
 - **Dialogs** (the web's): a press on the scrim closes a dialog, Esc does
@@ -190,7 +201,10 @@ holds it after sign-in, so an idle check never catches it, F122); every other na
 `signedIn`, `online`, `live` (`connects`, `silentDrops`, `streams`),
 `projects`, `project`, `tab`, and every area's own (`panes`,
 `focusedPane`, `chat`, `entries`, `rows`, `chatState`, `batches`,
-`spliced`…), and `renders` (each counted view's renders: a view that
+`spliced`…; an area's `state()` returns one object whose keys are merged
+one level deep with the others', so an area keys its own under a name of
+its own, e.g. `{"areas": {"ops": …}}` beside Desktop's `{"areas":
+{"desktop": …}}`, F68), and `renders` (each counted view's renders: a view that
 should redraw only on its own changes calls `crundi_core::driver::rendered`
 at the top of its `render`). The driver never redraws the window.
 

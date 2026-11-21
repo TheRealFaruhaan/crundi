@@ -49,6 +49,10 @@ let d = drew(r0, await renders());
 console.log('views drawn by four short deltas:', JSON.stringify(d));
 t.check('short deltas redraw the tail', (d['log-tail'] || 0) >= 3, d);
 t.check('…and not the log', (d.log || 0) <= 1, d);
+// The turn's activity row (F159): "Working…" under the reply, its own view at the foot.
+s = await T.state();
+t.check('while working: "Working…" pinned at the log\'s end, drawn by its own view', s.log?.activity?.label === 'Working…' && s.log.activity.own === true, s.log?.activity);
+t.check('…and its spinner redraws it, not the log', (d['log-activity'] || 0) >= 1, d);
 await snap('tail-streaming');
 
 // The tail's text where the list will put it: the block above and the tail.
@@ -105,6 +109,7 @@ t.check('the block is the same text once the list draws it', after && during && 
 t.check('…at the same gap under the block above', after && wrapped && Math.abs(after.gap - wrapped.gap) < 0.6, { wrapped, after });
 t.check('…at the same left edge and width', after && wrapped && Math.abs(after.x - wrapped.x) < 0.6 && Math.abs(after.w - wrapped.w) < 1, { wrapped, after });
 await snap('tail-done');
+t.check('idle: no activity row', !(await T.state()).log?.activity, (await T.state()).log?.activity);
 
 // Idle: nothing draws (the caret's blink stopped with the stream).
 await t.sleep(1500);

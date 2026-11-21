@@ -87,12 +87,8 @@ pub fn view(v: &mut LogView, cx: &mut Context<LogView>) -> Option<AnyElement> {
         let store = v.store.clone();
         let spot = v.spot("sug", cx);
         col = col.child(div().flex().flex_col().items_end().gap(T::SP_2).mt(T::SP_4)
-            .child(div().mr(T::SP_4).px(T::SP_4).rounded(T::R_CHIP).bg(T::bg()).text_size(T::TEXT_11 * fs).text_color(T::text_muted()).child("Suggested, tap to send"))
-            .child(div().id("sug").occlude().relative().max_w_full().pl(T::SP_12).pr(T::SP_24 + T::SP_6).py(T::SP_8)
-                .rounded_tl(T::R_BUBBLE).rounded_tr(T::R_BUBBLE).rounded_bl(T::R_BUBBLE).rounded_br(T::R_CHIP)
-                .border_1().border_dashed().border_color(T::accent_edge()).bg(T::bg_secondary()).shadow_lg()
-                .text_size(T::TEXT_13 * fs).text_color(T::text_secondary()).line_height(relative(T::LH_CHAT)).cursor_pointer()
-                .hover(|d| d.border_color(T::accent()).bg(T::accent_dim()).text_color(T::text()))
+            .child(w::suggest_caption(fs))
+            .child(w::suggest_bubble("sug", fs)
                 .tooltip(w::tooltip("Tap to send"))
                 .child(text)
                 .children(spot)

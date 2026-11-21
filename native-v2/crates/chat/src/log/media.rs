@@ -11,6 +11,11 @@
 //! and by the logs that draw them): the decoded pictures by
 //! "<chat>|<name>", the viewer, the download rows. A change redraws the
 //! chat's logs through its store.
+//!
+//! Outside a log (F149: Cru's replies, the web's CrundiWidgets.replyMedia):
+//! `reply_media` draws a session's items the same way, and `host_overlay`
+//! the viewer and the download rows for it; a change redraws the view that
+//! drew them last (`Media::hosts`).
 
 use super::LogView;
 use crundi_core::{chat::Shown, media};
@@ -33,7 +38,7 @@ pub struct Viewer { pub list: Vec<String>, pub at: usize, pub scale: f32, pub pa
 pub struct Dl { pub id: u32, pub chat: String, pub name: String, pub line: String, pub state: String, pub frac: f32, cancel: Arc<AtomicBool> }
 
 #[derive(Default)]
-pub struct Media { pub cache: HashMap<String, Pic>, pub viewer: Option<Viewer>, pub dls: Vec<Dl>, seq: u32, pub opened: String }
+pub struct Media { pub cache: HashMap<String, Pic>, pub viewer: Option<Viewer>, pub dls: Vec<Dl>, seq: u32, pub opened: String, hosts: HashMap<String, EntityId> }
 impl Global for Media {}
 
 fn g(cx: &mut App) -> &mut Media { cx.default_global::<Media>() }
@@ -47,7 +52,10 @@ const LINGER_CANCEL: u64 = 1200;
 const LINGER_FAIL: u64 = 7000;
 
 /// The chat's logs draw again (its pictures, the viewer, the downloads).
-fn redraw(chat: &str, cx: &mut App) { if let Some(s) = crate::find(cx, chat) { s.update(cx, |_, cx| cx.notify()); } }
+pub(crate) fn redraw(chat: &str, cx: &mut App) {
+    if let Some(s) = crate::find(cx, chat) { s.update(cx, |_, cx| cx.notify()); }
+    if let Some(id) = gr(cx).and_then(|m| m.hosts.get(chat).copied()) { cx.notify(id); }
+}
 
 fn items_of(t: &Shown) -> Option<(Vec<media::Item>, String)> {
     if t.status == "running" || t.error { return None; }
@@ -146,14 +154,51 @@ fn fetch(key: String, cx: &mut App) {
 pub fn under(v: &mut LogView, t: &Shown, fs: f32, window: &mut Window, cx: &mut Context<LogView>) -> Option<AnyElement> {
     let (items, cap) = items_of(t).filter(|(i, _)| !i.is_empty())?;
     let chat = v.chat(cx);
-    let sev = several(&items);
+    Some(group(&chat, &t.id, &items, &cap, fs, window, cx).pt(T::SP_6).pb(T::SP_2).into_any_element())
+}
+
+/// Items drawn together (the web's mediaNode): pictures, clips and frames in
+/// one row that scrolls sideways, sounds and files stacked; the caption
+/// under several.
+fn group(chat: &str, gid: &str, items: &[media::Item], cap: &str, fs: f32, window: &mut Window, cx: &mut App) -> Div {
+    let sev = several(items);
     let stack = items.iter().all(|i| matches!(i.kind.as_str(), "file" | "audio"));
     let one = items.len() == 1;
-    let els: Vec<AnyElement> = items.iter().enumerate().map(|(n, i)| item(v, &chat, &format!("{}-{n}", t.id), i, sev, one, fs, window, cx)).collect();
+    let els: Vec<AnyElement> = items.iter().enumerate().map(|(n, i)| item(chat, &format!("{gid}-{n}"), i, sev, one, fs, window, cx)).collect();
     let body = if stack { div().flex().flex_col().gap(T::SP_8).children(els).into_any_element() }
-        else { div().id(SharedString::from(format!("mrow-{}", t.id))).flex().gap(T::SP_8).items_start().overflow_x_scroll().children(els).into_any_element() };
-    Some(div().flex().flex_col().gap(T::SP_4).pt(T::SP_6).pb(T::SP_2).child(body)
-        .when(sev && !cap.is_empty(), |d| d.child(caption(&cap, fs))).into_any_element())
+        else { div().id(SharedString::from(format!("mrow-{gid}"))).flex().gap(T::SP_8).items_start().overflow_x_scroll().children(els).into_any_element() };
+    div().flex().flex_col().gap(T::SP_4).child(body)
+        .when(sev && !cap.is_empty(), |d| d.child(caption(cap, fs)))
+}
+
+/// What Cru (or any host outside a log) showed in a reply: the stored items
+/// of `session` (its media session, "cru-voice"), cards left out (they are
+/// the host's), drawn as a chat's: pictures, clips and frames share one
+/// row, sounds and files stacked after it (CrundiWidgets.replyMedia).
+/// `id` keeps the element ids apart (the reply's), `host` is the view to
+/// redraw when a picture lands. None: nothing usable.
+pub fn reply_media(session: &str, id: &str, items: &[Value], host: EntityId, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    g(cx).hosts.insert(session.to_string(), host);
+    let parse = |list: Vec<&Value>| media::items(&json!({ "items": list }).to_string()).0;
+    let list: Vec<&Value> = items.iter().filter(|i| i.get("kind").and_then(|k| k.as_str()) != Some("card")).collect();
+    let is_visual = |i: &&Value| matches!(i.get("kind").and_then(|k| k.as_str()), Some("image" | "video" | "embed"));
+    let visual = parse(list.iter().copied().filter(is_visual).collect());
+    let mut nodes: Vec<AnyElement> = vec![];
+    if !visual.is_empty() { nodes.push(group(session, &format!("{id}-v"), &visual, "", 1.0, window, cx).into_any_element()); }
+    for (n, i) in list.iter().copied().filter(|i| !is_visual(i)).enumerate() {
+        let one = parse(vec![i]);
+        if !one.is_empty() { nodes.push(group(session, &format!("{id}-r{n}"), &one, "", 1.0, window, cx).into_any_element()); }
+    }
+    if nodes.is_empty() { return None; }
+    Some(div().flex().flex_col().gap(T::SP_8).min_w_0().children(nodes).into_any_element())
+}
+
+/// For a host outside a log: the viewer and the download rows of `session`.
+pub fn host_overlay(session: &str, window: &mut Window, cx: &mut App) -> Vec<AnyElement> {
+    let mut out = vec![];
+    if let Some(t) = tray(session, window, cx) { out.push(t); }
+    if let Some(e) = viewer(session, window, cx) { out.push(e); }
+    out
 }
 
 fn caption(text: &str, fs: f32) -> Div {
@@ -161,7 +206,7 @@ fn caption(text: &str, fs: f32) -> Div {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn item(v: &mut LogView, chat: &str, id: &str, i: &media::Item, sev: bool, one: bool, fs: f32, window: &mut Window, cx: &mut Context<LogView>) -> AnyElement {
+fn item(chat: &str, id: &str, i: &media::Item, sev: bool, one: bool, fs: f32, window: &mut Window, cx: &mut App) -> AnyElement {
     let (bw, bh) = box_of(i, sev);
     let p = { let n = pic_of(i); if n.is_empty() { Pic { state: "ready".into(), ..Default::default() } } else { pic(&format!("{chat}|{n}"), cx) } };
     let (cap, link) = caption_of(i);
@@ -208,7 +253,7 @@ fn item(v: &mut LogView, chat: &str, id: &str, i: &media::Item, sev: bool, one: 
         "embed" => {
             let fixed = !(i.w > 0.0 && i.h > 0.0);
             let target = if !i.name.is_empty() { format!("stored:{}", i.name) } else if i.src.starts_with("https://") || media::loopback(&i.src) { i.src.clone() } else { String::new() };
-            let inside = (p.state == "ready" && !target.is_empty()).then(|| super::frames::view(v, &format!("{chat}|{target}"), chat, &target, i, window, cx));
+            let inside = (p.state == "ready" && !target.is_empty()).then(|| super::frames::view(&format!("{chat}|{target}"), chat, &target, i, window, cx));
             media_box(id, &p, bw, bh, one, fixed, "This embed is no longer stored.").children(inside).into_any_element()
         }
         _ => div().into_any_element(),
@@ -254,7 +299,8 @@ fn chat_pictures(chat: &str, cx: &App) -> Vec<String> {
 
 pub fn view_picture(key: &str, cx: &mut App) {
     let chat = key.split_once('|').map(|x| x.0.to_string()).unwrap_or_default();
-    let list = if key.contains("|@render:") { vec![key.to_string()] } else { chat_pictures(&chat, cx) };
+    // (A host outside a log, Cru's replies: no chat to go through, the one picture.)
+    let list = if key.contains("|@render:") || crate::find(cx, &chat).is_none() { vec![key.to_string()] } else { chat_pictures(&chat, cx) };
     let Some(at) = list.iter().position(|k| k == key) else { return };
     g(cx).viewer = Some(Viewer { list, at, scale: 1.0, pan: (0.0, 0.0), focus: None, focused: false, drag: None });
     redraw(&chat, cx);
@@ -304,7 +350,7 @@ pub fn overlay(v: &mut LogView, window: &mut Window, cx: &mut Context<LogView>) 
     out
 }
 
-fn viewer(chat: &str, window: &mut Window, cx: &mut Context<LogView>) -> Option<AnyElement> {
+fn viewer(chat: &str, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let key = { let vw = gr(cx)?.viewer.as_ref()?; vw.list[vw.at].clone() };
     if !key.starts_with(&format!("{chat}|")) { return None; }
     if gr(cx)?.viewer.as_ref()?.focus.is_none() { let h = cx.focus_handle(); if let Some(vw) = g(cx).viewer.as_mut() { vw.focus = Some(h); } }
@@ -511,7 +557,7 @@ pub fn dl_close(id: u32, cx: &mut App) {
 }
 
 /// The download rows, top right under the top bar.
-fn tray(chat: &str, window: &mut Window, cx: &mut Context<LogView>) -> Option<AnyElement> {
+fn tray(chat: &str, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let m = gr(cx)?;
     let rows: Vec<AnyElement> = m.dls.iter().filter(|d| d.chat == chat).map(|d| {
         let tone = match d.state.as_str() { "done" => T::green(), "failed" => T::red(), _ => T::accent() };

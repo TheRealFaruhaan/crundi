@@ -27,8 +27,10 @@ pub struct SignIn {
     setup_pw: Entity<w::InputState>,
     /// "I have added it to my authenticator app" is ticked.
     enrol_saved: bool,
-    /// The restore's opener (Operations'), read once: the link shows only with one.
-    restore: Option<std::rc::Rc<dyn Fn(&mut App, &str)>>,
+    /// The restore (Operations'): its opener and its form, read once; the
+    /// link shows only with one, and the form takes the setup form's place in
+    /// the box while open (the web's showLoginRestore, .login-box.restore-mode).
+    restore: Option<(std::rc::Rc<dyn Fn(&mut App, &str)>, slots::Draw)>,
     /// The failed sign-ins seen (a new one clears the code, or the passcode).
     failed_seen: u64,
     press: BarPress,
@@ -70,8 +72,13 @@ impl SignIn {
         w::warm_marks(window, cx);
         let t = cx.background_executor().timer(std::time::Duration::from_millis(500));
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| { t.await; let _ = this.update(cx, |_, cx| cx.notify()); }).detach();
-        // The restore's layer redraws itself; the link only needs to know it exists.
-        SignIn { stores, server_input, password_input, code_input, collab_name, collab_pass, setup_pw, enrol_saved: false, restore: slots::restore(cx).map(|r| r.1), failed_seen: 0, press: BarPress::default(), _subs: subs }
+        // The restore's form is drawn in the box: redrawn when its state changes.
+        let restore = slots::restore(cx).map(|(watch, open, draw)| {
+            let me = cx.entity().downgrade();
+            subs.push(watch(cx, Box::new(move |cx| { let _ = me.update(cx, |_, cx| cx.notify()); })));
+            (open, draw)
+        });
+        SignIn { stores, server_input, password_input, code_input, collab_name, collab_pass, setup_pw, enrol_saved: false, restore, failed_seen: 0, press: BarPress::default(), _subs: subs }
     }
 
     fn submit(&mut self, what: Submit, cx: &mut Context<Self>) {
@@ -121,7 +128,7 @@ impl SignIn {
 }
 
 impl Render for SignIn {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("sign-in");
         let s = self.stores.session.read(cx);
         let (step, err, busy, srv) = (s.step.clone(), s.signin_error.clone(), s.signin_busy, s.signin_server.clone());
@@ -194,9 +201,13 @@ impl Render for SignIn {
                 .child(w::link("setup-uri", uri).on_click(move |_, _, _| { let _ = crate::session::open_url(&u); }))
                 .child(w::check("setup-saved", "I have added it to my authenticator app", saved, cx.listener(|this, v: &bool, _, cx| { this.enrol_saved = *v; cx.notify(); })))
                 .child(w::disabled(w::primary("setup-done", "Continue"), !saved).on_click({ let session = session.clone(); move |_, _, cx| session.update(cx, |s, cx| s.finish_enrol(cx)) })));
+        } else if let Some(lr) = self.restore.clone().filter(|_| setup).and_then(|(_, draw)| draw(window, cx)) {
+            // First run, the other way (#login-restore): the box holds the
+            // restore form, titled for it (showLoginRestore(true)).
+            boxed = boxed.child(p("Restore from a backup")).child(lr);
         } else if setup {
             // First run (#login-setup): nothing else works until a way in is set.
-            let restore = self.restore.clone();
+            let restore = self.restore.clone().map(|r| r.0);
             boxed = boxed.child(p(prompt(true, false, false, false, false))).child(form(T::DIALOG_W - T::SP_48 - T::SP_32)
                 .child(div().text_size(T::TEXT_13).text_color(T::yellow())
                     .child("No sign-in method is set up yet. Choose one now — nothing else on this server works until you do."))
@@ -244,26 +255,6 @@ impl Render for SignIn {
             .child(boxed)
             .child(which))
             .into_any_element()
-    }
-}
-
-/// The restore's layer over the sign-in page (Operations draws it): a cached
-/// view of its own, redrawn when the area's state changes; nothing (and no
-/// pointer taken) while closed or with no area to draw it.
-pub struct RestoreLayer { draw: Option<slots::Draw>, _sub: Option<Subscription> }
-
-impl RestoreLayer {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        let me = cx.entity().downgrade();
-        let _sub = slots::restore(cx).map(|(watch, _, _)| watch(cx, Box::new(move |cx| { let _ = me.update(cx, |_, cx| cx.notify()); })));
-        RestoreLayer { draw: slots::restore(cx).map(|r| r.2), _sub }
-    }
-}
-
-impl Render for RestoreLayer {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let el = self.draw.clone().and_then(|draw| draw(window, cx));
-        div().children(el)
     }
 }
 

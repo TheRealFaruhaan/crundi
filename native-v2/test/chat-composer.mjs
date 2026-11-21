@@ -134,7 +134,7 @@ await until('idle again', (c) => c.state === 'idle', 30000);
 // ─── The slash menu ───
 await T.ui('composer-text', '/');
 c = await C();
-t.check('"/" lists /btw when the CLI has no commands', JSON.stringify(c.slash?.items) === '["/btw"]', c.slash);
+t.check('"/" lists nothing while the CLI has sent no commands (not even /btw: showSlash)', !(c.slash?.items || []).length, c.slash);
 await T.ui('composer-event', JSON.stringify({ type: 'init', slashCommands: [{ name: 'compact', description: 'Compact the conversation' }, 'clear', 'cost'] }));
 await T.ui('composer-text', '/c');
 c = await C();

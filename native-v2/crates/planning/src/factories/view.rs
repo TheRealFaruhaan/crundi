@@ -704,10 +704,8 @@ fn chat_of(fx: &mut Fx, id: &str, back: &'static str, project: &str, window: &mu
         return (pane, head);
     }
     let store = cx.new(|cx| crundi_chat::store::ChatStore::new(id, cx));
-    let mut pane = crundi_chat::pane::ChatPane::new(store.clone(), window, cx);
-    // Mini lives in the workbench's chats, not here.
-    pane.mini = None;
-    crundi_chat::mini::detach(id, cx);
+    // Mini lives in the workbench's chats, not here (the chat area's plain pane).
+    let pane = crundi_chat::pane::ChatPane::plain(store.clone(), window, cx);
     let meta = store.read(cx).meta.clone();
     let head = cx.new(|cx| ChatHead { meta: meta.clone(), back, project: project.to_string(), _sub: cx.observe(&meta, |_, _, cx| cx.notify()) });
     // The server replays the conversation on subscribe (ui-history).

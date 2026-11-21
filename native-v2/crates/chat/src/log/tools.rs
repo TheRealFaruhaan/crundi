@@ -27,10 +27,7 @@ pub fn one_line(t: &str) -> String { t.split_whitespace().collect::<Vec<_>>().jo
 pub fn count_label(n: usize) -> String { format!("{n} tool{}", if n == 1 { "" } else { "s" }) }
 
 /// A call's status mark: the spinner while running, else a dot (red: failed).
-pub fn mark(running: bool, failed: bool, fs: f32) -> AnyElement {
-    if running { w::spinner(T::ICON_SM * fs).into_any_element() }
-    else { div().flex_none().w(T::ICON_SM * fs).flex().justify_center().child(w::dot(if failed { T::red() } else { T::green() }).size(T::SP_6)).into_any_element() }
-}
+pub fn mark(running: bool, failed: bool, fs: f32) -> AnyElement { w::call_mark(running, failed, fs) }
 
 /// A call's row: its agent's row, its group's head (and card while open),
 /// its card, or nothing (a folded group's call).
@@ -63,11 +60,9 @@ fn group_head(v: &mut LogView, e: &Shown, open: bool, fs: f32, cx: &mut Context<
     let running = ms.iter().any(|m| m.get("status").and_then(|x| x.as_str()) == Some("running")) || (ms.is_empty() && e.status == "running");
     let failed = ms.iter().any(|m| m.get("isError").and_then(|x| x.as_bool()).unwrap_or(false));
     let key = format!("g:{}", e.group);
-    w::card().rounded(T::R_CONTROL).bg(T::bg_secondary()).border_color(T::border_subtle()).overflow_hidden()
-        .child(div().id(SharedString::from(format!("tg-{}", e.group))).flex().items_center().gap(T::SP_8).px(T::SP_10).py(T::SP_6).cursor_pointer()
-            .child(mark(running, failed, fs))
-            .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_12 * fs).text_color(T::text()).child(one_line(&e.group_summary)))
-            .child(div().flex_none().text_size(T::TEXT_11 * fs).text_color(T::text_muted()).child(count_label(n)))
+    w::call_card()
+        .child(w::call_head(SharedString::from(format!("tg-{}", e.group)), mark(running, failed, fs), None, one_line(&e.group_summary), true, fs)
+            .child(w::call_aside(count_label(n), false, fs))
             .child(w::fold_chevron(open, fs).text_color(T::text_muted()))
             .tooltip(w::tooltip(if open { "Fold these tool calls" } else { "Show each tool call" }))
             .on_click(cx.listener(move |this, _, _, cx| this.toggle(&key, cx))))
@@ -97,15 +92,10 @@ fn todo_row(text: &str, state: &str, fs: f32) -> Div {
 pub fn card(v: &mut LogView, e: &Shown, fs: f32, window: &mut Window, cx: &mut Context<LogView>) -> AnyElement {
     let open = v.open.contains(&e.id);
     let k = e.id.clone();
-    let head = div().id(SharedString::from(format!("th-{}", e.id)))
-        .flex().items_center().gap(T::SP_8).px(T::SP_10).py(T::SP_6).cursor_pointer()
-        .child(mark(e.status == "running", e.error, fs))
-        .child(div().flex_none().font_family(T::MONO).text_size(T::TEXT_12 * fs).font_weight(T::W_SEMIBOLD)
-            .text_color(if e.error { T::red() } else { T::accent_hover() }).child(e.title.clone()))
-        .child(div().flex_1().min_w_0().text_size(T::TEXT_12 * fs).text_color(T::text_secondary()).truncate().child(one_line(&e.detail)))
+    let head = w::call_head(SharedString::from(format!("th-{}", e.id)), mark(e.status == "running", e.error, fs), Some((e.title.clone().into(), e.error)), one_line(&e.detail), false, fs)
         .child(w::fold_chevron(open, fs).text_color(T::text_muted()))
         .on_click(cx.listener(move |this, _, _, cx| this.toggle(&k, cx)));
-    let mut card = w::card().rounded(T::R_CONTROL).bg(T::bg_secondary()).border_color(T::border_subtle()).overflow_hidden().child(head);
+    let mut card = w::call_card().child(head);
     if open { card = card.child(div().h(px(1.)).w_full().bg(T::border_subtle())).child(body(e, fs)); }
     let under = super::media::under(v, e, fs, window, cx);
     let shots = super::cards::shots_row(v, e, cx);

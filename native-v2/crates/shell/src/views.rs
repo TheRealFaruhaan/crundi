@@ -12,7 +12,7 @@
 //! (the bars and the badge each minute) or moves (the badge's blink, the
 //! line's sweep) redraws only its own leaf (rules 3 and 6).
 
-use crate::{conn, registry, signin::{RestoreLayer, SignIn}, slots::{self, measured, Slot}, Project, Stores, TABS};
+use crate::{conn, registry, signin::SignIn, slots::{self, measured, Slot}, Project, Stores, TABS};
 use crundi_theme::{IconName, T};
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
@@ -54,7 +54,6 @@ pub struct Shell {
     side: Entity<Sidebar>,
     bar: Entity<ProjectBar>,
     pub(crate) sign_in: Entity<SignIn>,
-    restore: Entity<RestoreLayer>,
     widths: Entity<slots::Widths>,
     /// Each tab's body, made the first time it is shown.
     tabs: HashMap<String, AnyView>,
@@ -110,7 +109,6 @@ impl Shell {
         let side = cx.new(|cx| Sidebar::new(stores.clone(), cx));
         let bar = cx.new(|cx| ProjectBar::new(stores.clone(), cx));
         let sign_in = cx.new(|cx| SignIn::new(stores.clone(), window, cx));
-        let restore = cx.new(RestoreLayer::new);
         let widths = slots::widths(cx);
         // The Shell re-renders only when its layout changes: signed in or out
         // (the session's event, not its every notify), the tab, the fold, the
@@ -133,7 +131,7 @@ impl Shell {
             window.focus(&to, cx);
         }));
         cx.set_global(ShellHandle(cx.entity().downgrade()));
-        Shell { stores, top, side, bar, sign_in, restore, widths, tabs: HashMap::new(), missing: HashMap::new(), drawer: None, modal, ask, dragging: false, press: BarPress::default(), overlays: cx.try_global::<crate::Overlays>().map(|o| o.0.clone()).unwrap_or_default(), root_focus: cx.focus_handle(), ptt_held: false, seen_focus: None, lay, _subs: subs }
+        Shell { stores, top, side, bar, sign_in, widths, tabs: HashMap::new(), missing: HashMap::new(), drawer: None, modal, ask, dragging: false, press: BarPress::default(), overlays: cx.try_global::<crate::Overlays>().map(|o| o.0.clone()).unwrap_or_default(), root_focus: cx.focus_handle(), ptt_held: false, seen_focus: None, lay, _subs: subs }
     }
 
     /// The browser drawer's view (Desktop registers it).
@@ -209,8 +207,6 @@ impl Render for Shell {
         let l = self.lay.clone();
         if !l.signed_in || l.server_over {
             return root.child(self.sign_in.clone().cached(StyleRefinement::default().size_full()))
-                // The restore from a backup (Operations'), over the sign-in page while open.
-                .child(self.restore.clone().cached(StyleRefinement::default().absolute().top_0().left_0().size_full()))
                 .child(self.modal.clone())
                 .child(self.ask.clone())
                 .into_any_element();
@@ -231,7 +227,12 @@ impl Render for Shell {
                 if e.click_count >= 2 { this.stores.nav.update(cx, |n, cx| { n.drawer_w = T::DRAWER_W; cx.notify(); }); this.dragging = false; } else { this.dragging = true; }
                 cx.notify();
             }));
-        let dview = drawer.map(|d| div().flex_none().w(drawer_w).h_full().min_h_0().child(d.view)); // layout (Desktop's): its bars and page are its cached leaves
+        // The drawer's layout (Desktop's): its bars and page are its cached
+        // leaves. Not cached itself yet (F151): in GPUI 0.3.12 a cached view
+        // that redraws (a page's frame) re-renders its cached children too,
+        // so its bars would redraw with every frame; it waits for the GPUI
+        // patch (a cached view keeps its clean cached children).
+        let dview = drawer.map(|d| div().flex_none().w(drawer_w).h_full().min_h_0().child(d.view));
         let main = div().flex().flex_1().min_h_0().child(self.side.clone().cached(StyleRefinement::default().w(sw).h_full().flex_none()));
         let main = match dview {
             Some(v) if left => main.child(v).child(split).child(project),

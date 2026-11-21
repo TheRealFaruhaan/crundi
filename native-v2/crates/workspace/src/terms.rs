@@ -378,14 +378,10 @@ pub fn tool_bytes(name: &str) -> Option<&'static str> {
 }
 
 /// Which key makes a new line in a terminal (Settings › Terminal, kept on
-/// this device by Operations' Settings in ops-settings.json: "ctrl" or the
-/// default Shift). Read when Enter comes with Ctrl or Shift, so a change
-/// applies to the terminals already open (the web reads it live).
-pub fn newline_ctrl() -> bool {
-    let f = crundi_core::store::config_dir().join("ops-settings.json");
-    std::fs::read(f).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-        .and_then(|v| v.get("newline").and_then(|n| n.as_str()).map(|n| n == "ctrl")).unwrap_or(false)
-}
+/// this device in the client's saved settings, core's `Saved.term_newline`:
+/// "ctrl" or the default Shift). Read when Enter comes with Ctrl or Shift,
+/// so a change applies to the terminals already open (the web reads it live).
+pub fn newline_ctrl() -> bool { crundi_core::store::load().term_newline == "ctrl" }
 
 /// A picture on the clipboard, as bytes.
 pub fn clip_image(item: &ClipboardItem) -> Option<Vec<u8>> {

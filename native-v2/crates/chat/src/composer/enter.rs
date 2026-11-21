@@ -41,15 +41,19 @@ pub fn placeholder(ctrl: bool, narrow: bool, exited: bool) -> &'static str {
     else { "Message Claude…  (Enter to send, Shift+Enter for newline)" }
 }
 
-/// The switch: [ ⏎ | ⌃⏎ ] and "sends"; a click swaps and puts the focus
-/// back in the box (`refocus`).
+/// The switch: [ ⏎ | ⌃⏎ ] and "sends"; a click anywhere on it swaps (the
+/// web's .cc-toggle is one button: either side, or the word) and puts the
+/// focus back in the box (`refocus`).
 pub fn switch(ctrl: bool, refocus: impl Fn(&mut Window, &mut App) + 'static) -> AnyElement {
+    let refocus = std::rc::Rc::new(refocus);
+    let r2 = refocus.clone();
     let tip = if ctrl { "Enter makes a newline, Ctrl+Enter sends — click to swap" } else { "Enter sends, Shift+Enter makes a newline — click to swap" };
     w::tip(div().id("enter-switch").flex().items_center().gap(T::SP_4)
-        .child(w::segmented_icons("enter", &[&[IconName::CornerDownLeft], &[IconName::ChevronUp, IconName::CornerDownLeft]], if ctrl { 1 } else { 0 }, move |i, window, cx| {
-            set(cx, *i == 1);
+        .child(w::segmented_icons("enter", &[&[IconName::CornerDownLeft], &[IconName::ChevronUp, IconName::CornerDownLeft]], if ctrl { 1 } else { 0 }, move |_, window, cx| {
+            set(cx, !ctrl);
             refocus(window, cx);
         }))
-        .child(div().id("enter-sends-label").text_color(T::text_secondary()).hover(|d| d.text_color(T::text())).child("sends")), tip)
+        .child(div().id("enter-sends-label").cursor_pointer().text_color(T::text_secondary()).hover(|d| d.text_color(T::text())).child("sends")
+            .on_click(move |_, window, cx| { set(cx, !ctrl); r2(window, cx); })), tip)
         .into_any_element()
 }

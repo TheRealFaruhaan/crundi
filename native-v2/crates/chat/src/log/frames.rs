@@ -10,7 +10,6 @@
 //! data: address. Without a host (the browser not built in, or not started),
 //! the box shows "Open" centred, as native-gpui did without CEF.
 
-use super::LogView;
 use crundi_core::media;
 use crundi_theme::T;
 use gpui::*;
@@ -52,13 +51,13 @@ fn url_of(chat: &str, target: &str, cx: &mut App) -> Option<String> {
     let path = format!("/api/chat-media?session={}&name={}", k.0, k.1);
     crundi_shell::run(cx, move || api.get_bytes(&path).ok().filter(|r| r.0 == 200).map(|r| { use base64::Engine; format!("data:text/html;charset=utf-8;base64,{}", base64::engine::general_purpose::STANDARD.encode(r.1)) }), move |u, cx| {
         match u { Some(u) => { cx.default_global::<Pages>().0.insert(k.clone(), Some(u)); } None => { cx.default_global::<Pages>().0.remove(&k); } }
-        if let Some(s) = crate::find(cx, &k.0) { s.update(cx, |_, cx| cx.notify()); }
+        super::media::redraw(&k.0, cx);
     });
     None
 }
 
 /// Inside a frame's box: the live page (the host's), or "Open".
-pub fn view(_v: &mut LogView, key: &str, chat: &str, target: &str, item: &media::Item, window: &mut Window, cx: &mut Context<LogView>) -> AnyElement {
+pub fn view(key: &str, chat: &str, target: &str, item: &media::Item, window: &mut Window, cx: &mut App) -> AnyElement {
     let host = cx.try_global::<Host>().map(|h| h.0.clone()).filter(|h| h.started());
     if let Some(h) = host {
         if let Some(url) = url_of(chat, target, cx) {

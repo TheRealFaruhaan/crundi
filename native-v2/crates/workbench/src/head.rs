@@ -304,14 +304,19 @@ impl Render for PaneHead {
         if fold && self.menu {
             // The folded tools under the header, right-aligned (the web's
             // .term-head-tools in a narrow pane): wrapped, 6 apart, padding 8.
+            // Its width fits its buttons up to the pane's less 8 (max-width:
+            // calc(100% - 8px)), and it grows a row when they wrap: laid out in a
+            // box of that width (a wrapping row measured with no definite width
+            // would keep one row's height and let the buttons hang out).
             let menu = div().id(("pane-menu", id)).occlude().flex().flex_wrap().items_center().justify_end().gap(T::SP_6).p(T::SP_8)
-                .max_w(px((f.w - 8.).max(0.)))
+                .min_w_0().flex_shrink_1()
                 .bg(T::bg_secondary()).border_1().border_color(T::border()).rounded(T::R_FIELD).shadow_lg()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| if this.menu { this.closed_at = Some(e.position); this.set_menu(false, cx); }))
                 .children(self.tools(&e, f, true, cx));
             head = head.child(div().absolute().top(hh + T::SP_2).right(T::SP_4).size_0()
-                .child(deferred(anchored().anchor(Anchor::TopRight).snap_to_window_with_margin(T::SP_4).child(menu)).with_priority(1)));
+                .child(deferred(anchored().anchor(Anchor::TopRight).snap_to_window_with_margin(T::SP_4)
+                    .child(div().w(px((f.w - 8.).max(0.))).flex().justify_end().items_start().child(menu))).with_priority(1)));
         }
         let _ = window;
         // One paint layer (w::layer): every pane's head is replayed each

@@ -38,6 +38,12 @@ pub struct Saved {
     /// newline), otherwise Enter (the web's localStorage.crundi_chat_enter).
     #[serde(default)]
     pub chat_enter: String,
+    /// The terminal's newline key, on this device: "ctrl" (Ctrl+Enter makes
+    /// a newline) or "" / "shift" (Shift+Enter, the default). Operations'
+    /// Settings writes it, Workspace's terminals read it when Enter comes
+    /// with a modifier (F147; the web's localStorage newline key).
+    #[serde(default)]
+    pub term_newline: String,
     /// The chats' drafts, per server (src/drafts.rs): {"<server>":
     /// {"chat:<id>": {v, t}, "project:<alias>": {v, t}}}.
     #[serde(default)]

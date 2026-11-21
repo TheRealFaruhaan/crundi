@@ -90,6 +90,8 @@ fn state(cx: &mut App) -> Value {
         "hot": v.hot.as_ref().map(|h| json!([h.0, h.1, h.2.start, h.2.end])),
         "blink": v.ui.blink.on,
         "tail": super::tail::state(v, cx),
+        // The activity row (activity.rs): its words, and whether its own view draws it (at the foot).
+        "activity": v.activity(cx).map(|own| json!({ "label": super::activity::label(&st.conv.entries), "own": own })),
         "question": super::questions::state(v, cx),
         "agentDock": super::agents::state(v, cx),
         "goal": super::goal::state(v, cx),

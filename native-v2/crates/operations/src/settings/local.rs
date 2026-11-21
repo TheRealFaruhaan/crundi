@@ -35,13 +35,22 @@ impl Local {
 
 fn file() -> PathBuf { crundi_core::store::config_dir().join("ops-settings.json") }
 
+/// The newline key lives in the client's saved settings (core's
+/// `Saved.term_newline`, which the terminals read: F147); one set before
+/// that, in this file, moves there the first time it is read.
 pub fn load() -> Local {
-    std::fs::read_to_string(file()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).map(|v| Local::from_json(&v)).unwrap_or_default()
+    let mut l = std::fs::read_to_string(file()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).map(|v| Local::from_json(&v)).unwrap_or_default();
+    let saved = crundi_core::store::load().term_newline;
+    if !saved.is_empty() { l.newline = saved; }
+    else if !l.newline.is_empty() { let n = l.newline.clone(); crundi_core::store::update(|s| s.term_newline = n); }
+    l
 }
 
 pub fn update(f: impl FnOnce(&mut Local)) {
     let mut l = load();
+    let was = l.newline.clone();
     f(&mut l);
+    if l.newline != was { let n = l.newline.clone(); crundi_core::store::update(|s| s.term_newline = n); }
     let p = file();
     if let Some(d) = p.parent() { let _ = std::fs::create_dir_all(d); }
     if let Ok(t) = serde_json::to_string_pretty(&l.to_json()) { let _ = std::fs::write(p, t); }

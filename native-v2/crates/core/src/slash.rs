@@ -19,6 +19,8 @@ pub fn query(text: &str) -> Option<&str> {
 /// server's order, Crundi's /btw last when the CLI has none; at most MAX.
 /// Each is (name, description); a names-only command has no description.
 pub fn filter(cmds: &[Value], q: &str) -> Vec<(String, String)> {
+    // No commands from the CLI yet: no list at all, /btw included (showSlash's !slashCommands.length).
+    if cmds.is_empty() { return vec![]; }
     let mut all: Vec<(String, String)> = cmds.iter().filter_map(|c| match c {
         Value::String(n) => Some((n.clone(), String::new())),
         Value::Object(o) => Some((o.get("name")?.as_str()?.to_string(), o.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string())),
@@ -56,6 +58,7 @@ mod tests {
         assert_eq!(filter(&cmds, "c"), vec![("clear".into(), "".into()), ("code-review".into(), "Review".into()), ("Compact".into(), "".into())]);
         assert_eq!(filter(&cmds, "b"), vec![("bugs".into(), "".into()), ("btw".into(), BTW_DESC.into())]);
         assert!(filter(&cmds, "zz").is_empty());
+        assert!(filter(&[], "").is_empty());
         let with_btw = vec![json!("btw"), json!("b2")];
         assert_eq!(filter(&with_btw, "b").len(), 2);
         let many: Vec<Value> = (0..60).map(|i| json!(format!("a{i}"))).collect();

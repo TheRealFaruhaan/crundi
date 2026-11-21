@@ -38,6 +38,18 @@ impl ChatPane {
         ChatPane { store, log, composer, mini }
     }
 
+    /// A chat's log and message box without Mini (F169: the factory
+    /// panel's transcript over its graph), on a store of the caller's: the
+    /// same log (its streaming tail and activity row included) and box, no
+    /// spots noted, nothing attached to the chat's id, so a workbench pane
+    /// of the same chat keeps its own Mini. Placed with `body`.
+    pub fn plain(store: Entity<ChatStore>, window: &mut Window, cx: &mut App) -> Self {
+        let log = cx.new(|cx| LogView::new(store.clone(), cx));
+        let composer = cx.new(|cx| Composer::new(store.clone(), window, cx));
+        crate::log::tail::watch(&log, window, cx);
+        ChatPane { store, log, composer, mini: None }
+    }
+
     /// The pane's body (the workbench's PaneParts::body).
     pub fn body(&self, cx: &App) -> AnyElement {
         // The composer is cached at the height it measured itself (it grows
@@ -55,6 +67,12 @@ impl ChatPane {
             let foot = if parked { px(0.) } else { h };
             v.cached(StyleRefinement::default().absolute().left_0().right_0().bottom(foot + gap).h(th))
         });
+        // The activity row while a turn runs (log/activity.rs), likewise
+        // its own view at the log's foot, over the dock's room.
+        let act = self.log.read(cx).activity_place(cx).map(|(v, ah, dock)| {
+            let foot = if parked { px(0.) } else { h };
+            v.cached(StyleRefinement::default().absolute().left_0().right_0().bottom(foot + dock).h(ah))
+        });
         // The whole chat takes a drop (the web's cc-root): files from the
         // system (the dashed outline) and a reference dragged from another
         // panel (w::ref_target); either goes in at the box's caret (2.7).
@@ -63,6 +81,7 @@ impl ChatPane {
         let body = div().id(("chat-body", self.store.entity_id().as_u64() as usize)).relative().flex().flex_col().size_full().min_h_0().bg(T::bg())
             .child(self.log.clone().cached(StyleRefinement::default().w_full().flex_1().min_h_0()))
             .children(tail)
+            .children(act)
             .when(!parked, |d| d.child(self.composer.clone().cached(StyleRefinement::default().w_full().h(h).flex_none())))
             .when_some(sched.filter(|_| !parked), |d, (v, sh)| d.child(v.cached(StyleRefinement::default().absolute().left(T::SP_8).right(T::SP_8).bottom(T::SP_8).h(sh).max_h(relative(0.82)))))
             // Mini (F101): its own leaf over the whole chat; a key in the

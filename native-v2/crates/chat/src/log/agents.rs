@@ -142,12 +142,8 @@ pub fn row(v: &mut LogView, e: &Shown, fs: f32, cx: &mut Context<LogView>) -> Op
     let st = state_of(&a);
     let tid = e.tool_use_id.clone();
     let t = s(&a, "subagentType");
-    Some(div().id(SharedString::from(format!("ag-row-{}", e.id))).flex().items_center().gap(T::SP_8).px(T::SP_10).py(T::SP_6)
-        .rounded(T::R_CONTROL).bg(T::bg_secondary()).border_1().border_color(T::border_subtle()).hover(|d| d.border_color(T::accent())).cursor_pointer()
-        .child(super::tools::mark(st == "running", st == "failed", fs))
-        .child(div().flex_none().font_family(T::MONO).text_size(T::TEXT_12 * fs).font_weight(T::W_SEMIBOLD).text_color(T::accent_hover()).child(if t.is_empty() { "Agent".to_string() } else { t }))
-        .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_12 * fs).text_color(T::text_secondary()).child(super::tools::one_line(&s(&a, "description"))))
-        .child(div().flex_none().text_size(T::TEXT_11 * fs).text_color(T::accent_hover()).child("transcript ›"))
+    Some(w::agent_row(SharedString::from(format!("ag-row-{}", e.id)), super::tools::mark(st == "running", st == "failed", fs),
+            if t.is_empty() { "Agent".to_string() } else { t }, super::tools::one_line(&s(&a, "description")), fs)
         .on_click(cx.listener(move |v, _, _, cx| open(v, &tid, false, cx)))
         .into_any_element())
 }
@@ -155,14 +151,8 @@ pub fn row(v: &mut LogView, e: &Shown, fs: f32, cx: &mut Context<LogView>) -> Op
 /// One badge: the pill (icon, mono count, spinner or green dot).
 fn badge(v: &LogView, task: bool, n: usize, run: bool, tip: String, on: bool, fs: f32, cx: &mut Context<LogView>) -> AnyElement {
     let spot = v.spot(if task { "badge-cmd" } else { "badge-ag" }, cx);
-    div().id(if task { "ag-badge-cmd" } else { "ag-badge-ag" }).flex().items_center().gap(T::SP_6).min_h(T::CONTROL_SM).pl(T::SP_8).pr(T::SP_10).py(T::SP_4)
-        .rounded(T::R_PILL).bg(T::bg_secondary()).border_1().border_color(if on { T::accent() } else { T::border() }).shadow_lg()
-        .text_size(T::TEXT_12 * fs).text_color(if on { T::text() } else { T::text_secondary() }).cursor_pointer()
-        .hover(|d| d.border_color(T::accent()).text_color(T::text()))
+    w::dock_badge(if task { "ag-badge-cmd" } else { "ag-badge-ag" }, task, n, run, on, fs)
         .tooltip(w::tooltip(tip))
-        .child(div().flex_none().when(run, |d| d.text_color(T::accent_hover())).child(w::icon(if task { IconName::SquareTerminal } else { IconName::Bot }, T::ICON_MD * fs)))
-        .child(div().font_family(T::MONO).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(n.to_string()))
-        .child(if run { w::spinner(T::ICON_SM * fs).into_any_element() } else { w::dot(T::green()).size(T::SP_6).into_any_element() })
         .relative().children(spot)
         .on_click(cx.listener(move |v, _, _, cx| badge_click(v, task, cx)))
         .into_any_element()
@@ -228,11 +218,8 @@ fn entry_el(v: &mut LogView, e: &Shown, task: bool, fs: f32, cx: &mut Context<Lo
             // A command's own row, open; an agent's calls fold as in the log.
             let open = task || v.open.contains(&e.id);
             let k = e.id.clone();
-            let mut c = w::card().rounded(T::R_CONTROL).bg(T::bg_secondary()).border_color(T::border_subtle()).overflow_hidden()
-                .child(div().id(SharedString::from(format!("agt-{}", e.id))).flex().items_center().gap(T::SP_8).px(T::SP_10).py(T::SP_6).cursor_pointer()
-                    .child(super::tools::mark(e.status == "running", e.error, fs))
-                    .child(div().flex_none().font_family(T::MONO).text_size(T::TEXT_12 * fs).font_weight(T::W_SEMIBOLD).text_color(if e.error { T::red() } else { T::accent_hover() }).child(e.title.clone()))
-                    .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_12 * fs).text_color(T::text_secondary()).child(super::tools::one_line(&e.detail)))
+            let mut c = w::call_card()
+                .child(w::call_head(SharedString::from(format!("agt-{}", e.id)), super::tools::mark(e.status == "running", e.error, fs), Some((e.title.clone().into(), e.error)), super::tools::one_line(&e.detail), false, fs)
                     .child(w::fold_chevron(open, fs).text_color(T::text_muted()))
                     .on_click(cx.listener(move |v, _, _, cx| { if !v.open.remove(&k) { v.open.insert(k.clone()); } cx.notify(); })));
             if open { c = c.child(div().h(px(1.)).w_full().bg(T::border_subtle())).child(super::tools::body(e, fs)); }
@@ -259,12 +246,7 @@ pub fn sheet(v: &mut LogView, _window: &mut Window, cx: &mut Context<LogView>) -
             let tid = s(a, "toolUseId");
             let (t1, t2) = (tid.clone(), tid.clone());
             let st = state_of(a);
-            div().id(SharedString::from(format!("ag-li-{tid}"))).flex().items_center().gap(T::SP_8).p(T::SP_8).rounded(T::R_CONTROL).cursor_pointer().hover(|d| d.bg(T::bg_hover()))
-                .child(div().flex_none().w(T::SP_12).flex().justify_center().child(super::tools::mark(st == "running", st == "failed", fs)))
-                .child(div().flex_1().min_w_0().flex().flex_col().gap(T::SP_2)
-                    .child(div().truncate().text_size(T::TEXT_13 * fs).text_color(if st == "running" { T::text() } else { T::text_secondary() }).child(agents::label(a)))
-                    .child(div().truncate().font_family(T::MONO).text_size(T::TEXT_11 * fs).text_color(T::text_muted()).child(agents::row_sub(a))))
-                .child(div().flex_none().text_color(T::text_muted()).child(w::icon(IconName::ChevronRight, T::ICON_SM)))
+            w::agent_list_row(SharedString::from(format!("ag-li-{tid}")), super::tools::mark(st == "running", st == "failed", fs), agents::label(a), agents::row_sub(a), st == "running", fs)
                 .child(w::icon_button(SharedString::from(format!("ag-x-{tid}")), IconName::X, "Dismiss").on_click(cx.listener(move |v, _, _, cx| { cx.stop_propagation(); dismiss(v, vec![t2.clone()], cx); })))
                 .on_click(cx.listener(move |v, _, _, cx| open(v, &t1, true, cx)))
                 .into_any_element()

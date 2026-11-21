@@ -387,6 +387,8 @@ pub fn open_login_restore(cx: &mut App, server: &str) {
         b.lr_base = base; b.lr_items.clear(); b.lr_list.clear(); b.lr_error.clear(); b.lr_progress = false; b.lr_going = false;
         b.lr_finding = false; b.lr_picked = 0; b.lr_open = true; b.lr_epoch += 1;
         s.f.set("lr-pass", "");
+        // The folder starts as the web's (value="crundi/").
+        if s.f.get("lr-prefix").is_empty() { s.f.set("lr-prefix", "crundi/"); }
     });
 }
 
@@ -653,7 +655,8 @@ pub fn notice_render(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .into_any_element())
 }
 
-/// "Restore from a backup" (OpsLoginRestore), over the whole window.
+/// "Restore from a backup" (#login-restore): the form the sign-in box shows
+/// in the setup form's place while open (the Shell titles the box).
 pub fn lr_render(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     if !get(cx, |s| s.b.lr_open) { return None; }
     let ln = |window: &mut Window, cx: &mut App, k: &'static str, ph: &str, masked: bool| c::line::<Sk>(window, cx, k, ph, masked, Some(restore_key));
@@ -666,10 +669,9 @@ pub fn lr_render(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let ps = ln(window, cx, "lr-pass", "Backup passphrase", true);
     let s = super::st(cx);
     let b = &s.b;
-    let vp = window.viewport_size();
-    let mut card = col(T::SP_8).w(T::SKILLS_RESTORE_W + T::SP_48).max_h(vp.height - T::SP_48).p(T::SP_24)
-        .bg(T::bg_secondary()).rounded(T::R_CARD).border_1().border_color(T::border()).shadow_lg()
-        .child(div().flex().justify_center().text_size(T::TEXT_16).font_weight(T::W_SEMIBOLD).text_color(T::text()).child("Restore from a backup"))
+    let mut card = col(T::SP_8).id("login-restore").w(T::SKILLS_RESTORE_W).max_w_full()
+        .child(div().text_size(T::TEXT_12).text_color(T::text_secondary())
+            .child("Enter the storage your backups are in. The restore brings back the settings and sign-in they were made with."))
         .child(w::input(&ep))
         .child(row().child(div().flex_1().min_w_0().child(w::input(&bu))).child(div().w(T::SP_48 + T::SP_48 + T::SP_24).child(w::input(&rg))))
         .child(w::input(&pf)).child(w::input(&ky)).child(w::input(&se))
@@ -699,9 +701,7 @@ pub fn lr_render(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     }
     card = card.child(div().min_h(T::SP_16).text_size(T::TEXT_12).text_color(T::red()).child(b.lr_error.clone()))
         .child(div().flex().justify_center().child(w::link("lr-back", "Set up a new password instead").on_click(|_, _, cx| lr_act(cx, "lr-back"))));
-    Some(deferred(anchored().position(point(px(0.), px(0.))).child(
-        div().id("lr-scrim").occlude().w(vp.width).h(vp.height).bg(T::scrim()).flex().items_center().justify_center()
-            .child(div().id("lr-card").overflow_y_scroll().child(card)))).with_priority(1).into_any_element())
+    Some(card.into_any_element())
 }
 
 // ─── The driver ───

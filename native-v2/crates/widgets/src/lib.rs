@@ -89,6 +89,7 @@ pub mod project_marks; pub use project_marks::{drop_line, ecg_mark, factory_mark
 pub mod launch_mark; pub use launch_mark::launch_mark;
 pub mod head_tag; pub use head_tag::{head_label_button, head_tag, state_badge, HeadTagLook};
 pub mod title_input; pub use title_input::title_input;
+pub mod chat_controls; pub use chat_controls::{agent_list_row, agent_row, call_aside, call_card, call_head, call_mark, dock_badge, id_link, log_copy, log_jump, pick_card, suggest_bubble, suggest_caption};
 
 // ─── Buttons ───
 

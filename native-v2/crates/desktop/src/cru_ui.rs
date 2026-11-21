@@ -453,7 +453,8 @@ impl CruScreen {
     }
 
     /// The chat view's conversation (renderChat).
-    fn chat(&mut self, phase: &str, interim: &str, more: bool, saying: &str) -> Stateful<Div> {
+    fn chat(&mut self, phase: &str, interim: &str, more: bool, saying: &str, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
+        let host = cx.entity().entity_id();
         let turns = self.copy.turns.clone();
         let count = turns.len() + usize::from(phase == "think") + usize::from(!interim.is_empty()) + self.copy.pending_len;
         if count != self.turns { self.turns = count; self.scroll.scroll_to_bottom(); }
@@ -485,9 +486,9 @@ impl CruScreen {
                 .when(!t2.is_empty(), |d| d.child(w::icon_toggle(("cru-say", n), IconName::Speech, if on { "Cru is saying this: tap to stop" } else { "Say it aloud" }, on)
                     .on_click(move |_, _, _| if cru::with(|c| c.phase == "speak" && c.saying.trim() == t2.trim()) { cru::mic(); } else if cru::with(|c| c.phase == "listen" && c.interim.is_empty()) { cru::say(&t2, false); })))); }
             // What the reply showed, under its words (.cv-mm): Cru's cards drawn
-            // with the live screen's blocks; the rest needs the chat's media
-            // drawing (replyMedia), which this page has not got yet.
-            if !media.is_empty() { list = list.child(reply_media(n, &media, (!has_words).then_some(when))); }
+            // with the live screen's blocks; the rest with the chat's media
+            // drawing (replyMedia: crundi_chat's reply_media, its session's).
+            if !media.is_empty() { list = list.child(reply_media(n, &media, (!has_words).then_some(when), host, window, cx)); }
         }
         if phase == "think" {
             any = true;
@@ -601,8 +602,10 @@ impl Render for CruScreen {
         if chat_view {
             // The chat view: the live screen above the messages.
             if let Some(p) = panel.take() { col = col.child(div().flex_none().w_full().max_h(vp.height * 0.42).px(T::SP_12).pt(T::SP_8).child(p)); }
-            let chat = self.chat(&phase, &c.interim, c.more, &c.saying);
+            let chat = self.chat(&phase, &c.interim, c.more, &c.saying, window, cx);
             col = col.child(w::layer(chat));
+            // A picture opened from a reply, the files being saved (the chat's own).
+            col = col.children(crundi_chat::log::media::host_overlay(CRU_MEDIA, window, cx));
         } else {
             // The voice view: the live screen takes the field's place.
             if let Some(p) = panel.take() {
@@ -739,7 +742,10 @@ fn paste_files(item: &ClipboardItem, _: &mut Window, _: &mut App) -> bool {
 
 /// A reply's media (replyMediaHtml): its cards, a line for the rest, and
 /// the time when the reply had no words.
-fn reply_media(n: usize, media: &[Value], time: Option<String>) -> Stateful<Div> {
+/// Cru's media session (the web's CRU_MEDIA).
+const CRU_MEDIA: &str = "cru-voice";
+
+fn reply_media(n: usize, media: &[Value], time: Option<String>, host: EntityId, window: &mut Window, cx: &mut App) -> Stateful<Div> {
     let mut d = div().id(("cru-mm", n)).flex().flex_col().gap(T::SP_8).max_w_full().min_w_0();
     for c in media.iter().filter(|x| x["kind"] == "card") {
         let title = c.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
@@ -750,7 +756,10 @@ fn reply_media(n: usize, media: &[Value], time: Option<String>) -> Stateful<Div>
             .child(cru_blocks::blocks(&blocks, false)));
     }
     if media.iter().any(|x| x["kind"] != "card") {
-        d = d.child(div().max_w_full().min_w_0().text_size(T::TEXT_13).text_color(T::text_muted()).child("This needs a newer page to show."));
+        d = match crundi_chat::log::media::reply_media(CRU_MEDIA, &format!("cru-mm-{n}"), media, host, window, cx) {
+            Some(el) => d.child(div().max_w_full().min_w_0().child(el)),
+            None => d.child(div().max_w_full().min_w_0().text_size(T::TEXT_13).text_color(T::text_muted()).child("This needs a newer page to show.")),
+        };
     }
     d.when_some(time, |d, t| d.child(div().text_size(T::TEXT_10).text_color(T::text_muted()).child(t)))
 }

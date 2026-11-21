@@ -170,6 +170,7 @@ Root (gpui-component)
    │     ├─ (chat body)  elements (a pane kind's body, no view) log over composer
    │     │  ├─ LogView   cached   the virtualised log (list): only visible rows
    │     │  ├─ TailView  cached   while a reply streams at the log's end: its last block
+   │     │  ├─ ActivityView cached while a turn runs at the log's end: "Working…" and its spinner
    │     │  └─ Composer  cached   the box, Send / Stop
    │     └─ Launcher     cached   ("pend:" panes) New terminal: Empty Shell, UI Mode, Terminal
    ├─ Drawer             cached   the browser drawer (Desktop)
@@ -204,6 +205,13 @@ Root (gpui-component)
   follows the end). A code block, a table, a goal bar or a parked card,
   a side question under the reply, or a log not at its end keeps the
   last row in the list. test/chat-tail.mjs checks it.
+- **The activity row** (`chat::log::activity`, F159): while a turn runs,
+  "Working…" (or "Compacting the conversation…") and a spinner capped at
+  T::ANIM_FPS sit under the newest row. A spinner frame must not redraw the
+  log, so where the tail would draw itself (the log follows its end, its
+  rows reach the foot) the row is an ActivityView beside the TailView, over
+  a room of its height the list keeps under its last row; elsewhere (a short
+  log, a reader up the log) it is drawn in the list under the last row.
 - A wheel tick over a log is the same: the list notifies the LogView, and
   GPUI marks every ancestor view dirty with it (`Window::mark_view_dirty`
   walks the view path up; Zed's workspace does the same), so the Workbench

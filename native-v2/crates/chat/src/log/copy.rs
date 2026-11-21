@@ -101,12 +101,8 @@ pub fn button(v: &mut LogView, cx: &mut Context<LogView>) -> Option<AnyElement> 
     let origin = v.list.viewport_bounds().origin;
     let done = v.ui.copy.done;
     Some(div().absolute().left(t.at.x - origin.x).top(t.at.y - origin.y)
-        .child(div().id("log-copy").occlude().w(T::LOG_COPY_W).h(T::LOG_COPY_H).flex().items_center().justify_center().cursor_pointer()
-            .rounded(T::R_CONTROL).border_1().border_color(T::border()).bg(T::bg_secondary()).shadow_md()
-            .text_color(if done { T::green() } else { T::text_secondary() })
-            .hover(move |d| { let d = d.bg(T::bg_hover()); if done { d } else { d.text_color(T::text()) } })
+        .child(w::log_copy("log-copy", done)
             .tooltip(w::tooltip(format!("Copy {}", t.what)))
-            .child(w::icon(if done { IconName::Check } else { IconName::Copy }, T::LOG_COPY_ICON))
             .on_hover(cx.listener(|v, on: &bool, _, cx| { v.ui.copy.over = *on; if *on { v.ui.copy.hide = None; } else { hide_soon(v, cx); } }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|v, _, window, cx| press(v, window, cx))))

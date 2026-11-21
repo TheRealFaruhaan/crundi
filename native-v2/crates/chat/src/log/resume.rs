@@ -171,11 +171,7 @@ fn heading(skip: bool, term: bool) -> String {
 
 /// A choice (.cr-item; New session and the heavy choice's first: .cr-new).
 fn row(id: SharedString, focused: bool, accent: bool, title: String, meta: Option<AnyElement>, on: impl Fn(&mut Picker, &mut Window, &mut Context<Picker>) + 'static, cx: &mut Context<Picker>) -> AnyElement {
-    div().id(id).w_full().flex().flex_col().gap(T::SP_2).px(T::SP_12).py(T::SP_8).rounded(T::R_CONTROL).cursor_pointer()
-        .bg(T::bg()).border_1().border_color(if accent { T::accent() } else { T::border() })
-        .when(focused, |d| d.border_color(T::accent_hover()).bg(T::accent_dim()))
-        .hover(|d| d.border_color(T::accent()).bg(T::accent_dim()))
-        .child(div().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).text_color(if accent { T::accent_hover() } else { T::text() }).child(title))
+    w::pick_card(id, title, accent, focused)
         .children(meta)
         .on_click(cx.listener(move |p, _, window, cx| on(p, window, cx)))
         .into_any_element()

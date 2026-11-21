@@ -545,14 +545,31 @@ impl System {
             out.map(|o| (o.0, o.1, (o.0 + o.1) / 2., o.2))
         })
     }
-    fn env(&self, id: &str) -> Env { Env { activity: Rc::new(|| None), badge: self.badge_fn(id) } }
+    /// The activity row's words (log/activity.rs): the row's left + 8, the
+    /// words' right, the row's middle and top (the web's env.activity).
+    fn activity_fn(&self, id: &str) -> Rc<dyn Fn() -> Option<(f32, f32, f32, f32)>> {
+        let (sp, ly, id) = (self.spots.clone(), self.chats[id].layer.clone(), id.to_string());
+        Rc::new(move || {
+            let r = Self::bx(&sp, &ly, &format!("activity:{id}"))?;
+            let words = Self::bx(&sp, &ly, &format!("activity-w:{id}")).map_or(r.0 + 90., |w| w.1);
+            Some((r.0 + 8., words, (r.2 + r.3) / 2., r.2))
+        })
+    }
+    fn env(&self, id: &str) -> Env { Env { activity: self.activity_fn(id), badge: self.badge_fn(id) } }
     fn top_of(&self, id: &str, name: String, pl: f32, pr: f32) -> SurfFn {
         let (sp, ly) = (self.spots.clone(), self.chats[id].layer.clone());
         Rc::new(move || Self::bx(&sp, &ly, &name).map(|b| Surf { y: b.2, l: b.0 + pl, r: b.1 - pr }))
     }
     fn clear_of_badges(&self, id: &str, f0: SurfFn) -> SurfFn {
-        let badge = self.badge_fn(id);
-        Rc::new(move || { let mut sf = f0()?; if let Some(b) = badge() { if b.0 - 12. > sf.l + 40. { sf.r = sf.r.min(b.0 - 12.); } } Some(sf) })
+        let (badge, act) = (self.badge_fn(id), self.activity_fn(id));
+        Rc::new(move || {
+            let mut sf = f0()?;
+            if let Some(b) = badge() { if b.0 - 12. > sf.l + 40. { sf.r = sf.r.min(b.0 - 12.); } }
+            // Not on top of the words "Working…" either, when they are down
+            // at its level and there is room beside them.
+            if let Some(w) = act() { if w.3 > sf.y - 60. && sf.r - (w.1 + 26.) > 70. { sf.l = sf.l.max(w.1 + 26.); } }
+            Some(sf)
+        })
     }
     fn nudge_surf(&self, id: &str, mobile: bool) -> SurfFn {
         if mobile { self.top_of(id, format!("send:{id}"), 14., 14.) } else { self.top_of(id, format!("composer:{id}"), 16., 16.) }

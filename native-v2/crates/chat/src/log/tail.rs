@@ -71,6 +71,18 @@ pub struct Tail {
     /// layer), a goal bar or a parked card boxed the log.
     pub(crate) typing: bool,
     pub(crate) boxed: bool,
+    /// The activity row's own view (activity.rs), the dock's room under it
+    /// as last rendered, whether this render draws it in the list, and
+    /// whether a turn was running when last drawn.
+    pub(crate) act_view: Option<Entity<super::activity::ActivityView>>,
+    pub(crate) dock_room: Pixels,
+    pub(crate) act_inline: bool,
+    pub(crate) act_seen: bool,
+}
+
+impl Tail {
+    /// The last row ended at the log's foot in the last layout.
+    pub(crate) fn at_foot(&self) -> bool { self.geo.get().at_foot }
 }
 
 /// The pane's log draws its streaming tail with a view of its own (ChatPane).
@@ -80,9 +92,14 @@ pub fn watch(log: &Entity<LogView>, window: &mut Window, cx: &mut App) {
         let sub = cx.observe(log, |_, _, cx| cx.notify());
         TailView { log: weak, _sub: sub }
     });
+    let act = cx.new(|cx: &mut Context<super::activity::ActivityView>| {
+        let sub = cx.observe(log, |_, _, cx| cx.notify());
+        super::activity::ActivityView { log: log.downgrade(), _sub: sub }
+    });
     log.update(cx, |l, cx| {
         l.tail.watched = true;
         l.tail.view = Some(view);
+        l.tail.act_view = Some(act);
         let store = l.store.clone();
         l._subs.push(cx.observe_in(&store, window, |this: &mut LogView, _, window, cx| changed(this, window, cx)));
     });

@@ -59,6 +59,7 @@ pub mod resume;
 pub mod parked;
 pub mod driver;
 pub mod tail;
+pub mod activity;
 
 pub use shared::{follow, Shared};
 pub use goal::{open_plan, plan_status};
@@ -146,7 +147,12 @@ impl LogView {
             // The parked card follows the projects store (a chat parked, or live again).
             cx.observe(&projects, |this: &mut Self, _, cx| parked::follow(this, cx)),
             // The text size changes every row.
-            cx.observe(&store.read(cx).meta.clone(), |this: &mut Self, m, cx| { let z = m.read(cx).0.zoom; if this.zoom != Some(z) { this.zoom = Some(z); cx.notify(); } }),
+            // So does a turn starting or ending (the activity row: activity.rs).
+            cx.observe(&store.read(cx).meta.clone(), |this: &mut Self, m, cx| {
+                let z = m.read(cx).0.zoom;
+                let on = activity::shown(this, cx);
+                if this.zoom != Some(z) || this.tail.act_seen != on { this.zoom = Some(z); this.tail.act_seen = on; cx.notify(); }
+            }),
         ];
         // A text box in a card taking or losing the keyboard: the paint layer follows.
         let focus = cx.focus_handle();
@@ -412,7 +418,12 @@ impl LogView {
 
     fn item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let n = self.store.read(cx).rows.len();
-        let el = self.item_el(ix, window, cx);
+        let mut el = self.item_el(ix, window, cx);
+        // A turn running, and the row not drawn at the foot by its own view:
+        // under the last row (activity.rs).
+        if ix + 1 == n && self.tail.act_inline {
+            el = div().flex().flex_col().w_full().child(el).child(activity::row(self, cx)).into_any_element();
+        }
         tail::mark_last(self, ix, n, el)
     }
 
@@ -643,6 +654,14 @@ impl Render for LogView {
         // itself only where the list puts it, at the log's foot).
         // The floating dock's room at the end (the newest line scrolls clear of it).
         let room = agents::room(self);
+        self.tail.dock_room = room;
+        // The activity row (activity.rs): its own view's room under the last
+        // row, or drawn under it in the list.
+        let act = self.activity(cx);
+        self.tail.act_seen = act.is_some();
+        self.tail.act_inline = act == Some(false);
+        if act != Some(true) { activity::begin(self, cx); }
+        let room = if act == Some(true) { room + activity::height(self.fs()) } else { room };
         self.tail.room = room;
         let geo = tail::measure(self, cx);
         // The pointer while a press is held, wherever it goes (over the
