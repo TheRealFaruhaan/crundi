@@ -215,6 +215,24 @@ export async function run(T_, t) {
         await T.act('factories-transcript-head', 'ask-set', JSON.stringify([rq('rqa', 'pin', 'Alpha')]));
         const a1 = await T.until('a secret request: its card, armed, the box saying PIN', (p) => A(p).cards?.[0]?.armed && A(p).placeholder === 'PIN', 6000);
         t.check('…the box empty', A(a1).pin === '', A(a1));
+        // F216: the cards are drawn, with their height (not 0 px).
+        await T.until('…the card drawn with its height', (p) => A(p).h > 40, 6000);
+        await sleep(300); await T.snap('planning', 'factories-transcript-ask-1');
+        // F222: the PIN box takes 6 characters at most.
+        await T.act('factories-transcript-head', 'ask-type', '1234567');
+        await sleep(300);
+        t.check('…the PIN box takes no more than 6 characters', A(await T.props()).pin === '', A(await T.props()));
+        await T.act('factories-transcript-head', 'ask-type', '123456');
+        await T.until('…the PIN typed', (p) => A(p).pin === '123456');
+        // F217: a wrong PIN says why and empties the box for the next try.
+        await T.act('factories-transcript-head', 'ask-approve');
+        const aw = await T.until('a wrong PIN: the card says why', (p) => A(p).error && A(p).cards?.[0]?.armed, 8000);
+        t.check('…and the box is empty', A(aw).pin === '', A(aw));
+        // Two requests: both cards drawn, taller than one.
+        const h1 = A(aw).h;
+        await T.act('factories-transcript-head', 'ask-set', JSON.stringify([rq('rqa', 'pin', 'Alpha'), rq('rqc', 'pin', 'Gamma')]));
+        await T.until('two requests: both cards drawn, taller than one', (p) => A(p).cards?.length === 2 && A(p).h > h1 + 40, 6000);
+        await sleep(300); await T.snap('planning', 'factories-transcript-ask-2');
         await T.act('factories-transcript-head', 'ask-type', '123456');
         await T.until('…the PIN typed', (p) => A(p).pin === '123456');
         await T.act('factories-transcript-head', 'ask-set', JSON.stringify([rq('rqb', 'passphrase', 'Beta')]));

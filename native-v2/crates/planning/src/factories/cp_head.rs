@@ -216,6 +216,7 @@ impl ChatHead {
             // it (ask-set <requests JSON>), the box typed, a card's Reject.
             "ask-set" => { let v: Value = serde_json::from_str(arg).unwrap_or(Value::Null); set_asks(&json!({ "requests": v }), cx); true }
             "ask-type" => { let v = arg.to_string(); self.asks.update(cx, |a, cx| a.pin.update(cx, |s, cx| s.set_value(v, window, cx))); true }
+            "ask-approve" => { self.asks.update(cx, |a, cx| a.approve(window, cx)); true }
             "ask-reject" => { let id = arg.to_string(); self.asks.update(cx, |a, cx| a.reject(&id, window, cx)); true }
             _ => false,
         }
@@ -329,6 +330,11 @@ pub struct AskCards {
     pin: Entity<w::InputState>,
     /// The box's word ('PIN' or 'Passphrase', the armed request's lock).
     ph: &'static str,
+    /// The box takes at most 6 characters (a PIN lock: the web's
+    /// maxlength 6; a passphrase has no limit).
+    six: Rc<Cell<bool>>,
+    /// The cards' drawn height, as last painted (for the suite: F216).
+    drawn_h: Rc<Cell<f32>>,
     /// The requests shown, as last drawn (a change of them redraws).
     shown: Vec<Req>,
     /// "Allow for this chat" on the open card (the web's askAllow): ticked,
@@ -341,13 +347,14 @@ pub struct AskCards {
 
 impl AskCards {
     fn new(id: &str, project: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let pin = cx.new(|cx| w::InputState::new(window, cx).masked(true).placeholder("PIN"));
+        let six = Rc::new(Cell::new(true));
+        let pin = { let six = six.clone(); cx.new(|cx| w::InputState::new(window, cx).masked(true).placeholder("PIN").validate(move |s, _| !six.get() || s.chars().count() <= 6)) };
         let a = asks(cx);
         let subs = vec![
             cx.observe_in(&a, window, |this, _, window, cx| this.sync(window, cx)),
             cx.subscribe_in(&pin, window, |this, _, ev: &w::InputEvent, window, cx| if let w::InputEvent::PressEnter { .. } = ev { this.approve(window, cx); }),
         ];
-        let mut me = AskCards { id: id.to_string(), project: project.to_string(), armed: String::new(), auto: false, err: String::new(), pin, ph: "PIN", shown: vec![], allow: (false, "1h"), preauth: false, _subs: subs };
+        let mut me = AskCards { id: id.to_string(), project: project.to_string(), armed: String::new(), auto: false, err: String::new(), pin, ph: "PIN", six, drawn_h: Rc::new(Cell::new(0.)), shown: vec![], allow: (false, "1h"), preauth: false, _subs: subs };
         me.sync(window, cx);
         // (After this update: the Factories tab, which keeps the server's
         // capabilities, may be the one making this card.)
@@ -394,6 +401,7 @@ impl AskCards {
     fn fresh(&mut self, lock: &str, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
         let ph = if lock == "passphrase" { "Passphrase" } else { "PIN" };
         self.ph = ph;
+        self.six.set(lock != "passphrase");
         self.pin.update(cx, |s, cx| { s.set_value("", window, cx); s.set_placeholder(ph, window, cx); if focus { s.focus(window, cx); } });
     }
 
@@ -410,7 +418,9 @@ impl AskCards {
     fn approve(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(r) = self.shown.iter().find(|r| r.id == self.armed).cloned() else { return };
         let v = self.pin.read(cx).value().to_string();
-        if let Err(e) = sreq::check(&r.lock, &v) { self.err = e.into(); cx.notify(); return; }
+        // Not a PIN or passphrase: the card says so, its box drawn anew
+        // (empty), as the web's drawAsks does.
+        if let Err(e) = sreq::check(&r.lock, &v) { self.err = e.into(); self.pin.update(cx, |s, cx| s.set_value("", window, cx)); cx.notify(); return; }
         let allow = (self.allow.0 && self.can_allow(&r, cx)).then_some(self.allow.1);
         let body = sreq::approve_body(&r, &v, allow);
         let me = cx.entity().downgrade();
@@ -428,8 +438,12 @@ impl AskCards {
                     // An old lock: offer to set a passphrase now, with the one just typed.
                     if upgrade { super::dlg::upgrade(vec![(r.secret.clone(), r.name.clone(), r.lock.clone(), pin)], cx); }
                 }
-                // A wrong PIN leaves the request waiting: the card says why.
-                Err(e) => { let _ = me.update(cx, |this, cx| { this.err = e; cx.notify(); }); }
+                // A wrong PIN leaves the request waiting: the card says why,
+                // and the box is emptied for the next try (F217).
+                Err(e) => {
+                    let _ = me.update(cx, |this, cx| { this.err = e; cx.notify(); });
+                    let _ = wh.update(cx, |_, window, cx| { let _ = me.update(cx, |this, cx| this.pin.update(cx, |s, cx| s.set_value("", window, cx))); });
+                }
             }
         });
     }
@@ -445,17 +459,18 @@ impl AskCards {
     fn props(&self, cx: &App) -> Value {
         json!({ "cards": self.shown.iter().map(|r| json!({ "id": r.id, "name": r.name, "run": r.run, "armed": r.id == self.armed })).collect::<Vec<_>>(), "error": self.err,
             "pin": self.pin.read(cx).value().to_string(), "placeholder": self.ph,
-            "allow": { "on": self.allow.0, "for": self.allow.1 } })
+            "allow": { "on": self.allow.0, "for": self.allow.1 }, "h": self.drawn_h.get() })
     }
 }
 
 impl Render for AskCards {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("fx-cp-ask");
-        if self.shown.is_empty() { return div().into_any_element(); }
+        if self.shown.is_empty() { self.drawn_h.set(0.); return div().into_any_element(); }
         let line = |cls_why: bool, t: String| div().when(cls_why, |d| d.mt(T::SP_4).text_size(T::TEXT_12).text_color(T::text_secondary()).line_height(relative(1.4))).child(t);
         let mut host = div().id("fx-cp-ask").flex().flex_col().gap(T::SP_8).p(T::SP_10).bg(T::bg_secondary()).border_b_1().border_color(T::border())
-            .max_h(relative(0.6)).overflow_y_scroll();
+            .max_h(relative(0.6)).overflow_y_scroll()
+            .child({ let h = self.drawn_h.clone(); canvas(move |b, _, _| h.set(f32::from(b.size.height)), |_, _, _, _| {}).absolute().top_0().left_0().w_full().h_full() });
         for (i, r) in self.shown.iter().enumerate() {
             let armed = r.id == self.armed;
             let head = if r.run { format!("Run a command with {}", r.name) } else { format!("Release {}", r.name) };
