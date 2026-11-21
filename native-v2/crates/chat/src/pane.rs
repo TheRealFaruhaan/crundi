@@ -70,7 +70,9 @@ impl ChatPane {
             .when_some(self.mini.clone(), |d, m| d.child(m.cached(StyleRefinement::default().absolute().inset_0())))
             .when(self.mini.is_some(), |d| d.capture_key_down(move |_, _, cx| crate::mini::acted(&chat, cx)))
             .drag_over::<ExternalPaths>(|s, _, _, _| s.border_2().border_dashed().border_color(T::accent()))
-            .on_drop(move |p: &ExternalPaths, _, cx| { crate::composer::os_drop(&c1, p.paths().to_vec(), cx); cx.stop_propagation(); });
-        w::ref_target(body, move |text, _, cx| crate::composer::ref_drop(&c2, text, cx)).into_any_element()
+            // (Deferred, as the reference below: the composer's box is
+            // reached through the window, which a drop's handler is inside.)
+            .on_drop(move |p: &ExternalPaths, _, cx| { let (c1, p) = (c1.clone(), p.paths().to_vec()); cx.defer(move |cx| crate::composer::os_drop(&c1, p, cx)); cx.stop_propagation(); });
+        w::ref_target(body, move |text, _, cx| { let (c2, t) = (c2.clone(), text.to_string()); cx.defer(move |cx| crate::composer::ref_drop(&c2, &t, cx)) }).into_any_element()
     }
 }

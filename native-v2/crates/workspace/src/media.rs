@@ -63,6 +63,8 @@ pub struct MediaView {
     width: f32,
     project: String,
     grid: UniformListScrollHandle,
+    /// Each card's place on screen as last painted (by id), for the test driver.
+    card_at: std::rc::Rc<std::cell::RefCell<HashMap<String, Bounds<Pixels>>>>,
     _sub: Subscription,
 }
 
@@ -75,7 +77,7 @@ impl MediaView {
         let search = cx.new(|cx| w::InputState::new(window, cx).placeholder("Search media…"));
         let _sub = cx.subscribe_in(&search, window, |m, st, ev: &w::InputEvent, _, cx| if let w::InputEvent::Change = ev { let q = st.read(cx).value().to_string(); if q != m.q { m.q = q; m.derive(cx); } });
         let lightbox = lightbox(cx).expect("media::init first");
-        MediaView { kind: "all".into(), scope: "project".into(), items: vec![], state: "loading".into(), err: String::new(), thumbs: HashMap::new(), lb: None, lightbox, search, q: String::new(), shown: vec![], cols: 1, width: 0., project: crundi_shell::project(cx), grid: UniformListScrollHandle::new(), _sub }
+        MediaView { kind: "all".into(), scope: "project".into(), items: vec![], state: "loading".into(), err: String::new(), thumbs: HashMap::new(), lb: None, lightbox, search, q: String::new(), shown: vec![], cols: 1, width: 0., project: crundi_shell::project(cx), grid: UniformListScrollHandle::new(), card_at: Default::default(), _sub }
     }
 
     pub fn shown(&self) -> Vec<Value> { self.items.iter().filter(|it| matches(it, &self.q)).cloned().collect() }
@@ -239,7 +241,8 @@ impl MediaView {
     pub fn props(&self) -> Value {
         json!({
             "state": self.state, "error": self.err, "kind": self.kind, "scope": self.scope, "q": self.q,
-            "cards": self.shown.iter().map(|c| { let id = s(c, "id"); json!({ "id": id, "name": s(c, "originalName"), "kind": s(c, "kind"),
+            "cards": self.shown.iter().map(|c| { let id = s(c, "id"); let bx = self.card_at.borrow().get(&id).map(|b| [f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width), f32::from(b.size.height)]);
+                json!({ "id": id, "name": s(c, "originalName"), "kind": s(c, "kind"), "box": bx,
                 "thumb": self.thumbs.get(&id).is_some_and(|t| t.is_some()), "link": if c.get("link").is_none_or(|l| l.is_null()) { "none" } else if s(c, "linkStatus") == "deleted" { "deleted" } else { "ok" } }) }).collect::<Vec<_>>(),
             "lightbox": self.lb.as_ref().map(|i| s(i, "originalName")),
         })
@@ -281,7 +284,8 @@ impl MediaView {
             .child(div().absolute().top(T::SP_6).left(T::SP_6).px(T::SP_4).py(T::SP_2).rounded(T::SP_6).bg(T::ws_ml_scrim().opacity(T::WS_MEDIA_BADGE_O)).text_color(T::white()).child(w::icon(glyph, T::TEXT_13)));
         let card = w::card().id(("media-card", i)).w(cw).overflow_hidden().bg(T::bg_card());
         let card = if path.is_empty() { card } else { w::tip(w::drag_ref(card.cursor_grab(), "media", &path, name.clone()), "Drag onto a terminal to insert this path") };
-        card.child(thumb_box)
+        let (at, k) = (self.card_at.clone(), id.clone());
+        card.relative().child(thumb_box)
             .child(div().flex().flex_col().gap(T::SP_2).px(T::SP_8).py(T::SP_6)
                 .child(w::tip(div().id(("media-name", i)).text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text()).line_clamp(2).child(name.clone()), name))
                 .child(div().flex().flex_wrap().items_center().gap(T::SP_6).text_size(T::TEXT_10).text_color(T::text_muted())
@@ -296,6 +300,7 @@ impl MediaView {
                 .when(!path.is_empty(), |d0| d0.child(w::icon_button(("media-copy", i), IconName::Copy, "Copy file path").on_click(cx.listener(move |m, _, _, cx| m.copy(&c, cx)))))
                 .when(linked, |d0| { let j = id.clone(); d0.child(w::disabled(w::icon_button(("media-jump", i), IconName::ExternalLink, "Jump to source"), deleted).on_click(cx.listener(move |m, _, window, cx| m.jump(&j, window, cx)))) })
                 .child(w::icon_button(("media-del", i), IconName::Trash, "Delete").on_click(cx.listener(move |m, _, window, cx| m.delete(&d, window, cx)))))
+            .child(canvas(move |b, _, _| { at.borrow_mut().insert(k.clone(), b); }, |_, _, _, _| {}).absolute().top_0().left_0().size_full())
             .into_any_element()
     }
 }

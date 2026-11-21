@@ -41,6 +41,9 @@ pub struct PaneHead {
     last: Option<(HeadInfo, HeadExtra)>,
     /// The narrow head's "…" menu is open.
     menu: bool,
+    /// The menu as last drawn: what the driver reports, so a test's next
+    /// press finds it on screen (or gone), never only in state (F145).
+    menu_drawn: bool,
     /// Where the press that closed the menu from outside was (the "…"
     /// button's own press then does not open it again).
     closed_at: Option<Point<Pixels>>,
@@ -63,7 +66,7 @@ impl PaneHead {
     pub(crate) fn new(key: String, chat: bool, info: Rc<dyn Fn(&App) -> HeadInfo>, projects: Entity<Projects>, wb: WeakEntity<Workbench>, watch: Box<dyn FnOnce(&mut Context<PaneHead>) -> Vec<Subscription>>, cx: &mut Context<Self>) -> Self {
         let subs = watch(cx);
         let kind = extra::head_of(cx, &key);
-        PaneHead { key, chat, info, kind, projects, wb, last: None, menu: false, closed_at: None, renaming: None, renamed: None, _subs: subs }
+        PaneHead { key, chat, info, kind, projects, wb, last: None, menu: false, menu_drawn: false, closed_at: None, renaming: None, renamed: None, _subs: subs }
     }
 
     /// What the title or the extra reads may have changed (the kind's
@@ -100,7 +103,7 @@ impl PaneHead {
             "tags": e.tags.iter().map(|t| t.text.to_string()).collect::<Vec<_>>(),
             "secrets": e.secrets, "buttons": buttons,
             "icon": self.kind.as_ref().and_then(|k| k.icon).is_some(),
-            "menu": self.menu, "renaming": self.renaming.is_some(),
+            "menu": self.menu_drawn, "renaming": self.renaming.is_some(),
         })
     }
 
@@ -222,6 +225,7 @@ impl Render for PaneHead {
         let id = f.leaf;
         let fold = self.chat && f.narrow;
         if !fold && self.menu { self.menu = false; }
+        self.menu_drawn = fold && self.menu;
         let shown = self.shown_title(&info.title).to_string();
         let (title, cap) = rules::title_shown(&shown, if self.renamed.is_some() { "" } else { &info.long }, f.w);
         let mut row = div().flex().items_center().size_full().pl(T::SP_2).pr(T::SP_4).gap(T::SP_4);
