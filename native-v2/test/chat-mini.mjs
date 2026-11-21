@@ -55,7 +55,11 @@ await T.snap(A, 'nudge');
   const drew = diff(r0, await renders());
   const fr = T.frames.since(fm);
   console.log('views rendered while Mini animates:', JSON.stringify(drew), 'frames', fr.frames);
-  t.check('Mini animates (frames, its layer)', fr.frames > 20 && (drew['chat-mini'] || 0) > 20, { drew, frames: fr.frames });
+  // (F179: the thresholds follow the frame rate this run actually gets, not
+  // a fixed count: under Xvfb a frame can take 100 ms or more. While Mini
+  // animates it is what drives the frames, so it must draw (almost) every
+  // one of them, and the animation must not stall: at least 5 in 2 s.)
+  t.check('Mini animates (frames, its layer)', fr.frames >= 5 && (drew['chat-mini'] || 0) >= Math.max(5, Math.floor(fr.frames * 0.8)), { drew, frames: fr.frames });
   t.check('…at most 60 a second', (drew['chat-mini'] || 0) <= 2000 / 16 + 5, drew);
   t.check('no log, composer, head, top bar or sidebar redraws for it', !drew.log && !drew.composer && !drew.head && !drew['top-bar'] && !drew.sidebar && !drew['project-bar'], drew);
 }
@@ -130,9 +134,14 @@ await t.sleep(1500);
 await T.snap(A, 'top-party');
 {
   const r0 = await renders();
-  await t.sleep(1000);
+  const fm = T.frames.mark();
+  await t.sleep(2000);
   const drew = diff(r0, await renders());
-  t.check('its frames draw its layer, not the top bar', (drew['mini-top'] || 0) > 10 && !drew['top-bar'] && !drew.log && !drew.composer, drew);
+  const fr = T.frames.since(fm);
+  console.log('views rendered while Mini is out on the top bar:', JSON.stringify(drew), 'frames', fr.frames);
+  // (F179: its layer draws (almost) every frame the window draws, whatever
+  // the frame rate here; at least 5 in 2 s; the top bar itself never.)
+  t.check('its frames draw its layer, not the top bar', fr.frames >= 5 && (drew['mini-top'] || 0) >= Math.max(5, Math.floor(fr.frames * 0.8)) && !drew['top-bar'] && !drew.log && !drew.composer, { drew, frames: fr.frames });
 }
 await T.ui('mini-trigger', 'nudge');
 await untilM('a chat wants it: it leaves the top bar for the chat', (m) => m.scene === 'nudge' && m.actor && !m.topBusy, 40000);
