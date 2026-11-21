@@ -306,7 +306,9 @@ mod tests {
         let t1 = Instant::now();
         while sse_conns.load(Ordering::SeqCst) < 2 && t1.elapsed() < Duration::from_secs(3) { thread::sleep(Duration::from_millis(20)); }
         assert!(sse_conns.load(Ordering::SeqCst) >= 2, "the event stream was not started again");
-        assert!(ups.load(Ordering::SeqCst) >= 2);
+        let t2 = Instant::now();
+        while ups.load(Ordering::SeqCst) < 2 && t2.elapsed() < Duration::from_secs(3) { thread::sleep(Duration::from_millis(20)); }
+        assert!(ups.load(Ordering::SeqCst) >= 2, "no Connected(true) after the reconnect");
         live.stop();
     }
 

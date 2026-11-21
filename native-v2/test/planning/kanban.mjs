@@ -147,6 +147,32 @@ export async function run(T_, t) {
   await T.act('ask-answer', 'true', 'What it is about');
   await T.until('saved and moved to To Do', (p) => { const c = cardBy(p, 'First card, edited'); return c?.status === 'todo' && c.desc === 'What it is about'; });
 
+  // The same dialogs with real keys (F232): Enter submits a line, Ctrl+Enter
+  // the description, and nothing panics (the answer is deferred).
+  await T.act('kanban-act', 'edit-task', c1.id);
+  await T.until('Edit task again, its title selected', (p) => A(p)?.title === 'Edit task' && A(p).value === 'First card, edited');
+  await T.key('First card, keyed');
+  await T.key('Return');
+  await T.until('Enter in Edit task goes on to the description', (p) => A(p)?.label === 'Description' && A(p).multiline);
+  await T.key('a', ['Control']);
+  await T.key('Keyed words');
+  await T.key('Return', ['Control']);
+  await T.until('Ctrl+Enter in the description saves it', (p) => { const c = cardBy(p, 'First card, keyed'); return !A(p) && !modal(p) && c?.desc === 'Keyed words'; });
+  const ck = cardBy(await T.props(), 'First card, keyed');
+  await T.act('kanban-todo-menu', ck.id, ck.todos[0].id, '700', '300');
+  await T.until('the subtask menu once more', (p) => !!menu(p));
+  await pick('rename');
+  await T.until('Edit subtask, its text selected', (p) => A(p)?.title === 'Edit subtask' && A(p).value === 'Step one');
+  await T.key('Step 1');
+  await T.key('Return');
+  await T.until('Enter in Edit subtask renames it', (p) => !A(p) && !modal(p) && cardBy(p, 'First card, keyed').todos[0].text === 'Step 1');
+  await T.act('kanban-act', 'add-task');
+  await T.until('Add task once more', (p) => A(p)?.title === 'Add task');
+  await T.key('Keyed task');
+  await T.key('Return');
+  await T.until('Enter in Add task adds it', (p) => !A(p) && !modal(p) && !!cardBy(p, 'Keyed task'));
+  t.check('the client is still up after the Enters', !!K(await T.props()));
+
   // Drag to move: a real mouse drag from Backlog's card to the Done column.
   await T.act('kanban-act', 'card-menu', c1.id);
   const second = cardBy(await T.props(), 'Second card');
