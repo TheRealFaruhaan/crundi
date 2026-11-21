@@ -35,7 +35,7 @@ mod spinner; pub use spinner::spinner;
 pub mod layer; pub use layer::{layer, text_box, watch_focus, Layer};
 mod shimmer; pub use shimmer::shimmer;
 mod markdown; pub use markdown::markdown;
-pub mod tip; pub use tip::{tip, tooltip};
+pub mod tip; pub use tip::{inner, tip, tooltip};
 mod icon; pub use icon::icon;
 pub mod cru_mark; pub use cru_mark::cru_mark;
 pub mod brand_mark; pub use brand_mark::{boot_mark, brand_head, brand_mark, brand_mark_with, sign_in_mark, warm_marks};
@@ -161,14 +161,14 @@ pub fn ghost(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button
 /// An icon-only button with a tooltip (the bars' buttons): a square of the
 /// theme's ICON_BTN, its icon ICON_BTN_ICON.
 pub fn icon_button(id: impl Into<ElementId>, icon: IconName, tip: impl Into<SharedString>) -> Button {
-    sized(Button::new(id).ghost(), None, Some(icon), false, Ctl::Normal).tooltip(tip.into())
+    inner(sized(Button::new(id).ghost(), None, Some(icon), false, Ctl::Normal).tooltip(tip.into()))
 }
 
 /// An icon button that stays pressed while `on` (Annotate, pin).
 pub fn icon_toggle(id: impl Into<ElementId>, icon: IconName, tip: impl Into<SharedString>, on: bool) -> Button {
     let b = Button::new(id);
     let b = if on { b.primary() } else { b.ghost() };
-    sized(b, None, Some(icon), false, Ctl::Normal).tooltip(tip.into())
+    inner(sized(b, None, Some(icon), false, Ctl::Normal).tooltip(tip.into()))
 }
 
 /// A text button that stays pressed while `on` (a device, a filter).

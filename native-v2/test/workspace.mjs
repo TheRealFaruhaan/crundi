@@ -185,6 +185,31 @@ const clickMore = async (path) => {
   await T.mouse('click', b[0] + b[2] / 2, b[1] + b[3] / 2);
   return b;
 };
+// A row's tooltip (F160): it shows on a rest, gives way over the row's own
+// "…" (whose tooltip is its own), and after a click stays away until the
+// pointer has left the row and come back, as a browser's title, so it never
+// covers the menu or the window the click opened.
+{
+  const ROW_TIP = 'Double-click to open. Right-click for more. Drag onto a terminal to insert its path.';
+  await T.until('the README row is drawn', (s) => W(s).files.rows.find((r) => r.path === join(P, 'README.md'))?.more);
+  await t.sleep(300);
+  const b = W(await T.state()).files.rows.find((r) => r.path === join(P, 'README.md')).more;
+  const [rx, ry] = [b[0] - 120, b[1] + b[3] / 2];
+  const rest = async (x, y) => { await T.mouse('move', x, y); await T.mouse('move', x + 1, y); await t.sleep(1300); return W(await T.state()).tip; };
+  let tip = await rest(rx, ry);
+  t.check('resting on a row shows its tooltip', tip.text === ROW_TIP && tip.shown && tip.ago < 1200, tip);
+  tip = await rest(b[0] + b[2] / 2, b[1] + b[3] / 2);
+  t.check('over the row\'s "…" the row\'s tooltip gives way (the button has its own)', tip.text === ROW_TIP && !tip.shown, tip);
+  tip = await rest(rx, ry);
+  t.check('…and shows again off the button', tip.text === ROW_TIP && tip.shown && tip.ago < 1200, tip);
+  await T.mouse('click', rx, ry);
+  tip = await rest(rx + 3, ry);
+  t.check('after a click on the row its tooltip stays away while the pointer rests there', tip.text === ROW_TIP && !tip.shown, tip);
+  await T.mouse('move', rx, 5); await t.sleep(200);
+  tip = await rest(rx, ry);
+  t.check('…and comes back once the pointer left the row and returned', tip.text === ROW_TIP && tip.shown && tip.ago < 1200, tip);
+  await T.mouse('move', rx, 5);
+}
 let at = await clickMore(join(P, 'README.md'));
 s = await T.until('the row menu opens with the web\'s items', (s) => W(s).menu?.items?.map((i) => i.id).join(',').startsWith('open,') && W(s).menu.items.some((i) => i.id === 'delete' && i.danger) && W(s).menu.items.some((i) => i.id === 'download'));
 // As the web's openFileMenu: under the button, from its right edge less 4 (kept in the window).

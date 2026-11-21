@@ -705,10 +705,10 @@ pub fn init(cx: &mut App) {
     register_kind(cx, PaneKind {
         prefix: "pend:",
         chat: false,
-        make: Rc::new(|key, _, _, cx| {
+        make: Rc::new(|key, _, window, cx| {
             let k = key.to_string();
             PaneParts {
-                body: { let v = cx.new(|cx| launcher::Launcher::new(&k, cx)); Rc::new(move |_| v.clone().cached(StyleRefinement::default().size_full()).into_any_element()) },
+                body: { let v = cx.new(|cx| launcher::Launcher::new(&k, window, cx)); Rc::new(move |_| v.clone().cached(StyleRefinement::default().size_full()).into_any_element()) },
                 info: Rc::new(|_| HeadInfo { title: "New terminal".into(), long: String::new(), state: String::new() }),
                 watch: Box::new(|_| vec![]),
             }
