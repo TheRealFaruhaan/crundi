@@ -14,6 +14,13 @@ export async function run(T, t) {
   await T.until('the kid screen opens over everything', (p) => K(p).on && D(p).cru.open, 15000);
   await t.sleep(500);
   await T.snap('desktop', 'cru-kid');
+  // Its keyboard button (F194): typing; back to the voice needs a Deepgram key, which this
+  // server has not: it says so and stays in keyboard mode (keyboard(false), VJ:949).
+  await T.act('kid-keyboard', 'true');
+  await T.until('the kid keyboard button: typing to Cru', (p) => D(p).cru.keyboard);
+  await T.act('kid-keyboard', 'false');
+  await T.until('…back to the voice with no Deepgram key: it says so', (p) => /Deepgram key: add one in Settings, Voice assistant/.test(D(p).cru.notice || ''));
+  t.check('…and stays in keyboard mode', D(await T.state()).cru.keyboard);
   await T.key('Escape');
   await t.sleep(300);
   t.check('Esc does not leave it', K(await T.state()).on);

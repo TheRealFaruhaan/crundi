@@ -638,18 +638,22 @@ pub fn menu_pick(id: &str) {
 /// mute let go quietly), or back to the voice; not remembered for the
 /// grown-ups' screen (kidMute(false, true), keyboard(!S.kb, false)).
 pub fn kid_keyboard(on: bool) {
+    // Back to the voice needs a usable voice, as for the grown-ups (keyboard(false)).
+    if !on && !with(|c| c.voice_usable) { voice_refused(); return; }
     crate::cru_kid::with(|k| k.muted = false);
     with(|c| { c.keyboard = on; c.listen = None; if c.unavailable.is_empty() { c.phase = "listen".into(); } c.interim.clear(); });
     if !on && with(|c| c.open && c.unavailable.is_empty()) { listen(); }
     render();
 }
 
+/// Why the voice can't be used, in the notice; keyboard mode stays.
+fn voice_refused() {
+    with(|c| c.notice = if kit::truthy(&c.settings["deepgramLimitReached"]) { "Voice is off: this month's Deepgram limit is reached.".into() } else { "Voice needs a Deepgram key: add one in Settings, Voice assistant.".into() });
+    render();
+}
+
 pub fn set_keyboard(on: bool) {
-    if !on && !with(|c| c.voice_usable) {
-        with(|c| c.notice = if kit::truthy(&c.settings["deepgramLimitReached"]) { "Voice is off: this month's Deepgram limit is reached.".into() } else { "Voice needs a Deepgram key: add one in Settings, Voice assistant.".into() });
-        render();
-        return;
-    }
+    if !on && !with(|c| c.voice_usable) { voice_refused(); return; }
     with(|c| { c.keyboard = on; c.listen = None; if on { if c.unavailable.is_empty() { c.phase = "listen".into(); } c.interim.clear(); } });
     save_prefs();
     if !on && with(|c| c.open && c.unavailable.is_empty()) { listen(); }
@@ -830,6 +834,13 @@ pub fn test_state(phase: &str) {
     render();
 }
 
+/// For the test driver: the conversation as the history would give it.
+pub fn test_turns(list: &str) {
+    let list = serde_json::from_str::<Vec<Value>>(list).unwrap_or_default();
+    with(|c| c.turns = expand_turns(list));
+    render();
+}
+
 pub fn test_hear(text: &str) {
     with(|c| { c.phase = "listen".into(); c.interim = text.to_string(); c.last_voice = Some(Instant::now()); });
     render();
@@ -886,11 +897,13 @@ pub fn ui_where() -> String {
 }
 
 /// One move from Cru (the `cru-ui` event, for this window only): the
-/// project, the tab, the chat, then a card (flashed, its Edit dialog when
-/// asked to open it), an idea (flashed, its details when asked), a file (its
-/// window) or a panel (selected in Panels); then the note. Answers the
-/// server (/api/voice/ui/ack). Words to ring (a highlight) have no finder
-/// here yet (the web's cruFindText): answered found: false.
+/// project, the tab, the chat (placed, focused and flashed), then a card
+/// (flashed, its Edit dialog when asked to open it), an idea (flashed, its
+/// details when asked), a file (its window) or a panel (selected in Panels);
+/// then what to ring (cruUiGo, src/webapp-html.js:6876-6933): the words of
+/// a highlight found on screen (`w::find`), else the target, with Cru's note
+/// beside the ring; the note is a toast only when nothing is targeted or a
+/// dialog was opened. Answers the server (/api/voice/ui/ack).
 pub fn ui_go(d: &Value) {
     if kit::s(d, "page") != page_id() { return; }
     let id = kit::s(d, "id");
@@ -912,23 +925,23 @@ pub fn ui_go(d: &Value) {
         if !has_project && !GLOBAL_TABS.contains(&tab.as_str()) && tab != "inbox" { return ack(json!({ "ok": false, "error": "No project is open on the page: say which project" })); }
         if tab != c.tab { kit::show_tab(&tab); }
     }
-    let chat = kit::s(d, "chat");
-    if !chat.is_empty() {
-        let key = format!("live:{chat}");
-        kit::on_app(move |_, cx| if let Some(wb) = crundi_workbench::workbench(cx) { wb.update(cx, |w, cx| { w.place(&key, cx); w.focus_key(&key, cx); }); });
-    }
     let note = kit::s(d, "note");
     let open = kit::truthy(d.get("open").unwrap_or(&Value::Null));
     let highlight = kit::s(d, "highlight");
-    // What is left once the card, the idea, the file and the panel are shown:
-    // the note (a toast: the PC app has no ring to put it beside, F150), and a
-    // highlight answered not found.
-    let finish = move |ack: Box<dyn FnOnce(Value)>, note: String, highlight: String| {
-        if !note.is_empty() { kit::toast(&format!("Cru: {note}")); }
-        if !highlight.is_empty() { return ack(json!({ "ok": true, "found": false })); }
-        ack(json!({ "ok": true }))
-    };
     let ack: Box<dyn FnOnce(Value)> = Box::new(ack);
+    let chat = kit::s(d, "chat");
+    let mut target: Option<Target> = None;
+    if !chat.is_empty() {
+        let key = format!("live:{chat}");
+        let k2 = key.clone();
+        kit::on_app(move |_, cx| if let Some(wb) = crundi_workbench::workbench(cx) { wb.update(cx, |w, cx| { w.place(&k2, cx); w.focus_key(&k2, cx); }); });
+        // Flashed once it is laid out (flashEl), unless words are to be rung.
+        if highlight.is_empty() {
+            let t = Target::Chat(key.clone());
+            poll(2500, move |w, cx| crate::cru_spot::flash(t.clone(), w, cx).then_some(()), |_| {});
+        }
+        target = Some(Target::Chat(key));
+    }
     let (card, node, file, widget) = (kit::s(d, "card"), kit::s(d, "node"), kit::s(d, "file"), kit::s(d, "widget"));
     if !widget.is_empty() { kit::on_app(move |_, cx| crundi_operations::panels::show(&widget, cx)); }
     if !file.is_empty() {
@@ -940,22 +953,60 @@ pub fn ui_go(d: &Value) {
         if c.tab != "kanban" && tab != "kanban" { kit::show_tab("kanban"); }
         // The board loaded again first (loadKanban), then the card looked for.
         let after = std::rc::Rc::new(std::cell::Cell::new(None::<u64>));
+        let t = Target::Card(card.clone());
         return poll(2500, move |w, cx| {
             let want = match after.get() { Some(g) => g, None => { let g = crundi_planning::kanban::load_now(cx); after.set(Some(g)); g } };
             crundi_planning::kanban::show_card(&card, open, want, w, cx)
         }, move |r| match r {
-            Some(true) => finish(ack, note, highlight),
+            Some(true) => finish(ack, Some(t), note, highlight, open),
             _ => ack(json!({ "ok": false, "error": "No such card on this project's board" })),
         });
     }
     if !node.is_empty() {
         if c.tab != "mindmap" && tab != "mindmap" { kit::show_tab("mindmap"); }
         return poll(2500, move |_, cx| crundi_planning::mindmap::has_node(&node, cx).map(|has| (has, node.clone())), move |r| match r {
-            Some((true, node)) => { kit::on_app(move |w, cx| crundi_planning::mindmap::flash_node(&node, open, w, cx)); finish(ack, note, highlight) }
+            Some((true, node)) => {
+                let n2 = node.clone();
+                kit::on_app(move |w, cx| crundi_planning::mindmap::flash_node(&n2, open, w, cx));
+                finish(ack, Some(Target::Idea(node)), note, highlight, open)
+            }
             _ => ack(json!({ "ok": false, "error": "No such idea on this project's mindmap" })),
         });
     }
-    finish(ack, note, highlight)
+    finish(ack, target, note, highlight, open)
+}
+
+use crate::cru_spot::Target;
+
+/// The end of a move (cruUiGo's last part): the highlight's words looked
+/// for (up to 2.5 s, as the tab's content comes) and rung, with the note;
+/// not found, the target rung instead and found: false. With no highlight,
+/// the note in a ring around the target, or a toast when nothing is
+/// targeted or a dialog was opened over it (`open`).
+fn finish(ack: Box<dyn FnOnce(Value)>, target: Option<Target>, note: String, highlight: String, open: bool) {
+    if !highlight.is_empty() {
+        let words = Target::Words(highlight);
+        let n2 = note.clone();
+        return poll(2500, move |w, cx| crate::cru_spot::spotlight(words.clone(), &n2, w, cx).then_some(()), move |r| {
+            if r.is_some() { return ack(json!({ "ok": true, "found": true })); }
+            if let Some(t) = target { ring(t, note); }
+            ack(json!({ "ok": true, "found": false }))
+        });
+    }
+    match target {
+        Some(t) if !note.is_empty() && !open => ring(t, note),
+        _ => if !note.is_empty() { kit::toast(&format!("Cru: {note}")); },
+    }
+    ack(json!({ "ok": true }))
+}
+
+/// The ring around `t` once it is on screen (up to 1.5 s: a card or an idea
+/// is laid out after the switch); never on screen, the note as a toast.
+fn ring(t: Target, note: String) {
+    let n2 = note.clone();
+    poll(1500, move |w, cx| crate::cru_spot::spotlight(t.clone(), &n2, w, cx).then_some(()), move |r| {
+        if r.is_none() && !note.is_empty() { kit::toast(&format!("Cru: {note}")); }
+    });
 }
 
 /// `f` with the window until it gives something, every 150 ms for up to

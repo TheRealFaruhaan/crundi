@@ -27,6 +27,8 @@ use gpui_component::{
 };
 
 pub use crundi_theme::IconName;
+pub mod find;
+pub mod cru_att; pub use cru_att::{att_chip, att_tag, kid_pill, AttChip};
 pub mod control; pub use control::{sized, sized_text, icon_of, Ctl};
 pub use gpui_component::input::{Input, InputEvent, InputState};
 // One file per control (AREAS.md "A new control"), each once.
@@ -162,14 +164,16 @@ pub fn ghost(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button
 /// An icon-only button with a tooltip (the bars' buttons): a square of the
 /// theme's ICON_BTN, its icon ICON_BTN_ICON.
 pub fn icon_button(id: impl Into<ElementId>, icon: IconName, tip: impl Into<SharedString>) -> Button {
-    inner(sized(Button::new(id).ghost(), None, Some(icon), false, Ctl::Normal).tooltip(tip.into()))
+    let tip = tip.into();
+    inner(sized(Button::new(id).ghost(), None, Some(icon), false, Ctl::Normal).child(find::label_mark(tip.clone())).tooltip(tip))
 }
 
 /// An icon button that stays pressed while `on` (Annotate, pin).
 pub fn icon_toggle(id: impl Into<ElementId>, icon: IconName, tip: impl Into<SharedString>, on: bool) -> Button {
     let b = Button::new(id);
     let b = if on { b.primary() } else { b.ghost() };
-    inner(sized(b, None, Some(icon), false, Ctl::Normal).tooltip(tip.into()))
+    let tip = tip.into();
+    inner(sized(b, None, Some(icon), false, Ctl::Normal).child(find::label_mark(tip.clone())).tooltip(tip))
 }
 
 /// A text button that stays pressed while `on` (a device, a filter).

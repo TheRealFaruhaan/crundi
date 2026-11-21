@@ -12,6 +12,8 @@ export async function run(T, t) {
   const C = (p) => D(p).cru;
   const U = (p) => D(p).cru.ui || {};
   const dr = (p) => D(p).drawer;
+  const SP = (p) => D(p).cruSpot;
+  const near = (a, b) => a && b && Math.abs(a.x - b.x) < 2 && Math.abs(a.y - b.y) < 2 && Math.abs(a.w - b.w) < 2 && Math.abs(a.h - b.h) < 2;
   const snap = (f) => T.snap('desktop', f);
   const key = (text, mods, phase) => T.d.send({ cmd: 'key', text, mods, phase });
   const projDir = `/tmp/crundi-devtest-${new URL(T.SERVER).port}/proj`;
@@ -217,6 +219,27 @@ export async function run(T, t) {
   await T.until('a reference dropped on Cru: a chip, its spaces folded', (p) => (C(p).refs || []).length === 1 && C(p).refs[0] === '[Kanban Task ID: 42]' && C(p).attachments === 1);
   await T.act('cru-unattach', '0');
   await T.until('…its × takes it off', (p) => C(p).attachments === 0);
+  // A copied file pasted into the typing box (F156): attached as a chip with its name.
+  {
+    const f = `/tmp/crundi-v2-paste-${process.pid}.txt`;
+    writeFileSync(f, 'pasted for Cru');
+    const r = await T.act('cru-paste', f);
+    t.check('a copied file pasted into the typing box is taken (not pasted as text)', r?.ok === true, r);
+    const p = await T.until('…a chip with its name', (p) => (U(p).attNames || []).some((n) => n === f.split('/').pop()), 8000);
+    t.check('…one attachment', C(p).attachments === 1, C(p).attachments);
+    await T.act('cru-unattach', '0');
+    await T.until('…its × takes it off', (p) => C(p).attachments === 0);
+    rmSync(f, { force: true });
+  }
+  // Cru's reply cards (F156): a reply that showed a card draws it under its words.
+  {
+    const card = { kind: 'card', title: 'Today', blocks: [{ type: 'text', text: 'Two meetings' }] };
+    await T.act('cru-turns', JSON.stringify([{ at: Date.now(), said: 'what is on today', speak: 'Here is your day.', media: [card] }]));
+    const p = await T.until('a reply with a card: the card under its words', (p) => U(p).replyCards === 1 && U(p).bubbles >= 2, 6000);
+    t.check('…its bubbles: mine and Cru\'s', U(p).bubbles === 2, U(p));
+    await T.snap('desktop', 'cru-reply-card');
+    await T.act('cru-turns', '[]');
+  }
   // show_in_crundi (the cru-ui event for this window): the tab, the project, then back.
   t.check('this window has its page id (sent with each turn)', /^pg[0-9a-z]+$/.test(C(await T.state()).page || ''));
   await T.act('cru-ui-go', JSON.stringify({ id: 'nav1', tab: 'kanban' }));
@@ -238,6 +261,36 @@ export async function run(T, t) {
     await T.act('cru-ui-go', JSON.stringify({ id: 'card2', tab: 'kanban', card: 'no-such-card' }));
     const q = await T.until('…a card not on the board: Cru is told', (p) => C(p).lastAck?.id === 'card2', 8000);
     t.check('…"No such card on this project\'s board"', C(q).lastAck.ok === false && /No such card/.test(C(q).lastAck.error || ''), C(q).lastAck);
+    // The card with Cru's note (F191): the ring around it with the note beside it, no toast.
+    await T.ui('toasts-clear');
+    await T.act('cru-ui-go', JSON.stringify({ id: 'card3', tab: 'kanban', card, note: 'Your new card' }));
+    const r = await T.until('…a card with a note: Cru\'s ring around it, the note beside it', (p) => C(p).lastAck?.id === 'card3' && SP(p)?.ring?.note === 'Your new card', 8000);
+    const box = (r.planningArea?.kanban?.boxes?.cards || []).find((c) => c.id === card);
+    t.check('…the ring is the card\'s', !!box && /Card/.test(SP(r).ring.target) && near(SP(r).ring.at, box), { ring: SP(r).ring, box });
+    t.check('…and no toast', !/Cru:/.test(r.toast || ''), r.toast);
+    await T.snap('desktop', 'cru-spot-card');
+    await T.ui('tab', 'workbench');
+  }
+  // A highlight (F191): the words found on screen (the shared controls' labels), rung with the
+  // note beside them; the next press anywhere takes the ring away.
+  {
+    await T.ui('toasts-clear');
+    await T.act('cru-ui-go', JSON.stringify({ id: 'hl1', tab: 'inbox', highlight: 'Mark all read', note: 'This button' }));
+    const p = await T.until('show_in_crundi with a highlight: the words found', (p) => C(p).lastAck?.id === 'hl1', 8000);
+    t.check('…answered found', C(p).lastAck.ok === true && C(p).lastAck.found === true, C(p).lastAck);
+    t.check('…the ring around them, with the note', /Words/.test(SP(p)?.ring?.target || '') && SP(p).ring.note === 'This button' && SP(p).ring.at.w > 20, SP(p));
+    t.check('…the note is not a toast', !/Cru:/.test(p.toast || ''), p.toast);
+    await T.snap('desktop', 'cru-spot-words');
+    await t.sleep(400);
+    const a = SP(p).ring.at;
+    await T.mouse('click', a.x + a.w + 60, a.y + a.h + 120);
+    await T.until('…a press anywhere: the ring goes', (p) => !SP(p)?.ring, 4000);
+    await T.act('cru-ui-go', JSON.stringify({ id: 'hl2', tab: 'inbox', highlight: 'words on no control here', note: 'Nothing' }));
+    const q = await T.until('…words not on screen: found false', (p) => C(p).lastAck?.id === 'hl2', 8000);
+    t.check('…answered not found, no ring', C(q).lastAck.ok === true && C(q).lastAck.found === false && !SP(q)?.ring, { ack: C(q).lastAck, spot: SP(q) });
+    // A note with nothing to ring (only a tab): a toast, "Cru: …".
+    await T.act('cru-ui-go', JSON.stringify({ id: 'hl3', tab: 'inbox', note: 'The Inbox' }));
+    await T.until('…a note with no target: a toast', (p) => C(p).lastAck?.id === 'hl3' && /Cru: The Inbox/.test(p.toast || ''), 8000);
     await T.ui('tab', 'workbench');
   }
   await T.act('cru-keyboard', 'false');
