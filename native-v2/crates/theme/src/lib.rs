@@ -63,6 +63,24 @@ impl T {
     pub fn kid_heard() -> Hsla { rgb(0x1e3a8a).into() }
     pub fn kid_break() -> Hsla { rgba(0x0a0a0feb).into() }
     pub fn kid_break_text() -> Hsla { rgb(0xfde68a).into() }
+    /// KID_PALETTE's first colours (crundi-voice.js:64): the mic's top layer
+    /// while listening, thinking, speaking and waking.
+    pub fn kid_listen() -> Hsla { rgb(0xfacc15).into() }
+    pub fn kid_think() -> Hsla { rgb(0xa3e635).into() }
+    pub fn kid_speak() -> Hsla { rgb(0xf472b6).into() }
+    pub fn kid_start() -> Hsla { rgb(0x22d3ee).into() }
+    /// What went wrong or what to know, on the kid screen (.cv-ov.kid .cv-note).
+    pub fn kid_note() -> Hsla { rgb(0xb45309).into() }
+    /// The kid typing box's edge (.cv-ov.kid.kb .cv-type: 3px solid #a5b4fc).
+    pub fn kid_type_border() -> Hsla { rgb(0xa5b4fc).into() }
+    /// "Talk to Cru" over a video (.cv-talk: #f59e0b, #111 text, 0 6px 0 rgba(0,0,0,.3)).
+    pub fn kid_talk() -> Hsla { rgb(0xf59e0b).into() }
+    pub fn kid_talk_text() -> Hsla { rgb(0x111111).into() }
+    pub fn kid_talk_drop() -> Hsla { rgba(0x0000004d).into() }
+    /// An attachment chip's error edge (.cv-chip.bad) and a sent message's
+    /// attachment tag (.cv-m .att: rgba(255,255,255,.08)).
+    pub fn cru_att_bad() -> Hsla { rgb(0xf87171).into() }
+    pub fn cru_att_tag() -> Hsla { rgba(0xffffff14).into() }
     pub fn selection() -> Hsla { rgb(0x0236a1).into() }
     pub fn scrim() -> Hsla { rgba(0x0000008c).into() }
     pub fn backdrop() -> Hsla { rgba(0x000000db).into() }
@@ -684,6 +702,28 @@ impl T {
     /// Kid mode (crundi-voice.js .cv-ov.kid): the type, the big mic, the
     /// round buttons and the PIN pad's keys and width.
     pub const KID_HEADING: Pixels = px(30.);
+    /// The kid screen's friendly face ("Comic Sans MS", "Chalkboard SE", system-ui).
+    pub const KID_FONT: &'static str = "Comic Sans MS";
+    /// The kid typing box (.cv-type): 22px bold text, 28px corners, 14px 20px padding.
+    pub const KID_TYPE_TEXT: Pixels = px(22.);
+    pub const KID_TYPE_R: Pixels = px(28.);
+    pub const KID_TYPE_PAD_X: Pixels = px(20.);
+    pub const KID_TYPE_PAD_Y: Pixels = px(14.);
+    /// "Talk to Cru" (.cv-talk): 14px 26px padding, 20px bold, its drop 6px down, 14px from the bottom.
+    pub const KID_TALK_PAD_X: Pixels = px(26.);
+    pub const KID_TALK_PAD_Y: Pixels = px(14.);
+    pub const KID_TALK_TEXT: Pixels = px(20.);
+    pub const KID_TALK_DROP: Pixels = px(6.);
+    pub const KID_TALK_BOTTOM: Pixels = px(14.);
+    /// An attachment chip (.cv-chip): at most 220px, 12px corners, a 28px
+    /// thumbnail with 6px corners; the sent tag (.cv-m .att) 10px corners, 3px 8px.
+    pub const CRU_ATT_MAX_W: Pixels = px(220.);
+    pub const CRU_ATT_R: Pixels = px(12.);
+    pub const CRU_ATT_THUMB: Pixels = px(28.);
+    pub const CRU_ATT_THUMB_R: Pixels = px(6.);
+    pub const CRU_ATT_TAG_R: Pixels = px(10.);
+    pub const CRU_ATT_TAG_PAD_Y: Pixels = px(3.);
+    pub const CRU_ATT_UP_O: f32 = 0.6;
     pub const KID_TEXT: Pixels = px(22.);
     pub const KID_REPLY: Pixels = px(28.);
     pub const KID_HEARD: Pixels = px(20.);

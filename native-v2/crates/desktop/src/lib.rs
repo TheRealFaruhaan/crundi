@@ -33,6 +33,7 @@ mod cru_frame;
 mod cru_kid;
 mod cru_screen;
 mod cru_ui;
+pub mod cru_spot;
 pub mod homepool;
 pub mod drawer;
 mod host;
@@ -132,6 +133,8 @@ pub fn init(cx: &mut App) {
     let cru_view = cx.new(cru_ui::CruScreen::new);
     crundi_shell::register_overlay(cx, cru_view.clone().into());
     cx.set_global(CruView(cru_view, lock_view));
+    // Cru's ring and the chat's flash (show_in_crundi), over everything.
+    cru_spot::init(cx);
     // The PC lock's keys while the window has them (app/main.js wirePcLockKeys):
     // Ctrl+Shift+L the visible lock, Super+Shift+L the full one.
     cx.bind_keys([KeyBinding::new("ctrl-shift-l", LockVisible, None), KeyBinding::new("super-shift-l", LockFull, None)]);
@@ -187,7 +190,7 @@ pub fn init(cx: &mut App) {
             if r.is_some() { pump(window, cx); }
             r
         })
-        .state(|_, _, _| { let mut p = props(); p["chatFrames"] = hosts::props(); json!({ "areas": { "desktop": p } }) }));
+        .state(|_, _, cx| { let mut p = props(); p["chatFrames"] = hosts::props(); p["cruSpot"] = cru_spot::state(cx); json!({ "areas": { "desktop": p } }) }));
     // Browser-only mode (test/drive.mjs): a socket of its own to a server.
     if let Ok(url) = std::env::var("CRUNDI_SERVER") { if !url.is_empty() { host::start(url); } }
 }
@@ -544,6 +547,9 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "cru-unattach" => { cru::unattach(a(0).parse().unwrap_or(0)); ok() }
         "cru-ui-go" => { if let Ok(mut v) = serde_json::from_str::<Value>(&a(0)) { v["page"] = json!(cru::page_id()); cru::ui_go(&v); } ok() }
         "cru-history" => { cru::history(None); ok() }
+        // A paste of copied files into Cru's typing box; the conversation as the history gives it.
+        "cru-paste" => { let took = cru_ui::test_paste(args.iter().map(std::path::PathBuf::from).collect()); Some(json!({ "ok": took })) }
+        "cru-turns" => { cru::test_turns(&a(0)); ok() }
         // The drawer's homepool panel: a network's check, the fallback, the key on, Save / Make, Remove.
         "hp-net" => { hpdrawer::toggle_net(&a(0)); ok() }
         "hp-fallback" => { hpdrawer::toggle_fallback(); ok() }
@@ -583,6 +589,8 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "kid-pin" => { cru_kid::pin_open(); ok() }
         "kid-key" => { cru_kid::pin_key(&a(0)); ok() }
         "kid-mute" => { cru_kid::mute(); ok() }
+        // The kid screen's keyboard button (true: typing; false: back to the voice).
+        "kid-keyboard" => { cru::kid_keyboard(a(0) != "false"); ok() }
         // "Hey Cru": the status, the setting, training from recordings, a recording heard, the conditions.
         "wake-status" => Some(json!({ "ok": true, "status": wake::status() })),
         "wake-set" => { wake::set(a(0) != "false"); ok() }

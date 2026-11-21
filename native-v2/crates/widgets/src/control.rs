@@ -41,7 +41,8 @@ pub fn sized(b: Button, label: Option<SharedString>, icon: Option<IconName>, tra
             // the theme's font size (BTN_TEXT); height, padding and weight are
             // ours. A dropdown's chevron (`trailing`) is the button's icon.
             let _ = trailing;
-            b.label(l).when_some(icon, |b, i| b.icon(i))
+            // Its words, for Cru's highlight (find.rs).
+            b.label(l.clone()).child(crate::find::mark(l)).when_some(icon, |b, i| b.icon(i))
                 .with_size(gpui_component::Size::Size(T::BTN_ICON / 0.75))
                 .h(h).px(pad).font_weight(weight)
         }
