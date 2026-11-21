@@ -1106,7 +1106,10 @@ pub fn transcript_body(fx: &mut Fx, chat: &str, back: &'static str, window: &mut
     div().id("fx-transcript").flex().flex_col().flex_1().min_h_0().size_full()
         .child(head.clone().cached(StyleRefinement::default().w_full().h(T::SP_32 + T::SP_6 + T::SP_16).flex_none()))
         // #cp-ask: the secret requests waiting on the owner, under the head.
-        .child(asks.cached(StyleRefinement::default().w_full().flex_none()))
+        // Drawn uncached: its height is the cards' (none when nothing waits),
+        // which a cached view's fixed style can't follow (F216). It renders
+        // only when the transcript does or its own requests change.
+        .child(div().w_full().flex_none().child(asks))
         .child(div().flex().flex_col().flex_1().min_h_0().child(pane.body(cx)))
         .into_any_element()
 }
