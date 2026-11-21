@@ -77,13 +77,16 @@ pub struct Host {
 impl Host {
     pub fn new(_stores: &Stores, embedded: bool, _window: &mut Window, cx: &mut App) -> Self {
         let store = super::store(cx);
-        let msg = cx.new(|cx| Msg::new(store.clone(), cx));
+        let hscroll = ScrollHandle::new();
+        // (The board's sideways edge scroll for its own drag, F225: kept by
+        // the Msg view, which redraws the board's offset.)
+        let msg = cx.new(|cx| { let mut m = Msg::new(store.clone(), cx); let hs = hscroll.clone(); m._edge = Some(super::own_edge(w::Scroller::Handle(hs.clone()), move || hs.bounds(), true, false, cx)); m });
         let toolbar = cx.new(|cx| Toolbar::new(store.clone(), cx));
         let stack = cx.new(|cx| StackView::new(store.clone(), cx));
         let trash = cx.new(|cx| TrashView::new(store.clone(), cx));
         let history = cx.new(|cx| HistView::new(store.clone(), cx));
         let overlay = cx.new(|cx| Overlay::new(store.clone(), embedded, cx));
-        Host { store, msg, toolbar, cols: Rc::default(), stack, trash, history, overlay, width: Rc::new(Cell::new(0.)), hscroll: ScrollHandle::new() }
+        Host { store, msg, toolbar, cols: Rc::default(), stack, trash, history, overlay, width: Rc::new(Cell::new(0.)), hscroll }
     }
 
     /// The host's width changed (measured as it was laid out): each view
@@ -174,12 +177,12 @@ impl Render for Tab {
 #[derive(Clone, PartialEq, Default)]
 struct Shape { state: String, error: String, view: String, ncols: usize, geom: Geom }
 
-pub struct Msg { store: Entity<KStore>, width: Pixels, shape: Shape, _sub: Subscription }
+pub struct Msg { store: Entity<KStore>, width: Pixels, shape: Shape, _sub: Subscription, _edge: Option<Subscription> }
 
 impl Msg {
     fn new(store: Entity<KStore>, cx: &mut Context<Self>) -> Self {
         let sub = cx.observe(&store, |this: &mut Self, _, cx| this.sync(cx));
-        let mut m = Msg { store, width: px(0.), shape: Shape::default(), _sub: sub };
+        let mut m = Msg { store, width: px(0.), shape: Shape::default(), _sub: sub, _edge: None };
         m.shape = m.read(cx);
         m
     }
@@ -512,7 +515,10 @@ impl ColumnView {
             cx.observe(&store, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
             cx.observe(&drag, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
         ];
-        let mut v = ColumnView { store, idx, col: None, items: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.).measure_all(), geom, drop_here: false, hot: None, last_top: None, all_live: false, cards: Rc::default(), needed: px(4000.), hscroll, revealed: 0, centre: None, _subs: subs };
+        let list = ListState::new(0, ListAlignment::Top, T::SP_48 * 4.).measure_all();
+        let mut subs = subs;
+        { let l = list.clone(); subs.push(super::own_edge(w::Scroller::List(l.clone()), move || l.viewport_bounds(), false, true, cx)); }
+        let mut v = ColumnView { store, idx, col: None, items: Rc::new(vec![]), list, geom, drop_here: false, hot: None, last_top: None, all_live: false, cards: Rc::default(), needed: px(4000.), hscroll, revealed: 0, centre: None, _subs: subs };
         v.sync(cx);
         v
     }
@@ -661,7 +667,10 @@ impl StackView {
             cx.observe(&store, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
             cx.observe(&drag, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
         ];
-        let mut v = StackView { store, rows: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.), geom: Geom::default(), hot: None, last_top: None, all_live: false, cards: Rc::default(), revealed: 0, centre: None, _subs: subs };
+        let list = ListState::new(0, ListAlignment::Top, T::SP_48 * 4.);
+        let mut subs = subs;
+        { let l = list.clone(); subs.push(super::own_edge(w::Scroller::List(l.clone()), move || l.viewport_bounds(), false, true, cx)); }
+        let mut v = StackView { store, rows: Rc::new(vec![]), list, geom: Geom::default(), hot: None, last_top: None, all_live: false, cards: Rc::default(), revealed: 0, centre: None, _subs: subs };
         v.sync(cx);
         v
     }

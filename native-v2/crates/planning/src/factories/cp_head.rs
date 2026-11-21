@@ -335,6 +335,9 @@ pub struct AskCards {
     six: Rc<Cell<bool>>,
     /// The cards' drawn height, as last painted (for the suite: F216).
     drawn_h: Rc<Cell<f32>>,
+    /// The host's bottom and the last card's, as last painted: a card cut
+    /// off by the host (F224) shows as the card's bottom below the host's.
+    bottoms: Rc<Cell<(f32, f32)>>,
     /// The requests shown, as last drawn (a change of them redraws).
     shown: Vec<Req>,
     /// "Allow for this chat" on the open card (the web's askAllow): ticked,
@@ -354,7 +357,7 @@ impl AskCards {
             cx.observe_in(&a, window, |this, _, window, cx| this.sync(window, cx)),
             cx.subscribe_in(&pin, window, |this, _, ev: &w::InputEvent, window, cx| if let w::InputEvent::PressEnter { .. } = ev { this.approve(window, cx); }),
         ];
-        let mut me = AskCards { id: id.to_string(), project: project.to_string(), armed: String::new(), auto: false, err: String::new(), pin, ph: "PIN", six, drawn_h: Rc::new(Cell::new(0.)), shown: vec![], allow: (false, "1h"), preauth: false, _subs: subs };
+        let mut me = AskCards { id: id.to_string(), project: project.to_string(), armed: String::new(), auto: false, err: String::new(), pin, ph: "PIN", six, drawn_h: Rc::new(Cell::new(0.)), bottoms: Rc::new(Cell::new((0., 0.))), shown: vec![], allow: (false, "1h"), preauth: false, _subs: subs };
         me.sync(window, cx);
         // (After this update: the Factories tab, which keeps the server's
         // capabilities, may be the one making this card.)
@@ -457,24 +460,30 @@ impl AskCards {
     }
 
     fn props(&self, cx: &App) -> Value {
+        let clipped = { let (host, last) = self.bottoms.get(); !self.shown.is_empty() && last > host + 0.5 };
         json!({ "cards": self.shown.iter().map(|r| json!({ "id": r.id, "name": r.name, "run": r.run, "armed": r.id == self.armed })).collect::<Vec<_>>(), "error": self.err,
             "pin": self.pin.read(cx).value().to_string(), "placeholder": self.ph,
-            "allow": { "on": self.allow.0, "for": self.allow.1 }, "h": self.drawn_h.get() })
+            "allow": { "on": self.allow.0, "for": self.allow.1 }, "h": self.drawn_h.get(),
+            "clipped": clipped })
     }
 }
 
 impl Render for AskCards {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("fx-cp-ask");
         if self.shown.is_empty() { self.drawn_h.set(0.); return div().into_any_element(); }
         let line = |cls_why: bool, t: String| div().when(cls_why, |d| d.mt(T::SP_4).text_size(T::TEXT_12).text_color(T::text_secondary()).line_height(relative(1.4))).child(t);
         let mut host = div().id("fx-cp-ask").flex().flex_col().gap(T::SP_8).p(T::SP_10).bg(T::bg_secondary()).border_b_1().border_color(T::border())
-            .max_h(relative(0.6)).overflow_y_scroll()
-            .child({ let h = self.drawn_h.clone(); canvas(move |b, _, _| h.set(f32::from(b.size.height)), |_, _, _, _| {}).absolute().top_0().left_0().w_full().h_full() });
+            // The web's max-height: 60vh. (A percentage here would resolve
+            // against the auto-height wrapper's measured height, the cards'
+            // own, and clip them to 60% of themselves: F224.)
+            .max_h(window.viewport_size().height * 0.6).overflow_y_scroll()
+            .child({ let (h, bt) = (self.drawn_h.clone(), self.bottoms.clone()); canvas(move |b, _, _| { h.set(f32::from(b.size.height)); bt.set((f32::from(b.bottom()), bt.get().1)); }, |_, _, _, _| {}).absolute().top_0().left_0().w_full().h_full() });
+        let n = self.shown.len();
         for (i, r) in self.shown.iter().enumerate() {
             let armed = r.id == self.armed;
             let head = if r.run { format!("Run a command with {}", r.name) } else { format!("Release {}", r.name) };
-            let mut card = div().border_1().border_color(T::yellow()).bg(T::yellow_dim()).rounded(T::R_CARD).p(T::SP_12)
+            let mut card = div().flex_none().border_1().border_color(T::yellow()).bg(T::yellow_dim()).rounded(T::R_CARD).p(T::SP_12)
                 .child(div().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).child(head))
                 .when(!r.reason.is_empty(), |d| d.child(line(true, r.reason.clone())));
             if r.run {
@@ -506,6 +515,11 @@ impl Render for AskCards {
                         .child("This chat may then run commands with this secret without asking, until then. Its value is never shown."))));
             }
             card = card.when(armed && !self.err.is_empty(), |d| d.child(div().mt(T::SP_6).text_size(T::TEXT_12).text_color(T::red()).child(self.err.clone())));
+            if i + 1 == n {
+                // (Its paint bounds are the card's, scrolled: unclipped by the host.)
+                let bt = self.bottoms.clone();
+                card = card.relative().child(canvas(move |b, _, _| bt.set((bt.get().0, f32::from(b.bottom()))), |_, _, _, _| {}).absolute().top_0().left_0().w_full().h_full());
+            }
             host = host.child(card);
         }
         host.into_any_element()

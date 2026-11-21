@@ -217,6 +217,8 @@ export async function run(T_, t) {
         t.check('…the box empty', A(a1).pin === '', A(a1));
         // F216: the cards are drawn, with their height (not 0 px).
         await T.until('…the card drawn with its height', (p) => A(p).h > 40, 6000);
+        // F224: the whole card shows (its PIN box, Approve, Reject), not cut off.
+        await T.until('…the whole card shows, not cut off', (p) => A(p).clipped === false && A(p).h > 100, 6000);
         await sleep(300); await T.snap('planning', 'factories-transcript-ask-1');
         // F222: the PIN box takes 6 characters at most.
         await T.act('factories-transcript-head', 'ask-type', '1234567');
@@ -232,6 +234,7 @@ export async function run(T_, t) {
         const h1 = A(aw).h;
         await T.act('factories-transcript-head', 'ask-set', JSON.stringify([rq('rqa', 'pin', 'Alpha'), rq('rqc', 'pin', 'Gamma')]));
         await T.until('two requests: both cards drawn, taller than one', (p) => A(p).cards?.length === 2 && A(p).h > h1 + 40, 6000);
+        await T.until('…both whole, the second not cut off', (p) => A(p).cards?.length === 2 && A(p).clipped === false, 6000);
         await sleep(300); await T.snap('planning', 'factories-transcript-ask-2');
         await T.act('factories-transcript-head', 'ask-type', '123456');
         await T.until('…the PIN typed', (p) => A(p).pin === '123456');

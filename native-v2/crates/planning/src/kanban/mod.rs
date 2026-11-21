@@ -572,6 +572,48 @@ pub(crate) fn pointer_move(p: Point<Pixels>, cx: &mut App) {
     });
 }
 
+/// A card held near the edge of what scrolls it (the board sideways, a
+/// column's or the stacked board's list) scrolls it: the web's wbScrollTick,
+/// for the board's own drag (F225). A press on a card at rest (card_el.rs)
+/// starts only this drag, never a GPUI one, so `w::edge_scroll` (which
+/// follows GPUI drags: a live card's, a file's) doesn't see it. This follows
+/// the Drag entity and runs the same ramp (`w::edge_step` every
+/// `w::EDGE_TICK`) while the held card's pointer is in the 60 px band; while
+/// a GPUI drag is on, `w::edge_scroll` does it instead (never both). The
+/// view it's made in is notified when the scroller moved.
+pub(crate) fn own_edge<V: 'static>(s: w::Scroller, bounds: impl Fn() -> Bounds<Pixels> + 'static, x: bool, y: bool, cx: &mut Context<V>) -> Subscription {
+    const BAND: f32 = 60.;
+    let drag = store(cx).read(cx).drag.clone();
+    let running = Rc::new(std::cell::Cell::new(false));
+    let bounds: Rc<dyn Fn() -> Bounds<Pixels>> = Rc::new(bounds);
+    let at = |d: &Entity<Drag>, cx: &App| d.read(cx).drag.as_ref().map(|g| point(px(g.x), px(g.y)));
+    cx.observe(&drag, move |_, d, cx| {
+        if running.get() || cx.has_active_drag() { return; }
+        let Some(p) = at(&d, cx) else { return };
+        let b = bounds();
+        let (l, r, t, bt) = (f32::from(b.left()), f32::from(b.right()), f32::from(b.top()), f32::from(b.bottom()));
+        let (px_, py_) = (f32::from(p.x), f32::from(p.y));
+        let band = b.contains(&p) && ((x && (px_ > r - BAND || px_ < l + BAND)) || (y && (py_ > bt - BAND || py_ < t + BAND)));
+        if !band { return; }
+        running.set(true);
+        let (running, bounds, s, view) = (running.clone(), bounds.clone(), s.clone(), cx.entity_id());
+        cx.spawn(async move |_, cx| {
+            loop {
+                cx.background_executor().timer(w::EDGE_TICK).await;
+                let go = cx.update(|cx| {
+                    if cx.has_active_drag() { return false; }
+                    let Some(p) = at(&d, cx) else { return false };
+                    let (band, moved) = w::edge_step(&s, bounds(), p, x, y);
+                    if moved { cx.notify(view); }
+                    band
+                });
+                if !go { break; }
+            }
+            running.set(false);
+        }).detach();
+    })
+}
+
 pub(crate) fn pointer_up(cx: &mut App) {
     with(cx, |k| k.boxes.borrow_mut().pressing = false);
     let (d, t) = drag_with(cx, |k| { k.press = None; (k.drag.take(), k.target.take()) });
@@ -640,7 +682,7 @@ pub fn state(_: &Stores, window: &mut Window, cx: &mut App) -> Value {
         "deletedTodos": dd.iter().map(|r| json!({ "text": r.text, "sub": r.sub, "task": r.task, "todo": r.todo })).collect::<Vec<_>>(),
         "history": k.history.iter().map(|r| json!({ "text": r.text, "ts": r.sub })).collect::<Vec<_>>(),
         "taskDraft": input_value(&k.task_input, cx), "todoDraft": input_value(&k.todo_input, cx),
-        "held": d.press.is_some(),
+        "held": d.press.is_some(), "gpuiDrag": cx.has_active_drag(),
         "drag": match &d.drag { None => Value::Null, Some(g) => { let t = d.target.clone(); json!({ "id": g.id, "status": t.as_ref().map(|x| x.0.clone()).unwrap_or_default(), "index": t.as_ref().map(|x| x.1 as i64).unwrap_or(-1), "before": t.map(|x| x.2).unwrap_or_default() }) } },
         "clip": match &k.clip { None => Value::Null, Some(c) => json!({ "task": c.task,
             "pop": (pop_json(view::pop_rect(c, vp))), "items": k.media_task.get(&c.task).map(|v| v.iter().map(|it| { let id = s(it, "id"); json!({ "kind": s(it, "kind"), "image": k.thumbs.get(&id).is_some_and(|x| x.is_some()), "id": id }) }).collect::<Vec<_>>()).unwrap_or_default() }) },

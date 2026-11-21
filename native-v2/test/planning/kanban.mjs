@@ -182,10 +182,16 @@ export async function run(T_, t) {
   await T.mouse('move', ex, ey);
   await T.mouse('down', ex, ey);
   for (let i = 1; i <= 6; i++) { await T.mouse('move', ex + (1060 - 20 - ex) * i / 6, ey); await t.sleep(30); }
-  const right = await T.until('held at the right edge, the board scrolls right', (p) => K(p).drag && K(p).boxes.cols.find((b) => b.status === 'backlog').x < back0 - 60);
-  t.check('…and the card is still held', !!K(right).drag, K(right).drag);
-  for (let i = 1; i <= 6; i++) { await T.mouse('move', 1060 - 20 - (1060 - 20 - (back0 - 10)) * i / 6, ey); await t.sleep(30); }
-  await T.until('held at the left edge, it scrolls back', (p) => K(p).drag && Math.abs(K(p).boxes.cols.find((b) => b.status === 'backlog').x - back0) < 2);
+  const backX = (p) => K(p)?.boxes?.cols?.find((b) => b.status === 'backlog')?.x;
+  const right = await T.until('held at the right edge, the board scrolls right', (p) => K(p).drag && backX(p) < back0 - 60);
+  // (F225: a failure says where the drag and the board were, and the suite
+  // goes on to the next screens.)
+  if (!right) { const p = await T.props(); console.log('  (edge scroll:', JSON.stringify({ held: K(p)?.held, gpuiDrag: K(p)?.gpuiDrag, drag: K(p)?.drag, back0, back: backX(p), card: bc, cols: K(p)?.boxes?.cols }), ')'); }
+  t.check('…and the card is still held', !!right && !!K(right).drag, right && K(right).drag);
+  if (right) {
+    for (let i = 1; i <= 6; i++) { await T.mouse('move', 1060 - 20 - (1060 - 20 - (back0 - 10)) * i / 6, ey); await t.sleep(30); }
+    await T.until('held at the left edge, it scrolls back', (p) => K(p).drag && Math.abs(backX(p) - back0) < 2);
+  }
   await T.mouse('move', ex, ey);
   await T.mouse('up', ex, ey);
   await T.until('dropped where it was', (p) => !K(p).drag);
@@ -245,6 +251,7 @@ export async function run(T_, t) {
     t.check('the card to show is off screen first', !K(off).boxes.cards.some((b) => b.id === target), target);
     await T.act('kanban-show', target);
     const s1 = await T.until('shown: the card flashed and centred in its column', (p) => K(p).flash === target && centred(p), 6000);
+    if (!s1) { const p = await T.props(); console.log('  (show:', JSON.stringify({ target, flash: K(p)?.flash, card: K(p)?.boxes?.cards?.find((b) => b.id === target), col: K(p)?.boxes?.cols?.find((b) => b.status === 'backlog'), n: K(p)?.boxes?.cards?.length }), ')'); }
     t.check('…centred', !!s1);
     await T.until('…the flash over', (p) => !K(p).flash, 6000);
     for (let i = 0; i < 30; i++) { await T.mouse('wheel', bl.x + bl.w / 2, bl.y + bl.h / 2, { dy: 120 }); await t.sleep(8); }
