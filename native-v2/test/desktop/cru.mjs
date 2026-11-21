@@ -228,6 +228,18 @@ export async function run(T, t) {
   t.check('…a project not on the page: nothing moves', (await T.state()).project === 'shop');
   await T.act('cru-ui-go', JSON.stringify({ id: 'nav4', project: 'demo', tab: 'workbench' }));
   await T.until('…and back', (p) => p.project === 'demo' && p.tab === 'workbench');
+  // A card (F150): the Kanban tab, the card flashed; no such card: Cru is told.
+  {
+    const made = (await T.api.http('POST', '/api/kanban', { project: 'demo', action: 'addTask', title: 'Cru shows this', status: 'todo' })).body;
+    const card = made?.task?.id || made?.id;
+    await T.act('cru-ui-go', JSON.stringify({ id: 'card1', tab: 'kanban', card }));
+    const p = await T.until('show_in_crundi with a card: the Kanban tab, the card flashed', (p) => p.tab === 'kanban' && C(p).lastAck?.id === 'card1', 8000);
+    t.check('…answered ok, the card in its flash', C(p).lastAck.ok === true && p.planningArea?.kanban?.flash === card, { ack: C(p).lastAck, flash: p.planningArea?.kanban?.flash });
+    await T.act('cru-ui-go', JSON.stringify({ id: 'card2', tab: 'kanban', card: 'no-such-card' }));
+    const q = await T.until('…a card not on the board: Cru is told', (p) => C(p).lastAck?.id === 'card2', 8000);
+    t.check('…"No such card on this project\'s board"', C(q).lastAck.ok === false && /No such card/.test(C(q).lastAck.error || ''), C(q).lastAck);
+    await T.ui('tab', 'workbench');
+  }
   await T.act('cru-keyboard', 'false');
   await T.until('…off needs a Deepgram key here: it says so and stays', (p) => C(p).keyboard && /Deepgram key/.test(C(p).notice));
   await T.key('Escape');

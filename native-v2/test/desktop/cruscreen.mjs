@@ -62,7 +62,8 @@ export async function run(T, t) {
   await T.until('Full view: Cru\'s whole view', (p) => CS(p).full);
   {
     const p = await T.until('…over the content area: the top row and the bottom bar stay (F95)', (p) => D(p).cru.ui?.full && (D(p).cru.ui.mic || D(p).cru.ui.typingBox) && !D(p).cru.ui.field, 5000);
-    t.check('…under the top bar, the window\'s width', D(p).cru.ui.full, D(p).cru.ui);
+    const u = D(p).cru.ui;
+    t.check('…the full view\'s dropdown: min(1000, width − 40) wide (.cv-ov.full)', u.full && Math.abs(u.w - Math.min(1000, u.viewportW - 40)) < 1, u);
   }
   await t.sleep(500);
   await snap('cru-full');

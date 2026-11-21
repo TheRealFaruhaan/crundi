@@ -36,6 +36,8 @@ struct Snap {
     /// How long the chat's cursor glides to `chat_at` (ms), and whether its button is held.
     chat_ms: f32,
     chat_down: bool,
+    /// The chat's presses so far (a new one rings: VD cursorRipple).
+    ripples: u64,
 }
 
 impl Snap {
@@ -45,7 +47,7 @@ impl Snap {
             let (k, ox, oy) = p.fit();
             Snap { vw, vh, k, ox, oy, anns: p.ann.clone(), hover: p.hover.clone(), chat_at: p.cursor_at.map(|c| (c.0, c.1)), cursor: p.cursor,
                 sized: p.custom.is_some() || p.device != 0, crashed: p.crashed, waiting: p.browser.is_some() && p.frames == 0,
-                diag: p.load_error.clone().unwrap_or_default(), chat_ms: p.cursor_ms, chat_down: p.mouse_down.is_some() }
+                diag: p.load_error.clone().unwrap_or_default(), chat_ms: p.cursor_ms, chat_down: p.mouse_down.is_some(), ripples: p.ripples }
         })).unwrap_or(Snap { k: 1., ..Snap::default() })
     }
 }
@@ -68,11 +70,13 @@ pub struct PageView {
     cur_seq: u64,
     /// It was not on show before this move: it fades in.
     cur_in: bool,
+    /// The last press's ripple: where (page px), its count, and when.
+    rip: Option<(f32, f32, u64, std::time::Instant)>,
 }
 
 impl PageView {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        PageView { panel: None, annotating: false, image: None, shown: None, stage: (0., 0.), origin: Point::default(), focus: cx.focus_handle(), snap: Snap { k: 1., ..Snap::default() }, cur_from: None, cur_last: None, cur_seq: 0, cur_in: false }
+        PageView { panel: None, annotating: false, image: None, shown: None, stage: (0., 0.), origin: Point::default(), focus: cx.focus_handle(), snap: Snap { k: 1., ..Snap::default() }, cur_from: None, cur_last: None, cur_seq: 0, cur_in: false, rip: None }
     }
 
     /// Show another panel (or none).
@@ -111,6 +115,9 @@ impl PageView {
                 self.cur_from = self.snap.chat_at.or(self.cur_last);
                 if snap.chat_at.is_some() { self.cur_last = snap.chat_at; }
                 self.cur_seq += 1;
+            }
+            if snap.ripples > self.snap.ripples {
+                if let Some((x, y)) = snap.chat_at { self.rip = Some((x, y, snap.ripples, std::time::Instant::now())); }
             }
             self.snap = snap;
             cx.notify();
@@ -195,7 +202,7 @@ impl Render for PageView {
         crundi_core::driver::rendered("page");
         let me = cx.entity();
         // What is drawn (the copy `pump` took): the page's place, the marks, the hover, the chat's cursor.
-        let Snap { vw, vh, k, ox, oy, anns, hover, chat_at, cursor, sized, crashed, waiting, diag, chat_ms, chat_down } = if self.panel.is_some() { self.snap.clone() } else { Snap { k: 1., ..Snap::default() } };
+        let Snap { vw, vh, k, ox, oy, anns, hover, chat_at, cursor, sized, crashed, waiting, diag, chat_ms, chat_down, .. } = if self.panel.is_some() { self.snap.clone() } else { Snap { k: 1., ..Snap::default() } };
         let at = move |x: f32, y: f32| point(px(x * k + ox), px(y * k + oy));
         let mut d = div()
             .id("page").relative().size_full().overflow_hidden()
@@ -231,8 +238,9 @@ impl Render for PageView {
                     match a.kind.as_str() {
                         "box" | "element" => {
                             let b = Bounds { origin: pt(a.x, a.y), size: size(px(a.w * k), px(a.h * k)) };
-                            let style = if a.kind == "element" { BorderStyle::Dashed } else { BorderStyle::Solid };
-                            window.paint_quad(quad(b, px(0.), transparent_black(), T::SP_2, c, style));
+                            // (A box: a 13% fill, r 3; a picked element: dashed, a 9% fill, r 2.)
+                            let (style, fill, r) = if a.kind == "element" { (BorderStyle::Dashed, 0.094, px(2.)) } else { (BorderStyle::Solid, 0.133, px(3.)) };
+                            window.paint_quad(quad(b, r, c.opacity(fill), T::SP_2, c, style));
                         }
                         "pen" if a.points.len() > 1 => {
                             let mut pb = PathBuilder::stroke(T::ANNOTATE_STROKE);
@@ -265,21 +273,42 @@ impl Render for PageView {
             d = d.child(div().absolute().left(p.x - px(2.)).top(p.y - px(22.)).max_w(px(320.)).px(T::SP_6).py(px(1.)).rounded(T::R_CHIP)
                 .bg(T::annotate()).text_color(T::white()).text_size(T::TEXT_11).font_family(T::MONO).truncate().child(sel.clone()));
         }
-        // Each mark's label (.brd-lbl): its number (and "Claude"), its note,
-        // a picked element's selector under it, at the mark's corner.
-        for (n, a) in anns.iter().enumerate() {
+        // A pin: a disc in its colour with a white edge and its number
+        // (renderAnn: circle r 11, stroke #fff 2, the number 11px bold).
+        for (n, a) in anns.iter().enumerate().filter(|(_, a)| a.kind == "pin") {
+            let p = at(a.x, a.y);
+            let r = T::MARK_R + px(1.);
+            d = d.child(div().absolute().left(p.x - r).top(p.y - r).size(r * 2.).rounded(T::R_PILL).border_2().border_color(T::white()).bg(mark_color(a))
+                .flex().items_center().justify_center().text_color(T::white()).text_size(T::TEXT_11).font_weight(T::W_BOLD).child(format!("{}", n + 1)));
+        }
+        // Each mark's label (.brd-lbl), only for a mark with a note, a label
+        // or a picked element: its number (and "Claude"), its note, the
+        // selector under it; under a box, right of a pin, above an arrow's
+        // start, after a line's end, kept inside the page.
+        let (bw, bh) = (vw as f32 * k, vh as f32 * k);
+        for (n, a) in anns.iter().enumerate().filter(|(_, a)| !a.text.is_empty() || a.kind == "label" || a.kind == "element") {
             let c = mark_color(a);
-            let (cx0, cy0) = match a.kind.as_str() {
-                "pen" => a.points.first().copied().unwrap_or((a.x, a.y)),
-                _ => (a.x, a.y),
+            let (mut ax, mut ay) = match a.kind.as_str() {
+                "box" | "element" => (a.x * k, (a.y + a.h) * k + 4.),
+                "arrow" => (a.x * k, a.y * k - 24.),
+                _ => (a.x * k + 17., a.y * k - 11.),
             };
-            let p = at(cx0, cy0);
+            if a.kind == "pen" { if let Some(l) = a.points.last() { ax = l.0 * k + 6.; ay = l.1 * k; } }
+            let (lx, ly) = (ax.min(bw - 60.).max(0.) + ox, ay.min(bh - 22.).max(0.) + oy);
             let who = if a.by == "claude" { format!("{} Claude", n + 1) } else { format!("{}", n + 1) };
-            d = d.child(div().absolute().left(p.x).top(p.y).max_w(T::DRAWER_NOTE_W).px(T::SP_6).py(px(3.)).rounded(T::R_CONTROL).bg(c)
+            d = d.child(div().absolute().left(px(lx)).top(px(ly)).max_w(T::DRAWER_NOTE_W).px(T::SP_6).py(px(3.)).rounded(T::R_CONTROL).bg(c).shadow_md()
                 .text_color(T::white()).text_size(T::TEXT_12)
                 .child(div().flex().gap(T::SP_4).child(div().flex_none().font_weight(T::W_BOLD).opacity(0.85).child(who))
                     .when(!a.text.is_empty(), |d| d.child(div().min_w_0().child(a.text.clone()))))
                 .when(a.kind == "element" && !a.selector.is_empty(), |d| d.child(div().font_family(T::MONO).text_size(T::TEXT_10).opacity(0.85).child(a.selector.clone()))));
+        }
+        // A press's ripple: a ring that grows and fades where the cursor
+        // pressed (.brd-rip: 40px, 2px accent, scale 0.3→1.3, 0.9→0, 0.45 s).
+        if let Some((x, y, n, _)) = self.rip.filter(|r| r.3.elapsed() < std::time::Duration::from_millis(600)) {
+            let p = at(x, y);
+            d = d.child(div().absolute().left(p.x).top(p.y).size(px(40.)).rounded(T::R_PILL).border_2().border_color(T::accent())
+                .with_animation(("chat-rip", n as usize), Animation::new(std::time::Duration::from_millis(450)).with_max_fps(CURSOR_FPS).with_easing(ease_out_quint()),
+                    move |el, t| { let sz = 40. * (0.3 + t); el.size(px(sz)).left(p.x - px(sz / 2.)).top(p.y - px(sz / 2.)).opacity(0.9 * (1. - t)) }));
         }
         // The chat's cursor (browser_mouse) with its tag: it glides to where
         // it points (as long as the move takes), a ring while its button is

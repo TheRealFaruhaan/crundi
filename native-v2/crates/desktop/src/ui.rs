@@ -136,8 +136,8 @@ impl BrowserDrawer {
         // The annotation bar.
         let ann = (annotating && has).then(|| {
             let (count, (css_ok, css_tip), (shot_ok, shot_tip)) = drawer::ann_bar();
-            let (tool, chat_tip) = drawer::with(|d| (d.tool.clone(), d.chat.as_ref().and_then(|c| d.chats.iter().find(|x| &x.0 == c)).map(|x| format!("Chat to send to: {}", x.1)).unwrap_or_else(|| "No chat open in this project".into())));
-            AnnCopy { tool, count, css_ok, css_tip, shot_ok, shot_tip, chat_tip }
+            let (tool, chats, chat_on) = drawer::with(|d| (d.tool.clone(), d.chats.iter().map(|x| x.1.clone()).collect::<Vec<_>>(), d.chat.as_ref().and_then(|c| d.chats.iter().position(|x| &x.0 == c))));
+            AnnCopy { tool, count, css_ok, css_tip, shot_ok, shot_tip, chats, chat_on }
         });
         if let Some(c) = ann.clone() { self.ann.update(cx, |v, cx| set_copy(&mut v.c, c, cx)); }
         // The password bar.
@@ -295,7 +295,10 @@ impl Render for AddressBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         rendered("drawer-address");
         let c = &self.c;
-        let net_icon = match c.tone { "server" => IconName::Server, "hp" => IconName::Globe, "bad" => IconName::TriangleAlert, _ => IconName::Network };
+        // The Network button keeps its icon and takes the tab's tone; Device
+        // is lit while a device is set (renderBar: .brd-netbtn.server/.hp/.bad,
+        // .brd-devbtn.on); both are off with no tab.
+        let net_tone = match c.tone { "server" => Some(T::accent()), "hp" => Some(T::green()), "bad" => Some(T::red()), _ => None };
         let hist = |h: i32| move |_: &ClickEvent, _: &mut Window, _: &mut App| { if let Some(i) = drawer::active_tab().and_then(|t| t.panel) { browser::defer(move || browser::history(i, h)); } };
         let logins = c.logins;
         // Reload: its arrow turns while the page loads (.brd-loading), still Reload.
@@ -310,8 +313,8 @@ impl Render for AddressBar {
             .child(div().flex_1().min_w_0().child(w::input(&self.address)))
             .when(logins > 0, |d| d.child(w::icon_button("pw-lock", IconName::Lock, if logins == 1 { "A saved login for this site".to_string() } else { format!("{logins} saved logins for this site") })
                 .on_click(|_, _, _| passwords::site_menu())))
-            .child(spot("net", w::pick_menu_open("net", net_icon, c.net_tip.clone(), "This tab’s network", || pick_items("net"), |id, _, _| pick("net", id), |on, _, _| popped("net", on))))
-            .child(spot("device", w::pick_menu_open("device", if c.dev_on { IconName::Smartphone } else { IconName::Monitor }, c.dev_tip.clone(), "Device size", || pick_items("dev"), |id, _, _| pick("dev", id), |on, _, _| popped("device", on))))
+            .child(spot("net", w::pick_menu_toned("net", IconName::Network, c.net_tip.clone(), "This tab’s network", net_tone, !c.has, || pick_items("net"), |id, _, _| pick("net", id), |on, _, _| popped("net", on))))
+            .child(spot("device", w::pick_menu_toned("device", IconName::Smartphone, c.dev_tip.clone(), "Device size", c.dev_on.then(T::accent), !c.has, || pick_items("dev"), |id, _, _| pick("dev", id), |on, _, _| popped("device", on))))
             .child(w::disabled(w::icon_toggle("annotate", IconName::MessageSquare, "Annotate the page", c.annotating), !c.has).on_click(|_, _, _| { let on = !drawer::with(|d| d.annotating); drawer::annotate(on); }))
             .child(w::disabled(w::icon_button("devtools", IconName::Terminal, "DevTools"), !c.has).on_click(|_, _, _| browser::defer(|| if let Some(i) = drawer::active_tab().and_then(|t| t.panel) { browser::devtools(i); })));
         let root = div().relative().w_full().flex().flex_col().child(bar)
@@ -327,7 +330,7 @@ impl Render for AddressBar {
 // ─── The annotation bar ───
 
 #[derive(Clone, PartialEq, Default)]
-struct AnnCopy { tool: String, count: String, css_ok: bool, css_tip: String, shot_ok: bool, shot_tip: String, chat_tip: String }
+struct AnnCopy { tool: String, count: String, css_ok: bool, css_tip: String, shot_ok: bool, shot_tip: String, chats: Vec<String>, chat_on: Option<usize> }
 
 struct AnnBar { c: AnnCopy, height: Pixels }
 
@@ -345,7 +348,10 @@ impl Render for AnnBar {
             .child(t("box", IconName::Square, "Draw: a box"))
             .child(t("pen", IconName::Pencil, "Draw: freehand"))
             .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_12).text_color(T::text_secondary()).child(c.count.clone()))
-            .child(w::pick_menu("chat", IconName::MessageSquare, c.chat_tip.clone(), "Chat to send to", || { drawer::fill_chats(); pick_items("chat") }, |id, _, _| pick("chat", id)))
+            // The chat to send to: a select showing the chat's title (.brd-chat,
+            // max 110px), "No chat open in this project" when there is none.
+            .child(w::tip(div().id("chat-sel").flex_none().max_w(px(110.)).overflow_hidden().child(w::select("chat", c.chats.iter().map(|t| SharedString::from(t.clone())).collect(), c.chat_on, "No chat open in this project", c.chats.is_empty(),
+                |i, _, _| { let id = drawer::with(|d| d.chats.get(i).map(|x| x.0.clone())); if let Some(id) = id { pick("chat", &id); } })), "Chat to send to"))
             .child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child("Send"))
             .child(w::disabled(w::icon_button("send-css", IconName::FileText, c.css_tip.clone()), !c.css_ok).on_click(|_, _, _| drawer::send(false)))
             .child(w::disabled(w::icon_button("send-shot", IconName::Image, c.shot_tip.clone()), !c.shot_ok).on_click(|_, _, _| drawer::send(true)))
@@ -516,7 +522,12 @@ impl DrawerBody {
             let s = c.clr.site.clone();
             self.site.update(cx, |st, cx| st.set_value(s, window, cx));
         }
-        if c.panel == "history" && self.c.panel != "history" { self.hist.update(cx, |st, cx| st.set_value("", window, cx)); }
+        // History opens with its search empty and focused (showHistory: hq.focus()).
+        if c.panel == "history" && self.c.panel != "history" {
+            self.hist.update(cx, |st, cx| st.set_value("", window, cx));
+            let f = self.hist.read(cx).focus_handle(cx);
+            window.focus(&f, cx);
+        }
         set_copy(&mut self.c, c, cx);
     }
 
@@ -537,7 +548,7 @@ impl DrawerBody {
                         uniform_list("drawer-hist", n, cx.processor(|this, range: std::ops::Range<usize>, _, _| {
                             range.filter_map(|i| this.c.hist.get(i).cloned().map(|(url, title, ago)| {
                                 let u = url.clone();
-                                div().pb(T::SP_2).child(w::list_row(("hist", i), IconName::Clock, if title.is_empty() { url.clone() } else { title }, url, ago, false)
+                                div().pb(T::SP_2).child(w::address_row(("hist", i), if title.is_empty() { url.clone() } else { title }, url, ago)
                                     .on_click(move |_, _, _| { let u = u.clone(); browser::defer(move || drawer::history_open(&u)); })).into_any_element()
                             })).collect()
                         })).flex_1().min_h_0().into_any_element()
@@ -729,7 +740,7 @@ impl Render for SuggestList {
         let mut list = w::card().relative().w_full().p(T::SP_4).bg(T::bg_secondary());
         for (n, h) in self.rows.iter().enumerate() {
             let u = h.url.clone();
-            list = list.child(w::list_row(("sug", n), IconName::Clock, if h.title.is_empty() { h.url.clone() } else { h.title.clone() }, h.url.clone(), "", false)
+            list = list.child(w::address_row(("sug", n), if h.title.is_empty() { h.url.clone() } else { h.title.clone() }, h.url.clone(), "")
                 .on_mouse_down(MouseButton::Left, move |_, _, _| { let u = u.clone(); drawer::with(|d| d.suggest.clear()); drawer::render(); browser::defer(move || drawer::go(&u)); }));
         }
         w::layer(list.child(measure(cx.entity())))

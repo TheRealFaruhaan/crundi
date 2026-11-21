@@ -40,6 +40,7 @@ mod hosts;
 mod hpdrawer;
 mod idle;
 mod inbox;
+mod kidlock;
 mod inbox_ui;
 mod notify;
 mod marks;
@@ -95,6 +96,8 @@ static WAKE: std::sync::OnceLock<futures::channel::mpsc::UnboundedSender<()>> = 
 /// Register the area (before the window opens): its tabs, the shell's
 /// actions, the live events it hears, the driver's actions and state.
 pub fn init(cx: &mut App) {
+    // What a crash left switched off on the desktop (the kid lock's) comes back.
+    kidlock::restore_left_over();
     web::engine::set_hooks(web::Hooks {
         changed: |i| drawer::panel_changed(i),
         visited: |i, u| { drawer::visited(i, u); if let Some(t) = drawer::tab_of_panel(i) { passwords::visited(&t.id, u); } },
@@ -316,6 +319,20 @@ fn next_due() -> Option<Instant> {
 /// for, and the views' copies.
 pub fn pump(window: &mut Window, cx: &mut App) {
     PUMPS.with(|p| p.set(p.get() + 1));
+    // Why this pump ran (the driver's "pumpWhy": the last few), so an idle
+    // check that sees pumps can say what woke them (F155).
+    static DRIVEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *DRIVEN.get_or_init(|| crundi_core::driver::port().is_some()) {
+        let mut why = web::waiting();
+        if ctx::has_effects() { why.push("effects".into()); }
+        if ctx::is_dirty() { why.push("dirty".into()); }
+        if ctx::has_main() { why.push("main".into()); }
+        if host::waiting() { why.push("host".into()); }
+        if tray::has_picks() { why.push("tray".into()); }
+        for (k, d) in [("cru", cru::next_due()), ("wake", wake::next_due()), ("notify", notify::next_due()), ("drawer", drawer::next_due())] { if d.is_some_and(|t| t <= Instant::now()) { why.push(format!("{k}-due")); } }
+        if why.is_empty() { why.push("?".into()); }
+        PUMP_WHY.with(|w| { let mut w = w.borrow_mut(); w.push_back(why.join(",")); while w.len() > 24 { w.pop_front(); } });
+    }
     refresh(cx);
     web::pump();
     web::frames::drop_old(window);
@@ -341,6 +358,8 @@ pub fn pump(window: &mut Window, cx: &mut App) {
     let open = drawer::with(|d| d.open);
     let s = crundi_shell::stores(cx);
     if s.nav.read(cx).drawer_open != open { s.nav.update(cx, |n, cx| n.set_drawer(open, cx)); }
+    let running = !open && drawer::with(|d| d.projects.get(&d.project.to_lowercase()).is_some_and(|p| !p.tabs.is_empty()));
+    if s.nav.read(cx).drawer_running != running { s.nav.update(cx, |n, cx| n.set_drawer_running(running, cx)); }
     if let Some(v) = views(cx) {
         let dirty = ctx::take_dirty();
         v.drawer.update(cx, |d, cx| d.pump(dirty, window, cx));
@@ -395,6 +414,8 @@ fn signed_in(s: &Stores, cx: &mut App) {
 thread_local! {
     /// Pumps run so far (the driver's state: an idle window pumps nothing).
     static PUMPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// The last pumps' reasons (driver only).
+    static PUMP_WHY: RefCell<std::collections::VecDeque<String>> = const { RefCell::new(std::collections::VecDeque::new()) };
     static PUMP_RX: RefCell<Option<futures::channel::mpsc::UnboundedReceiver<()>>> = const { RefCell::new(None) };
 }
 
@@ -602,6 +623,7 @@ fn props() -> Value {
     let hidden: Vec<Value> = web::engine::with(|st| st.panels.iter().enumerate().filter(|(_, p)| !p.closed && p.key.is_some()).map(|(i, p)| json!({ "key": p.key, "panel": i, "url": p.url, "frames": p.frames, "paused": p.hidden_sent == Some(true) })).collect());
     json!({
         "pumps": PUMPS.with(|p| p.get()),
+        "pumpWhy": PUMP_WHY.with(|w| w.borrow().iter().cloned().collect::<Vec<_>>()),
         // Each part's next deadline, in ms from now (null: none): what may still wake the pump.
         "due": due_ms(),
         "drawer": drawer::props(), "drawerActive": active, "evals": EVALS.with(|e| Value::Object(e.borrow().1.clone())),

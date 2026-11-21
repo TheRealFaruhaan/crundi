@@ -804,7 +804,7 @@ impl Render for ProjectBar {
         crundi_core::driver::rendered("project-bar");
         crate::spots::begin(cx, "project-bar");
         let nav = self.stores.nav.read(cx);
-        let (on_tab, drawer_open, docker) = (nav.tab.clone(), nav.drawer_open, nav.docker);
+        let (on_tab, drawer_open, docker, running) = (nav.tab.clone(), nav.drawer_open, nav.docker, nav.drawer_running);
         let (project_open, collab) = self.scope;
         let mut tabs = div().id("tabbar").flex().flex_1().min_w_0().h_full().items_center().overflow_x_scroll().track_scroll(&self.scroll);
         for (i, (id, label, icon, _)) in TABS.iter().enumerate() {
@@ -841,8 +841,12 @@ impl Render for ProjectBar {
             .child(scroller);
         if !drawer_open {
             let s = self.stores.clone();
-            bar = bar.child(w::nav_tab(IconName::Globe, "Browser", false).id("browser").flex_none().cursor_pointer()
-                .tooltip(w::tooltip("Browser (desktop app)"))
+            // Hidden with its pages still open: a dot after the label, and the
+            // tooltip says so (VD updateToggle, .brd-toggle.brd-running::after).
+            bar = bar.child(w::nav_tab(IconName::Globe, "Browser", false)
+                .when(running, |d| d.child(div().flex_none().self_start().mt(px(0.)).ml(px(-1.)).size(px(11.)).rounded(T::R_PILL).bg(T::accent()).border_2().border_color(T::bg_secondary())))
+                .id("browser").flex_none().cursor_pointer()
+                .tooltip(w::tooltip(if running { "Browser: hidden, its pages still open (click to show)" } else { "Browser (desktop app)" }))
                 .on_click(move |_, window, cx| { if !registry::run_action(&s, "browser", window, cx) { s.nav.update(cx, |n, cx| n.set_drawer(true, cx)); } }));
         }
         // One paint layer (w::layer): the bar is replayed every frame.

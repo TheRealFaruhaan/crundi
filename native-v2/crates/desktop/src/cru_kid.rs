@@ -82,6 +82,13 @@ pub fn pin_open() {
 pub fn pin_close() { with(|k| { k.pin_at = None; k.pin.clear(); }); cru::render(); }
 pub fn pin_shown() -> bool { with(|k| k.pin_at.is_some()) }
 
+/// The PIN box typed in (digits only, eight at most).
+pub fn set_pin(v: &str) {
+    let v: String = v.chars().filter(|c| c.is_ascii_digit()).take(8).collect();
+    let moved = with(|k| { let m = k.pin != v; if m { k.pin = v; k.pin_err.clear(); } m });
+    if moved { cru::render(); }
+}
+
 /// A key of the pad: a digit, "Back", or "OK".
 pub fn pin_key(key: &str) {
     match key {

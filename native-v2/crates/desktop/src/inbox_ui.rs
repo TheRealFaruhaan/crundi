@@ -311,8 +311,9 @@ impl Conversation {
     fn item(&self, ix: usize) -> AnyElement {
         match self.items.get(ix) {
             None => div().into_any_element(),
-            Some(Item::Older) => div().pt(T::SP_16).px(T::SP_16).child(div().id("ibx-older").flex().justify_center().p(T::SP_10).text_size(T::TEXT_13)
-                .text_color(T::accent_hover()).cursor_pointer().child("Show older").on_click(|_, _, _| inbox::older())).into_any_element(),
+            // (.ibx-more: a full-width text button in the accent's light tone.)
+            Some(Item::Older) => div().pt(T::SP_16).px(T::SP_16).child(w::ghost("ibx-older", "Show older").w_full().text_color(T::accent_hover())
+                .on_click(|_, _, _| inbox::older())).into_any_element(),
             Some(Item::Msg(m, last)) => div().w_full().px(T::SP_16).pt(if ix == 0 { T::SP_16 } else { T::SP_12 }).when(*last, |d| d.pb(T::SP_24))
                 .child(message(ix, m)).into_any_element(),
         }

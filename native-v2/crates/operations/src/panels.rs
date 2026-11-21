@@ -586,6 +586,10 @@ fn pin(id: &str, cx: &mut App) {
     user_patch(id, json!({ "pinned": !pinned }), cx, |_, _| {});
 }
 
+/// Select a panel in the Panels tab from elsewhere (Cru's show_in_crundi,
+/// the web's CrundiWidgets.selectInTab). Added by Desktop (F150).
+pub fn show(id: &str, cx: &mut App) { select(id, cx); }
+
 fn reopen(id: &str, cx: &mut App) { user_patch(id, json!({ "closed": false }), cx, |_, _| {}); }
 
 fn retry(cx: &mut App) { with(cx, |st| st.error.clear()); bump(cx); refresh(cx); }

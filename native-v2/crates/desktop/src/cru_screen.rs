@@ -33,6 +33,9 @@ pub struct Screen {
     last: Value,
     /// The events socket's generation (a new one ends the old).
     sock: Option<Arc<AtomicU64>>,
+    /// A video's player (createVideoGate): none, loading, playing, paused,
+    /// ended, buffering. While it plays the microphone hears the video.
+    pub video: &'static str,
 }
 
 thread_local! { static S: RefCell<Screen> = RefCell::new(Screen::default()); }
@@ -67,9 +70,39 @@ pub fn frame_target(scr: &Value) -> Option<String> {
 pub fn show(scr: Option<Value>) {
     let target = scr.as_ref().and_then(frame_target).unwrap_or_default();
     let was = with(|s| std::mem::replace(&mut s.target, target.clone()));
-    if was != target { frames::close(FRAME); with(|s| s.loads = 0); }
+    if was != target { frames::close(FRAME); with(|s| s.loads = 0); video_gate(0, true); }
     with(|s| s.screen = scr.filter(|v| !v.is_null()));
     cru::render();
+}
+
+/// The player's state (1 playing, 2 paused, 0 ended, 3 buffering; `reset`:
+/// a new screen, none): listening pauses as it starts playing and comes
+/// back as it stops (createVideoGate.player, videoMessage).
+pub fn video_gate(code: i64, reset: bool) {
+    let was = with(|s| s.video);
+    let now = if reset { "none" } else { match code { 1 => "playing", 2 => "paused", 0 => "ended", 3 => if was == "playing" { "playing" } else { "buffering" }, _ => was } };
+    with(|s| s.video = now);
+    if was == "playing" && now != "playing" { cru::video_resume(); }
+    else if now == "playing" && was != "playing" { cru::video_mute(); }
+    if was != now { cru::render(); }
+}
+
+/// A video is playing on the live screen.
+pub fn video_playing() -> bool { with(|s| s.video == "playing") }
+
+/// "Talk to Cru" over a video: it pauses, and Cru listens (talkOverVideo).
+pub fn talk_over_video() {
+    frames::run_js(FRAME, "(function(){var v=document.querySelector('video');if(v)v.pause();})()");
+    with(|s| s.video = "paused");
+    cru::video_resume();
+    cru::render();
+}
+
+/// The page's side of the gate, put in the player's page on each load: its
+/// <video>'s playing, pause and ended (the YouTube API's onStateChange).
+fn video_watch_js() -> String {
+    format!("(function(){{var P={};function s(c){{try{{console.debug(P+JSON.stringify({{cru:'video',state:c}}));}}catch(x){{}}}}function hook(v){{if(v.__cru)return;v.__cru=1;v.addEventListener('playing',function(){{s(1)}});v.addEventListener('pause',function(){{s(2)}});v.addEventListener('ended',function(){{s(0)}});v.addEventListener('waiting',function(){{s(3)}});if(!v.paused)s(1);}}var n=0,t=setInterval(function(){{var v=document.querySelector('video');if(v){{hook(v);clearInterval(t);}}else if(++n>120)clearInterval(t);}},500);}})()",
+        serde_json::to_string(frames::MSG_PREFIX).unwrap_or_default())
 }
 
 /// When Cru opens: what is up now, and the events socket.
@@ -119,7 +152,7 @@ pub fn event(v: &Value) {
         "game-command" => if let Some(a) = v.pointer("/command/action").and_then(|x| x.as_str()) { frames::post(FRAME, &json!({ "type": "command", "action": a })); },
         "kid" => crate::cru_kid::state(v.get("kid").unwrap_or(&Value::Null)),
         // An instant line (kid mode): said if Cru is free.
-        "say" => if crate::cru_kid::on() && cru::with(|c| c.phase == "listen" && c.heard.is_empty()) { let t = kit::s(v, "text"); if !t.is_empty() { cru::with(|c| c.reply = t.clone()); cru::say(&t, false); } },
+        "say" => if crate::cru_kid::on() && !video_playing() && cru::with(|c| c.phase == "listen" && c.heard.is_empty()) { let t = kit::s(v, "text"); if !t.is_empty() { cru::with(|c| c.reply = t.clone()); cru::say(&t, false); } },
         _ => {}
     }
 }
@@ -132,7 +165,8 @@ pub fn pump() {
     if with(|s| s.target.is_empty()) { return; }
     let loads = frames::loads(FRAME);
     if with(|s| { let n = s.loads != loads; s.loads = loads; n }) && loads > 0 {
-        frames::post(FRAME, &json!({ "cru": "volume", "value": volume(), "muted": false }));
+        frames::post(FRAME, &json!({ "cru": "volume", "value": volume(), "muted": video_playing() }));
+        if with(|s| s.screen.as_ref().is_some_and(|x| x.get("video").is_some())) { with(|s| s.video = "loading"); frames::run_js(FRAME, &video_watch_js()); }
     }
     for m in frames::take_messages(FRAME) { message(&m); }
 }
@@ -147,10 +181,11 @@ pub fn message(m: &Value) {
         // A game says a word: now, unless Cru is talking.
         ("say", _) => {
             let t = text("text");
-            if t.is_empty() || busy() || with(|s| s.say_at.is_some_and(|a| a.elapsed() < Duration::from_millis(600))) { return; }
+            if t.is_empty() || busy() || video_playing() || with(|s| s.say_at.is_some_and(|a| a.elapsed() < Duration::from_millis(600))) { return; }
             with(|s| s.say_at = Some(Instant::now()));
             cru::say(&t, false);
         }
+        ("video", _) => video_gate(m.get("state").and_then(|v| v.as_i64()).unwrap_or(-1), false),
         ("tell", _) => tell(&text("text")),
         ("picture", _) => picture(&kit::s(m, "data"), &kit::s(m, "label")),
         (_, "game") => game(json!({ "event": m["event"], "item": m["item"], "detail": m["detail"], "streak": m["streak"] })),
