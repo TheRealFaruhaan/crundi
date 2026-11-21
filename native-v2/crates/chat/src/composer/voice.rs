@@ -564,7 +564,8 @@ pub fn vline(c: &Composer, cx: &mut Context<Composer>) -> Option<AnyElement> {
     let Some((kind, text, _)) = l else { return hooks.map(|h| h.into_any_element()) };
     let soft = kind == "speaking" || kind == "paused";
     let tone = if kind == "error" { w::LineTone::Error } else if soft { w::LineTone::Soft } else { w::LineTone::Note };
-    Some(w::status_line("vline", text, tone)
+    // The web's voice line keeps the arrow (F213): no pointer cursor.
+    Some(w::status_line("vline", text, tone).cursor(CursorStyle::Arrow)
         .on_click(move |_, _, cx| vline_click(cx, &chat))
         .children(hooks)
         .into_any_element())
