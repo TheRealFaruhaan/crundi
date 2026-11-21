@@ -244,6 +244,8 @@ export async function run(T_, t) {
   console.log(`  mindmap pan frames: ${JSON.stringify(T.frames.since(fm))}`);
   t.check('the wheel pans the map', M(bp).scroll[1] < -100, M(bp).scroll);
   t.check('a pan redraws the map alone (no toolbar, no dots)', (bp.renders['mindmap-toolbar'] ?? 0) === (b0['mindmap-toolbar'] ?? 0) && (bp.renders['mindmap-dots'] ?? 0) === (b0['mindmap-dots'] ?? 0), { b0, b1: bp.renders });
+  // (The pan's or the load's last frames land first: F105/F122.)
+  await T.settle(500, 6000);
   const idle = T.frames.mark();
   await sleep(1500);
   t.check('the idle map draws no frames', T.frames.since(idle).frames === 0, T.frames.since(idle));

@@ -144,12 +144,24 @@ pub fn edge_step(s: &Scroller, b: Bounds<Pixels>, p: Point<Pixels>, x: bool, y: 
 /// The edge ramp's tick.
 pub const EDGE_TICK: Duration = TICK;
 
+type EdgeKey = (EntityId, Option<ElementId>, std::any::TypeId, bool, bool);
+type EdgeCells = (Rc<Cell<(Point<Pixels>, Bounds<Pixels>)>>, Rc<Cell<bool>>);
+thread_local! {
+    static EDGE_STATE: std::cell::RefCell<std::collections::HashMap<EdgeKey, EdgeCells>> = Default::default();
+}
+
 /// Scroll `s` while something of type `D` is dragged near the element's
 /// edges (`x` / `y`: the axes it scrolls on); `view` is the view that draws
 /// it (notified when it moved: nothing else redraws).
-pub fn edge_scroll<D: 'static>(el: Stateful<Div>, s: Scroller, x: bool, y: bool, view: EntityId) -> Stateful<Div> {
-    let at: Rc<Cell<(Point<Pixels>, Bounds<Pixels>)>> = Rc::new(Cell::new((Point::default(), Bounds::default())));
-    let running = Rc::new(Cell::new(false));
+pub fn edge_scroll<D: 'static>(mut el: Stateful<Div>, s: Scroller, x: bool, y: bool, view: EntityId) -> Stateful<Div> {
+    // The pointer and the running flag outlive a render (F226): a loop that
+    // is already running reads the pointer the redrawn element records, and
+    // no second loop starts beside it. Keyed by the view, the element's id
+    // and the drag's type.
+    let key = (view, el.interactivity().element_id.clone(), std::any::TypeId::of::<D>(), x, y);
+    let (at, running) = EDGE_STATE.with(|m| m.borrow_mut().entry(key).or_insert_with(|| {
+        (Rc::new(Cell::new((Point::default(), Bounds::default()))), Rc::new(Cell::new(false)))
+    }).clone());
     el.on_drag_move::<D>(move |e: &DragMoveEvent<D>, window, cx| {
         at.set((e.event.position, e.bounds));
         if running.get() || delta(e.event.position, e.bounds, x, y) == Point::default() { return; }

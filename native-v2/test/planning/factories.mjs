@@ -29,6 +29,8 @@ export async function run(T_, t) {
   const lib = await T.until('the library loads with the templates', (p) => F(p)?.view === 'library' && !F(p).library.loading && F(p).library.empty && F(p).library.templates.length >= 3);
   t.check('the templates name their team', F(lib)?.library.templates.every((x) => x.team.length > 0), F(lib)?.library.templates);
   await sleep(300); await T.snap('planning', 'factories-library-empty');
+  // (The pan's or the load's last frames land first: F105/F122.)
+  await T.settle(500, 6000);
   const still = T.frames.mark();
   await sleep(1500);
   t.check('the idle library draws no frames', T.frames.since(still).frames === 0, T.frames.since(still));
