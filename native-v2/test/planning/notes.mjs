@@ -222,6 +222,26 @@ export async function run(T, t) {
   await T.until('typed code is coloured as it is typed (a new comment)', (p) => blocks(p)[8].src.endsWith(' # hi') && E(p).colours > E(e8).colours);
   await snap('notes-code-editing');
 
+  // ── A drag across a block's words, the caret elsewhere, selects them (F162) ──
+  {
+    const w7 = await wordsAt(7);
+    t.check('the block to drag across has no caret', E(await T.props()).id !== w7.id, E(await T.props()));
+    await T.mouse('down', w7.x + 30, w7.y);
+    for (let i = 1; i <= 8; i++) await T.mouse('move', w7.x + 30 + 6 * i, w7.y, { buttons: ['left'] });
+    await T.until('the words dragged across show selected as the press moves', (p) => N(p).tsel?.id === w7.id && N(p).tsel.b > N(p).tsel.a);
+    await T.mouse('up', w7.x + 78, w7.y);
+    await T.until('let go, the block has the caret and the words stay selected', (p) => E(p).on && E(p).id === w7.id && E(p).b > E(p).a && !N(p).tsel);
+    // A double-click on a word: the format bar over it, not at the window's corner.
+    const w1b = await wordsAt(1);
+    await T.mouse('click', w1b.x + 60, w1b.y);
+    await T.until('the caret in the second block', (p) => E(p).on && E(p).id === w1b.id);
+    await t.sleep(150);
+    await T.mouse('dblclick', w1b.x + 60, w1b.y);
+    const f = await T.until('a double-clicked word shows the format bar', (p) => N(p).float === 'fmt' && N(p).fmt && E(p).b > E(p).a);
+    t.check('the format bar opens over the word (its middle, its top)', f && N(f).fmt.x > w1b.x && N(f).fmt.x < w1b.x + 140 && Math.abs(N(f).fmt.y - w1b.box.y) < w1b.box.h + 8, f && { fmt: N(f).fmt, w1b });
+    await T.key('Escape');
+  }
+
   // ── Lists nest (the owner's: Tab / Shift+Tab, Enter goes on or steps out) ──
   {
     const p0 = await T.props();
@@ -264,22 +284,50 @@ export async function run(T, t) {
     const w = await wordsAt(n0 + 1);
     await T.mouse('click', w.x + 200, w.y);
     await T.until('the caret in "two"', (p) => E(p).on && E(p).id === w.id);
+    // A block goes with its children ("three" under "two"; the owner's 20 Nov decision).
     await T.key('Down', ['alt']);
-    await T.until('Alt+Down moves the block down one, the caret with it', (p) => blocks(p)[n0 + 2].id === w.id && blocks(p)[n0 + 1].src === 'three' && E(p).id === w.id && E(p).on);
+    await T.until('Alt+Down moves the block and its children down past the next block, the caret with it', (p) => blocks(p)[n0 + 1].src === '' && blocks(p)[n0 + 2].id === w.id
+      && blocks(p)[n0 + 3].src === 'three' && blocks(p)[n0 + 3].level === 2 && E(p).id === w.id && E(p).on);
     await T.key('Up', ['alt']);
-    await T.until('Alt+Up moves it back', (p) => blocks(p)[n0 + 1].id === w.id);
+    await T.until('Alt+Up moves them back', (p) => blocks(p)[n0 + 1].id === w.id && blocks(p)[n0 + 2].src === 'three');
     await T.key('d', ['ctrl']);
-    q = await T.until('Ctrl+D duplicates it below, the caret in the copy', (p) => blocks(p).length === n0 + 5 && blocks(p)[n0 + 2].src === 'two' && blocks(p)[n0 + 2].level === 1
-      && blocks(p)[n0 + 2].id !== w.id && E(p).id === blocks(p)[n0 + 2].id);
+    q = await T.until('Ctrl+D duplicates it with its children below them, the caret in the copy', (p) => blocks(p).length === n0 + 6 && blocks(p)[n0 + 3].src === 'two' && blocks(p)[n0 + 3].level === 1
+      && blocks(p)[n0 + 4].src === 'three' && blocks(p)[n0 + 4].level === 2 && blocks(p)[n0 + 3].id !== w.id && E(p).id === blocks(p)[n0 + 3].id);
     await T.key('k', ['ctrl', 'shift']);
-    await T.until('Ctrl+Shift+K deletes the block with the caret', (p) => blocks(p).length === n0 + 4 && blocks(p)[n0 + 2].src === 'three');
+    await T.until('Ctrl+Shift+K deletes the block with the caret, its children with it', (p) => blocks(p).length === n0 + 4 && blocks(p)[n0 + 2].src === 'three' && blocks(p)[n0 + 3].src === '');
     await T.act('notes-select', '', String(n0), String(n0 + 1));
+    await T.until('a selected block\'s children are selected with it', (p) => tabPage(p).selCount === 3 && blocks(p)[n0 + 2].sel);
     await T.act('notes-sel-key', '', 'alt-down');
-    await T.until('Alt+Down moves selected blocks together, still selected', (p) => blocks(p)[n0].src === 'three' && blocks(p)[n0 + 1].src === 'one' && blocks(p)[n0 + 2].src === 'two' && tabPage(p).selCount === 2);
+    await T.until('Alt+Down moves selected blocks together, still selected', (p) => blocks(p)[n0].src === '' && blocks(p)[n0 + 1].src === 'one' && blocks(p)[n0 + 2].src === 'two' && blocks(p)[n0 + 3].src === 'three' && tabPage(p).selCount === 3);
     await T.act('notes-sel-key', '', 'ctrl-d');
-    await T.until('Ctrl+D copies selected blocks, the copies selected', (p) => blocks(p).length === n0 + 6 && blocks(p)[n0 + 3].src === 'one' && blocks(p)[n0 + 4].src === 'two' && tabPage(p).selCount === 2 && blocks(p)[n0 + 3].sel);
+    await T.until('Ctrl+D copies selected blocks, the copies selected', (p) => blocks(p).length === n0 + 7 && blocks(p)[n0 + 4].src === 'one' && blocks(p)[n0 + 5].src === 'two' && tabPage(p).selCount === 3 && blocks(p)[n0 + 4].sel);
     await T.act('notes-sel-key', '', 'ctrl-shift-k');
     await T.until('Ctrl+Shift+K deletes them', (p) => blocks(p).length === n0 + 4 && tabPage(p).selCount === 0);
+    // A paragraph nests too: the empty line, moved under "three", one in.
+    await T.act('notes-type', '', String(n0), 'a note');
+    await T.act('notes-key', '', String(n0), 'alt-down', '0', '0', 'true', 'true');
+    await T.until('Alt+Down takes the line past "one" and its children', (p) => blocks(p)[n0 + 3].src === 'a note' && blocks(p)[n0].src === 'one');
+    await T.act('notes-key', '', String(n0 + 3), 'tab', '0', '0', 'true', 'true');
+    await T.until('Tab nests a paragraph', (p) => blocks(p)[n0 + 3].kind === 'p' && blocks(p)[n0 + 3].level === 1);
+    await T.act('notes-key', '', String(n0 + 3), 'tab', '0', '0', 'true', 'true');
+    await T.act('notes-key', '', String(n0 + 3), 'tab', '0', '0', 'true', 'true');
+    await T.until('…as deep as one below the block above', (p) => blocks(p)[n0 + 3].level === 3);
+    await T.act('notes-key', '', String(n0 + 3), 'tab', '0', '0', 'true', 'true');
+    q = await T.props();
+    t.check('…and no deeper', blocks(q)[n0 + 3].level === 3, blocks(q)[n0 + 3]);
+    await T.act('notes-key', '', String(n0 + 3), 'backspace', '0', '0', 'true', 'true');
+    await T.until('Backspace at its start steps it out one level', (p) => blocks(p)[n0 + 3].level === 2 && blocks(p)[n0 + 3].src === 'a note');
+    // Folding: "one"'s children hide behind its fold, and show again.
+    q = await T.props();
+    t.check('a block with children says so (its fold shows)', blocks(q)[n0].kids && !blocks(q)[n0 + 3].kids, blocks(q).slice(n0));
+    await T.act('notes-fold', '', String(n0));
+    await T.until('the fold hides the children', (p) => blocks(p)[n0].folded && blocks(p).length === n0 + 1 && N(p).tabPage.blocks.length === n0 + 4);
+    await snap('notes-folded');
+    await T.until('the fold is saved', (p) => tabPage(p).saveText === 'Saved' && !N(p).tabPage?.dirty);
+    const sf = await page(plan.id);
+    t.check('the server keeps "folded", and the paragraph\'s level', sf.blocks[n0].folded === true && sf.blocks[n0 + 3].level === 2 && sf.blocks[n0 + 3].type === 'p', sf.blocks.slice(n0));
+    await T.act('notes-fold', '', String(n0));
+    await T.until('again: they show', (p) => !blocks(p)[n0].folded && blocks(p).length === n0 + 4);
     await T.until('all of it saved', (p) => tabPage(p).saveText === 'Saved');
   }
 

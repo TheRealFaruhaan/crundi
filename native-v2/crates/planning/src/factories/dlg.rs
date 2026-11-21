@@ -7,8 +7,8 @@
 //! (w::overlay_modal).
 //!
 //! Known gaps (as the Slint client): files cannot be dropped or pasted on
-//! the change request (Attach picks them); the transcript is read-only text,
-//! not the chat page.
+//! the change request (Attach picks them). The transcript is the person's
+//! live chat (view.rs transcript_body).
 
 use super::model::{self, arr, b, n, s};
 use super::parts::{self, btn, field, note, prefs, FileChip, Line, Sec};
@@ -954,9 +954,11 @@ fn trigger_dialog(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> Any
 
 /// A person's transcript (.fx-chatwrap): a sheet on the right, over the scrim.
 fn chat_sheet(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElement {
-    let name = rf(fx, |f| f.chat_name.clone());
+    let (name, chat) = rf(fx, |f| (f.chat_name.clone(), f.chat.as_ref().map(|c| c.0.clone()).unwrap_or_default()));
     let (focus, _) = handles(fx, "fx-chat", cx);
     let vp = window.viewport_size();
+    // The chat page in the frame (.fx-chatbox iframe): its header, the conversation, the box.
+    let page = super::view::transcript_body(fx, &chat, "chat-close", window, cx);
     deferred(anchored().position(point(px(0.), px(0.))).child(
         div().id("fx-chat-scrim").occlude().w(vp.width).h(vp.height).bg(T::scrim()).flex().justify_end()
             .on_mouse_down(MouseButton::Left, |_, _, cx| fact("chat-close", "", "", cx))
@@ -967,6 +969,6 @@ fn chat_sheet(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElem
                     .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_14).font_weight(T::W_BOLD).child(name))
                     .child(btn("chat-tab", "Open in a new tab", None, "ghost", true, false).on_click(|_, _, cx| fact("chat-tab", "", "", cx)))
                     .child(btn("chat-close", "Close", Some(IconName::X), "ghost", true, false).on_click(|_, _, cx| fact("chat-close", "", "", cx))))
-                .child(super::view::transcript_body(fx))),
+                .child(div().flex().flex_col().flex_1().min_h_0().child(page))),
     )).with_priority(1).into_any_element()
 }

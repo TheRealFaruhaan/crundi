@@ -228,7 +228,7 @@ impl Render for Toolbar {
         rendered("kanban-toolbar");
         let _ = &self.store;
         let (fold, view) = (self.fold, self.view.clone());
-        let vb = |id: &'static str, label: String, on: bool| w::toggle(id, label, on).on_click(move |_, window, cx| act(id, "", "", window, cx));
+        let vb = |id: &'static str, label: String, on: bool| w::toggled(id, label, on).on_click(move |_, window, cx| act(id, "", "", window, cx));
         let media = if fold { w::icon_button("kanban-media", IconName::Images, "Media") } else { w::button("kanban-media", "Media").icon(IconName::Images) };
         let me = cx.entity().downgrade();
         let bar = div().flex().flex_none().items_center()
@@ -338,13 +338,18 @@ fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixe
             .on_click(a("goto-mindmap", id.clone())));
     }
     let tid = id.clone();
-    let clip_btn = if cd.media > 0 { w::toggle(eid("kanban-clip", &sid), cd.media.to_string(), clip_open).icon(IconName::Paperclip).tooltip("Attachments") }
-        else { w::icon_toggle(eid("kanban-clip", &sid), IconName::Paperclip, "Attachments", clip_open) };
+    // .card-clip: borderless and muted (secondary with attachments); open,
+    // the tertiary fill and the border (the web's .card-clip.open).
+    let clip_btn = if cd.media > 0 { w::ghost(eid("kanban-clip", &sid), cd.media.to_string()).icon(IconName::Paperclip).tooltip("Attachments") }
+        else { w::icon_button(eid("kanban-clip", &sid), IconName::Paperclip, "Attachments") };
+    // (The card at rest paints the same colours: card_el.rs.)
+    let (bg, fg, edge) = super::card_el::clip_look(cd.media > 0, clip_open);
+    let clip_btn = clip_btn.border_1().border_color(edge).text_color(fg).when_some(bg, |b, c| b.bg(c));
     title = title.child(div().relative().flex_none().child(clip_btn.on_click(move |_, _, cx| {
         let b = super::control_box(&tid, "clip", cx).unwrap_or_default();
         super::clip_open(&tid, b, f32::from(card_w), cx);
     })).child(report(&inp.boxes, &id, "clip".into())));
-    if cd.compact { title = title.child(w::icon_toggle(eid("kanban-menu-c", &sid), IconName::Menu, "Task actions", cd.menu_open).on_click(a("card-menu", id.clone()))); }
+    if cd.compact { title = title.child(menu_btn(eid("kanban-menu-c", &sid), false, cd.menu_open).on_click(a("card-menu", id.clone()))); }
 
     let mut col = div().flex().flex_col().px(T::SP_12).pt(T::SP_12).pb(T::SP_10).child(title);
     if !cd.desc.is_empty() { col = col.child(div().w_full().min_w_0().text_size(T::TEXT_12).text_color(T::text_secondary()).child(cd.desc.clone())); }
@@ -374,7 +379,7 @@ fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixe
     // The footer: the menu, then + Subtask (not on a compact card).
     if !cd.compact {
         col = col.child(div().flex().items_center().gap(T::SP_6).pt(T::SP_10)
-            .child(w::icon_toggle(eid("kanban-menu", &sid), IconName::Menu, "Task actions", cd.menu_open).on_click(a("card-menu", id.clone())))
+            .child(menu_btn(eid("kanban-menu", &sid), true, cd.menu_open).on_click(a("card-menu", id.clone())))
             .child(w::button(eid("kanban-sub", &sid), "Subtask").icon(IconName::Plus).tooltip("Add a subtask").on_click(a("add-subtask", id.clone()))));
     }
     // The card's actions, under its menu.
@@ -873,4 +878,13 @@ fn clip_pop(store: &Entity<KStore>, focus: &FocusHandle, window: &Window, cx: &A
                 .child(w::square_button("kanban-clip-add", IconName::Plus, "Attach a file", w::SquareLook::Plain, T::SP_40, T::ICON_XL)
                     .on_click({ let t = task.to_string(); move |_, _, cx| super::media_task(&t, cx) }))),
     )).with_priority(1).into_any_element())
+}
+
+/// The card's menu button (.kc-menu): in the footer bordered and secondary,
+/// in a compact card's title borderless and muted; open, it is outlined and
+/// tinted (.kanban-card.menu-open .kc-menu: the accent's edge, accent-dim,
+/// its lighter text).
+fn menu_btn(id: ElementId, foot: bool, open: bool) -> gpui_component::button::Button {
+    let (bg, fg, edge) = super::card_el::menu_look(foot, open);
+    w::icon_button(id, IconName::Menu, "Task actions").border_1().border_color(edge).text_color(fg).when_some(bg, |b, c| b.bg(c))
 }

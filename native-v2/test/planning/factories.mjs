@@ -156,12 +156,43 @@ export async function run(T_, t) {
   const ev = V(await T.props()).events;
   if (ev > 1) {
     await T.act('factories-slider', '1');
-    await T.until('the slider replays the first event', (p) => !V(p).live && V(p).at === 1);
-    await T.act('factories-slider', String(ev));
+    const r1 = await T.until('the slider replays the first event', (p) => !V(p).live && V(p).at === 1);
+    // The run as it was then (the journal folded): the token still at Start, none invented.
+    const act1 = V(r1).nodes.filter((n) => n.active);
+    t.check('at the first event the one token is at Start', act1.length === 1 && act1[0].kind === 'start', V(r1).nodes.map((n) => [n.kind, n.active, n.token]));
+    const begin = V(r1).timeline.find((x) => x.main === 'The Manager got the task');
+    if (begin) {
+      await T.act('factories-slider', String(begin.i));
+      const r2 = await T.until('replayed to the Manager getting the task', (p) => V(p).at === begin.i);
+      t.check('then the Manager has it, and Start does not', V(r2).nodes.find((n) => n.kind === 'manager')?.active && !V(r2).nodes.find((n) => n.kind === 'start')?.active, V(r2).nodes.map((n) => [n.kind, n.active, n.token]));
+    }
+    // (Its end now: the run may have logged more since.)
+    await T.act('factories-slider', String(V(await T.props()).events));
     await T.until('at its end it is live again', (p) => V(p).live);
   }
   await fx('v-tab', 'run');
   await fx('v-unselect');
+
+  // A person's transcript is their live chat (the web's chat page in a
+  // frame): the conversation from the server's replay on subscribe, live as
+  // it changes, and its message box.
+  const rid = V(await T.props()).runId;
+  const got = await T.api.http('GET', `/api/factory-runs/get?id=${encodeURIComponent(rid)}`);
+  const mchat = got.body?.run?.managerChatId;
+  t.check('the run has the Manager\'s chat', !!mchat, got.body);
+  if (mchat) {
+    const TR = (p) => V(p).transcript;
+    await T.act('factories-transcript', mchat, 'Manager', 'sheet');
+    const s1 = await T.until('the transcript shows the chat, its history', (p) => TR(p).open && TR(p).stores?.[0]?.id === mchat && TR(p).stores[0].rows > 0, 20000);
+    if (s1) {
+      const rows0 = TR(s1).stores[0].rows;
+      await T.act('factories-transcript-send', 'Hello from the graph');
+      await T.until('a message from its box, and the reply, show live', (p) => TR(p).stores[0].rows >= rows0 + 2 && TR(p).stores[0].state !== 'working', 30000);
+      await sleep(300); await T.snap('planning', 'factories-transcript');
+    }
+    await fx('chat-close');
+    await T.until('closed, the transcript lets go of the chat', (p) => !TR(p).open && TR(p).views.length === 0);
+  }
 
   // The project's Factory panel: the live graph, Follow and Details.
   await T.act('open-pane', 'factory');

@@ -102,7 +102,24 @@ export async function run(T, t) {
   }
   s = await T.until('the idea on show in the pane', ideaShown);
   if (s) {
-    const r = M(s).nodes.find((x) => x.id === idea.id);
+    // The idea in hand follows the pointer over the window, out of the map
+    // (its clone is drawn over every pane, as the web's fixed .drag-clone).
+    const r0 = M(s).nodes.find((x) => x.id === idea.id);
+    const tl = leaf(s, key);
+    const [gx, gy] = [r0.box.x + Math.min(30, r0.box.w / 2), r0.box.y + r0.box.h / 2];
+    await T.mouse('move', gx, gy);
+    await sleep(250);
+    await T.mouse('down', gx, gy);
+    const [tx, ty] = [tl.x + tl.w / 2, tl.y + tl.h / 2];
+    for (let i = 1; i <= 12; i++) await T.mouse('move', gx + (tx - gx) * i / 12, gy + (ty - gy) * i / 12, { buttons: ['left'] });
+    const dg = await T.until('over the terminal, the idea\'s clone is there with the pointer', (p) => M(p).drag?.id === idea.id
+      && M(p).drag.x > tl.x - 200 && M(p).drag.x < tx && M(p).drag.y > tl.y - 60 && M(p).drag.y < ty);
+    if (!dg) console.log('   clone at', M(await T.props()).drag, 'terminal', tl);
+    await T.mouse('move', gx, gy, { buttons: ['left'] });
+    await T.mouse('up', gx, gy);
+    await T.until('let go where it was taken, nothing moves', (p) => !M(p).drag);
+    await sleep(400);
+    const r = M(await T.props()).nodes.find((x) => x.id === idea.id);
     await dropOnTerm('a Mindmap idea', r.box.x + Math.min(30, r.box.w / 2), r.box.y + r.box.h / 2, `[Mindmap Idea ID: ${idea.id}]`);
   }
   await T.ui('workbench:pane-close', 'panel:mindmap');
@@ -126,6 +143,72 @@ export async function run(T, t) {
     // "+" and grip shown), and a frame has drawn them there.
     if (pl) await dropOnTerm('a Notes block', pl.x + 21, pl.y, 'A **dropped** line', (p) => at(p).plus.some((x) => x.id === bid));
   }
+
+  // ── Dropped on a page's words, a reference is typed in there (F162: the
+  // web's dropText: the caret follows the pointer, a space either side) ──
+  await T.act('open-pane', 'kanban');
+  await T.ui('tab', 'workbench');
+  await T.until('a Kanban pane again', (p) => leaf(p, 'panel:kanban') && K(p)?.boxes?.cards?.length);
+  for (let i = 0; i < 60 && !cardShown(await T.props()); i++) {
+    const kl = leaf(await T.props(), 'panel:kanban');
+    await T.mouse('wheel', kl.x + kl.w / 2, kl.y + kl.h / 2, { dy: -120 });
+    await sleep(60);
+  }
+  s = await T.until('a Kanban pane beside the Notes pane', (p) => leaf(p, 'panel:kanban') && leaf(p, nk) && cardShown(p) && at(p)?.boxes?.length);
+  if (s) {
+    const bid = at(s).blocks[0].id;
+    const n0 = at(s).blocks.length;
+    const bx = at(s).boxes.find((x) => x.id === bid);
+    await T.mouse('move', at(s).pageBox.x + at(s).pageBox.w / 2, bx.y + bx.h / 2);
+    const sh = await T.until('the pointer on the page\'s block shows its "+"', (p) => at(p).plus.some((x) => x.id === bid));
+    const pl = sh && at(sh).plus.find((x) => x.id === bid);
+    const cb = K(sh).boxes.cards.find((x) => x.id === cardId);
+    if (pl && cb) {
+      const [fx, fy, tx, ty] = [cb.x + 30, cb.y + 14, pl.x + 40 + 2, bx.y + bx.h / 2];
+      await T.ui('toasts-clear');
+      await T.mouse('move', fx, fy);
+      await sleep(250);
+      await T.mouse('down', fx, fy);
+      for (let i = 1; i <= 14; i++) await T.mouse('move', fx + (tx - fx) * i / 14, fy + (ty - fy) * i / 14, { buttons: ['left'] });
+      await T.until('over the words, the drop has its spot in the block (the caret shows there)', (p) => N(p).dropSpot?.id === bid);
+      await T.mouse('up', tx, ty);
+      const want = `[Kanban Task ID: ${cardId}]`;
+      const got = await T.until('dropped, it is typed into that block at the pointer, "Added to the note"', (p) => at(p).blocks.length === n0
+        && at(p).blocks[0].src.includes(want) && !at(p).blocks[0].src.endsWith('line' + want) && p.toast === 'Added to the note' && !N(p).dropSpot);
+      if (!got) { for (let i = 0; i < 6; i++) { const z = await T.props(); console.log('   page now', at(z).blocks.map((b) => b.src), 'toast', JSON.stringify(z.toast), N(z).dropSpot); await sleep(300); } }
+    } else t.check('the card and the block to drop on are on show', false, { pl, cb });
+  }
+
+  // ── The workbench scrolls at its edges while a card is held (wbAutoScroll) ──
+  for (const k of ['files', 'git', 'media', 'mindmap']) {
+    const q = await T.props();
+    const ww = q.window?.w ?? 1280;
+    if ((q.leaves || []).some((l) => l.x + l.w > ww + 4)) break;
+    await T.ui('add-pane', k);
+    await sleep(300);
+  }
+  s = await T.props();
+  const ww = s.window?.w ?? 1280;
+  if ((s.leaves || []).some((l) => l.x + l.w > ww + 4) && leaf(s, 'panel:kanban')) {
+    const kl = leaf(s, 'panel:kanban');
+    // (The Kanban pane on screen, the grid at its start.)
+    const cb = K(s).boxes.cards.find((x) => x.id === cardId);
+    if (cb && cb.x > 0 && cb.x < ww - 80) {
+      const x0 = kl.x;
+      const [fx, fy] = [cb.x + 30, cb.y + 14];
+      await T.mouse('move', fx, fy);
+      await sleep(250);
+      await T.mouse('down', fx, fy);
+      const ex = s.window ? s.window.w - 12 : ww - 12;
+      for (let i = 1; i <= 12; i++) await T.mouse('move', fx + (ex - fx) * i / 12, fy, { buttons: ['left'] });
+      await sleep(900);
+      const q = await T.props();
+      t.check('a card held at the workbench\'s right edge scrolls the grid on', leaf(q, 'panel:kanban') && leaf(q, 'panel:kanban').x < x0 - 40, { x0, now: leaf(q, 'panel:kanban') });
+      await T.mouse('move', fx, fy, { buttons: ['left'] });
+      await T.mouse('up', fx, fy);
+    } else t.check('the card is on show to hold', false, { cb, ww });
+  } else console.log('   (the grid fits the window: no edge scroll to check)');
+  for (const k of (await T.props()).panes || []) if (k !== key && k !== nk && !k.startsWith('pend:')) await T.ui('workbench:pane-close', k);
 
   // ── Edge auto-scroll: a block held near the page's bottom edge scrolls it ──
   const long = (await T.api.http('POST', '/api/notes', { project: 'demo', clientId: 'test-other', action: 'create', title: 'Long drop', blocks: Array.from({ length: 80 }, (_, i) => ({ type: 'p', text: `Row ${i + 1}` })) })).body.page;

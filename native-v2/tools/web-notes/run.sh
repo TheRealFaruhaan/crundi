@@ -1,5 +1,5 @@
 #!/bin/bash
-# The web's Notes nesting and block keys (Tab / Shift+Tab, Enter in nested
+# The web's Notes nesting and block keys (Tab / Shift+Tab on paragraphs and list items, children moving with their parent, folding, Enter in nested
 # lists, Alt+Up/Down, Ctrl+D, Ctrl+Shift+K, "level" kept on save, Markdown),
 # checked in the real web UI in Electron under xvfb, against a fresh stub
 # server on <port> (stopped again at the end). Needs npm ci (Electron).

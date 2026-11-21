@@ -693,7 +693,10 @@ impl Render for Workbench {
             .when(self.drag.is_some(), |d| d.cursor_grabbing())
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| if this.gutter.is_some() { this.pointer_move(f32::from(e.position.x), f32::from(e.position.y), cx) }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.pointer_up(cx)))
-            .child(div().id("wb-grid").size_full().overflow_x_scroll().track_scroll(&self.scroll).child(grid))
+            // A card, an idea, a file dragged near the grid's left or right
+            // edge scrolls it (the web's wbAutoScroll on #term-grid), so an
+            // off-screen pane can be reached.
+            .child(w::edge_scroll::<w::RefDrag>(div().id("wb-grid"), w::Scroller::Handle(self.scroll.clone()), true, false, cx.entity_id()).size_full().overflow_x_scroll().track_scroll(&self.scroll).child(grid))
             .children(card)
             .into_any_element()
     }

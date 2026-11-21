@@ -319,8 +319,12 @@ fn describe_target(ix: &Ix, node: Option<&Value>, who: Option<&str>) -> Value {
 // ─── Handoff, replies, waits ───
 
 /// handoff(): a person has finished their step (`tree_hash` "" for none).
-pub(crate) fn handoff(run: &Value, token_id: &str, payload: &Value, tree_hash: &str) -> Value {
+pub(crate) fn handoff(run: &Value, token_id: &str, payload: &Value, tree_hash: &str) -> Value { handoff_capped(run, token_id, payload, tree_hash, None) }
+
+/// handoff() with meta.caps.maxHandoffs (the journal's replay).
+pub(crate) fn handoff_capped(run: &Value, token_id: &str, payload: &Value, tree_hash: &str, cap: Option<f64>) -> Value {
     let mut c = Run::load(run);
+    c.cap = cap;
     let t = match c.find(token_id) { Some(t) if matches!(c.status(t).as_str(), "work" | "answer") => t, _ => return fail("There is nothing waiting on you right now.") };
     let p = if payload.is_object() || payload.is_array() { payload.clone() } else { json!({}) };
     if tr(c.toks[t].get("delegate")) { return c.finish_delegate(t, &p); }
@@ -408,6 +412,72 @@ pub(crate) fn handoff(run: &Value, token_id: &str, payload: &Value, tree_hash: &
         c.eval_decision(t, &node, who);
     }
     if !c.errors.is_empty() { return fail(&c.errors.join("\n")); }
+    c.cap_check();
+    c.finish()
+}
+
+/// escalate(): hand a token to the Manager with a reason (a stall, a merge
+/// conflict, a crash the runner could not recover from).
+pub(crate) fn escalate(run: &Value, token_id: &str, reason: &str) -> Value {
+    let mut c = Run::load(run);
+    let Some(t) = c.find(token_id) else { return fail("No such token.") };
+    let reason = text(Some(&json!(reason)));
+    if tr(c.toks[t].get("delegate")) { return c.finish_delegate(t, &json!({ "escalate": reason })); }
+    let nid = c.toks[t].get("nodeId").cloned();
+    c.log(obj(vec![("type", some("escalate")), ("nodeId", nid), ("reason", some(reason.as_str()))]));
+    c.escalate_token(t, &reason);
+    c.finish()
+}
+
+/// reopen(): take a finished run back to work; the Manager gets the token
+/// again with the reason.
+pub(crate) fn reopen(run: &Value, reason: &str, as_message: bool) -> Value {
+    let mut c = Run::load(run);
+    let Some(t) = c.live.iter().copied().find(|&i| st(&c.toks[i], "status") == "finished") else { return fail("The run has not finished, so there is nothing to reopen.") };
+    let Some(mgr) = c.ix.manager.clone() else { return fail(UNDEF_ID) };
+    let reason = text(Some(&json!(reason)));
+    c.from = Some(("The person".into(), String::new()));
+    c.log(json!({ "type": "reopen", "reason": reason }));
+    set(&mut c.r, "outcome", Value::Null);
+    set(&mut c.toks[t], "nodeId", mgr.get("id").cloned().unwrap_or_default());
+    set(&mut c.toks[t], "status", json!("work"));
+    if as_message { c.activate(t, &mgr, "work", &reason, ""); } else { c.activate(t, &mgr, "work", "", &reason); }
+    c.finish()
+}
+
+/// delegate(): the Manager hands a one-off job to someone on the team; its
+/// own token waits until the job comes back.
+pub(crate) fn delegate(run: &Value, token_id: &str, employee_id: &str, task: &str, cap: Option<f64>) -> Value {
+    let mut c = Run::load(run);
+    c.cap = cap;
+    let t = match c.find(token_id) { Some(t) if matches!(c.status(t).as_str(), "work" | "answer") && !tr(c.toks[t].get("delegate")) => t, _ => return fail("You can only hand out a job while it is your turn.") };
+    let person = if tr(c.toks[t].get("delegate")) { st(&c.toks[t]["delegate"], "employeeId") }
+        else if c.status(t) == "answer" { st(&c.toks[t], "answerer") }
+        else { c.ix.node(&st(&c.toks[t], "nodeId")).as_ref().map(roster_of).unwrap_or_default() };
+    if person != MANAGER_ID { return fail("Only the Manager hands out jobs."); }
+    let want = employee_id.trim().to_lowercase();
+    let emp = c.ix.roster.get(employee_id).cloned().or_else(|| c.ix.roster.values().find(|x| st(x, "name").to_lowercase() == want).cloned());
+    let Some(emp) = emp.filter(|e| st(e, "id") != MANAGER_ID) else {
+        let team: Vec<String> = c.ix.roster.values().filter(|x| st(x, "id") != MANAGER_ID).map(|x| st(x, "name")).collect();
+        return fail(&format!("Nobody called \"{employee_id}\" is on your team. The team: {}.", team.join(", ")));
+    };
+    let job = js_trim(&text(Some(&json!(task))));
+    if job.is_empty() { return fail("Say what the job is."); }
+    let tid = c.toks[t].get("id").cloned();
+    if c.live.iter().any(|&i| c.toks[i].get("delegatedBy") == tid.as_ref()) { return fail("You are already waiting on a job you handed out."); }
+    c.inc_handoffs();
+    let mgr_name = c.ix.name_of(Some(MANAGER_ID));
+    c.from = Some((mgr_name.clone(), "Manager".into()));
+    let prev = c.toks[t].get("status").cloned().unwrap_or_default();
+    set(&mut c.toks[t], "prevStatus", prev);
+    set(&mut c.toks[t], "status", json!("delegated"));
+    let id = c.new_id("t");
+    let eid = st(&emp, "id");
+    let ws = c.toks[t].get("ws").cloned().unwrap_or_default();
+    c.push_token(json!({ "id": id, "nodeId": "", "ws": ws, "path": [], "status": "work", "delegate": { "employeeId": eid, "task": job }, "delegatedBy": tid }));
+    c.log(json!({ "type": "delegate", "employeeId": eid, "task": job }));
+    c.effects.push(json!({ "type": "activate", "tokenId": id, "nodeId": "", "employeeId": eid, "mode": "delegate", "ws": ws,
+        "context": { "from": { "name": mgr_name, "label": "Manager" }, "summary": "", "message": job, "notes": [], "escalation": "" } }));
     c.cap_check();
     c.finish()
 }
@@ -554,6 +624,9 @@ struct Run {
     effects: Vec<Value>,
     errors: Vec<String>,
     keep_status: bool,
+    /// meta.caps.maxHandoffs (the journal's: the factory's cap plus what a
+    /// resume after the cap added); none: the factory's own.
+    cap: Option<f64>,
 }
 
 impl Run {
@@ -564,7 +637,7 @@ impl Run {
         Run {
             live: (0..toks.len()).collect(), toks, ix, r,
             from: None, summary: String::new(), payload: json!({}), is_manager: false, default_note: String::new(),
-            effects: vec![], errors: vec![], keep_status: false,
+            effects: vec![], errors: vec![], keep_status: false, cap: None,
         }
     }
 
@@ -616,7 +689,7 @@ impl Run {
 
     /// The handoff cap (the factory's maxHandoffs): the run waits for the person.
     fn cap_check(&mut self) {
-        let cap = self.r["snapshot"]["settings"]["caps"]["maxHandoffs"].clone();
+        let cap = match self.cap { Some(c) if c > 0.0 => jn(c), _ => self.r["snapshot"]["settings"]["caps"]["maxHandoffs"].clone() };
         if let Some(c) = cap.as_f64()
             && num(self.r.get("handoffs")) >= c
         {

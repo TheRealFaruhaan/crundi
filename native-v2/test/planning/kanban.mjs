@@ -74,8 +74,9 @@ export async function run(T_, t) {
   await t.sleep(300); // the menu's frame on screen before the snap (F45)
   await T.snap('planning', 'kanban-subtask-menu');
   await pick('rename');
-  await T.until('Rename asks', (p) => dialog(p)?.title === 'Edit subtask' && dialog(p).value === 'Step two');
-  await answerDialog(true, 'Step 2');
+  // (The web's askText, the card dialog Add task and Edit task use.)
+  await T.until('Rename asks', (p) => A(p)?.title === 'Edit subtask' && A(p).label === 'Subtask' && A(p).value === 'Step two' && A(p).ok === 'OK' && !A(p).choices.length);
+  await T.act('ask-answer', 'true', 'Step 2');
   await T.until('the subtask is renamed', (p) => cardBy(p, 'First card').todos[1].text === 'Step 2');
   // The subtask's Attach media: the web's openMediaModal, its media alone, uploads linked to it (F44).
   const MM = (p) => PA(p).mediaModal;

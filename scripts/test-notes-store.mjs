@@ -54,6 +54,20 @@ b.splice(3, 1);
 ok(b[3].rows.length === 2 && b[3].rows.every(r => r.length === 3), 'table rows are padded to the widest row');
 ok(b[4].type === 'p', 'an unknown block type becomes a paragraph');
 
+// Nesting: paragraphs and list items keep their level, and a folded block
+// its fold; nothing else does.
+const nb = ns.createPage('proj', { title: 'Nested', blocks: [
+  { type: 'p', text: 'parent', folded: true },
+  { type: 'p', text: 'child', level: 1 },
+  { type: 'bullet', text: 'item', level: 9 },
+  { type: 'h1', text: 'head', level: 2, folded: true },
+] }).page.blocks;
+ok(nb[0].folded === true && nb[0].level === undefined, 'a folded paragraph keeps its fold (no level at 0)');
+ok(nb[1].level === 1 && nb[1].folded === undefined, 'a nested paragraph keeps its level');
+ok(nb[2].level === 5, 'a level is at most 5');
+ok(nb[3].level === undefined && nb[3].folded === undefined, 'a heading neither nests nor folds');
+{ const nid = ns.listPages('proj').find((x) => x.title === 'Nested').id; ns.deletePage('proj', nid); ns.purgePage('proj', nid); }
+
 const id = c.page.id;
 const s1 = ns.savePage('proj', id, { title: 'Renamed', blocks: [{ type: 'p', text: 'v2' }], baseVersion: 1 });
 ok(s1.ok && s1.version === 2, 'a save based on the current version is written (version 2)');

@@ -18,6 +18,8 @@ crundi-widgets.workspace = true
 crundi-shell.workspace = true
 crundi-workbench.workspace = true
 crundi-workspace.workspace = true
+# A factory person's transcript is their live chat (the chat area's log and box).
+crundi-chat.workspace = true
 base64.workspace = true
 rfd.workspace = true
 

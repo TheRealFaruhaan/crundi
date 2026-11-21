@@ -460,8 +460,9 @@ pub(crate) fn todo_menu(t: &str, td: &str, btn: Box4, cx: &mut App) {
         "rename" => {
             let cur = with(cx, |k| k.task(&t)).and_then(|x| x.get("todos").and_then(|a| a.as_array()).and_then(|a| a.iter().find(|y| s(y, "id") == td)).map(|y| s(y, "text"))).unwrap_or_default();
             let (t, td) = (t.clone(), td.clone());
-            w::ask(window, cx, w::Ask { title: "Edit subtask".into(), message: "Subtask".into(), ok: "OK".into(), prompt: Some(cur), ..Default::default() }, move |r, _, cx| {
-                if let Some(v) = r.filter(|v| !v.trim().is_empty()) { post(cx, json!({ "action": "updateTodo", "taskId": t, "todoId": td, "text": v.trim() }), reload); }
+            // The web's askText: the same dialog as Add task and Edit task.
+            ask::ask(window, cx, "Edit subtask", "Subtask", &cur, false, "OK", None, move |r, _, cx| {
+                if let Some((v, _)) = r.filter(|(v, _)| !v.trim().is_empty()) { post(cx, json!({ "action": "updateTodo", "taskId": t, "todoId": td, "text": v.trim() }), reload); }
             });
         }
         "delete" => post(cx, json!({ "action": "deleteTodo", "taskId": t, "todoId": td }), reload),

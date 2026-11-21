@@ -31,6 +31,7 @@ mod edit;
 mod dlg;
 mod valid;
 mod engine;
+mod journal;
 
 use crundi_core::live::Event;
 use crundi_shell::Stores;
@@ -38,7 +39,7 @@ use crundi_theme::{IconName, T};
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
 use model::{arr, b, n, s};
-use parts::{btn, get, note, post, Card, Clean, Kv, RunRow, Tpl};
+use parts::{btn, get, note, post, Card, Clean, RunRow, Tpl};
 use serde_json::{json, Value};
 use std::{collections::HashMap};
 
@@ -95,8 +96,8 @@ pub(crate) struct F {
     pub chat: Option<(String, String)>,
     pub chat_open: bool,
     pub chat_name: String,
-    pub chat_state: String,
-    pub chat_lines: Vec<Kv>,
+    /// The transcripts' live chats on show (view.rs ChatView).
+    pub chats: Vec<view::ChatView>,
 }
 
 fn fresh() -> F {
@@ -142,7 +143,11 @@ pub(crate) fn with<R>(cx: &mut App, f: impl FnOnce(&mut F) -> R) -> R { with_fx(
 fn rf<R>(fx: &mut Fx, f: impl FnOnce(&mut F) -> R) -> R { f(&mut fx.f) }
 
 /// Something the factories screens show changed: notify their views.
-pub(crate) fn bump(cx: &mut App) { store(cx).update(cx, |_, cx| cx.notify()); }
+pub(crate) fn bump(cx: &mut App) {
+    // A transcript closed lets go of its chat.
+    view::release_chats(cx);
+    store(cx).update(cx, |_, cx| cx.notify());
+}
 
 /// The Factories tab's leaf: the page (library / runs / cleanup, the editor
 /// or a run's graph) and its dialogs; cached, redrawn when the store changes.
@@ -238,6 +243,8 @@ pub fn on_tab(tab: &str, cx: &mut App) {
 /// The frame's live events: the runs' badge (the state), a run's change, the
 /// library's, a reconnection.
 pub fn on_batch(_: &Stores, batch: &[Event], cx: &mut App) {
+    // A transcript's conversation, live (its messages in one update a frame).
+    view::route_chat(batch, cx);
     for e in batch {
         match e {
             Event::State(v) => {
@@ -811,6 +818,23 @@ pub fn test_ui(_: &Stores, name: &str, args: &[String], window: &mut Window, cx:
         "slash-pick" => { let k = parts::pwith(cx, |p| p.slash.as_ref().map(|m| m.key.clone())).unwrap_or_default(); let nm = a(0); json!({ "ok": parts::slash_pick(&k, (!nm.is_empty()).then_some(nm.as_str()), window, cx) }) }
         // The replay bar's slider: set it to an event (its last: live).
         "slider" => { act("v-at", &a(0), "", cx); json!({ "ok": true }) }
+        // A person's transcript, open on a chat (as a step's "Open their
+        // transcript" does, without the workbench's routing of its own chats):
+        // factories-transcript <chat> <name> <panel|sheet>.
+        "transcript" => {
+            let (id, nm) = (a(0), a(1));
+            if a(2) == "panel" { view::open_transcript_here(&id, &nm, cx); } else { with(cx, |s2| { s2.chat = Some((id.clone(), nm.clone())); s2.chat_name = nm.clone(); s2.chat_open = true; }); }
+            bump(cx);
+            json!({ "ok": true })
+        }
+        // The transcript's message box: type, then send (as Enter does).
+        "transcript-send" => {
+            let c = with(cx, |s2| s2.chats.first().map(|c| c.pane.composer.clone()));
+            let Some(c) = c else { return Some(json!({ "ok": false, "error": "no transcript" })) };
+            let text = a(0);
+            c.update(cx, |c, cx| { c.set_text(&text, window, cx); c.send(window, cx); });
+            json!({ "ok": true })
+        }
         // A picture on the clipboard (a 1x1 PNG), for a paste into the change
         // request; the field named (start|title, say) gets the keys.
         "clip-image" => {

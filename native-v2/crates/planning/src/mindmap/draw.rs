@@ -198,13 +198,18 @@ fn ring(s: &M, z: f32) -> AnyElement {
         .into_any_element()
 }
 
-/// The idea in hand while dragging (.drag-clone).
+/// The idea in hand while dragging (.drag-clone: position fixed on the
+/// body, so it follows the pointer over the whole window, a chat or a
+/// terminal too, not clipped by the map).
 fn clone_box(s: &M, z: f32) -> AnyElement {
-    div().absolute().left(px((s.drag_x - s.grab_x) * z)).top(px((s.drag_y - s.grab_y) * z)).w(T::MINDMAP_NODE * z)
+    deferred(anchored().position(point(px(s.drag_wx - s.grab_x * z), px(s.drag_wy - s.grab_y * z))).child(clone_card(s, z))).with_priority(1).into_any_element()
+}
+
+fn clone_card(s: &M, z: f32) -> Div {
+    div().w(T::MINDMAP_NODE * z)
         .px(T::SP_10 * z).py(T::SP_8 * z).rounded(T::R_BUBBLE * z).border_1().border_color(T::accent()).bg(T::bg_card())
         .opacity(T::MINDMAP_O_CLONE).shadow(lift())
         .child(div().text_size(T::TEXT_13 * z).font_weight(T::W_SEMIBOLD).text_color(T::text()).line_clamp(2).text_ellipsis().child(s.drag_text.clone()))
-        .into_any_element()
 }
 
 /// A link curve from (x1, y1) to (x2, y2): out of the right edge, into the left.
@@ -749,7 +754,7 @@ impl Render for MapView {
         if let Some(h) = &s.hover { if !(s.edit_on && s.edit_node.as_ref().is_some_and(|e| e.id == h.id)) { content = content.child(card(h, Mode::Open, z, None, true, false)); } }
         if s.edit_on { if let Some(e) = &s.edit_node { content = content.child(card(e, Mode::Editing, z, Some(&u.edit), true, false)); } }
         if s.draft_on { content = content.child(draft(s, z, &u.draft)); }
-        if !s.drag_id.is_empty() { content = content.child(clone_box(s, z)); }
+        let clone = (!s.drag_id.is_empty()).then(|| clone_box(s, z));
         let lh = window.line_height();
         let held = s.press.is_some();
         // The canvas's scrollbars (the web's .mindmap-canvas overflow: auto),
@@ -832,6 +837,7 @@ impl Render for MapView {
                 });
             }).absolute().top_0().left_0().size_full())
             .child(w::layer(content))
+            .children(clone)
             .when(vbar.is_some() || hbar.is_some(), |d| d.child(w::layer(div().absolute().top_0().left_0().size_full().children(vbar).children(hbar))))
             .into_any_element()
     }

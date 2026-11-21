@@ -32,11 +32,64 @@ fn button(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconNam
 
 fn button_w(label: Option<&str>, look: Look, window: &mut Window, cx: &App) -> Pixels { crundi_widgets::paint::button_w(label, look, window, cx) }
 
+/// A ghost button with its own colours and a 1 px edge (transparent when
+/// none), as view.rs builds the paperclip and the menu: `w::paint::button_at`
+/// with (background, text, edge) given. Returns its width.
+#[allow(clippy::too_many_arguments)]
+fn button_tint(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconName, (bg, fg, edge): (Option<Hsla>, Hsla, Hsla), hit: &str, window: &mut Window, cx: &App) -> Pixels {
+    let bw = px(1.);
+    let w = match label {
+        None => {
+            let s = T::ICON_BTN;
+            if let Some(c) = bg { d.bg(b(x, y, s, s), T::BTN_RADIUS, c); }
+            let o = r((s - bw * 2. - T::ICON_BTN_ICON) / 2.);
+            d.icon(icon, b(x + bw + o, y + bw + o, T::ICON_BTN_ICON, T::ICON_BTN_ICON), fg);
+            if edge.a > 0. { d.border(b(x, y, s, s), T::BTN_RADIUS, bw, edge); }
+            s
+        }
+        Some(l) => {
+            let t = Rc::new(Txt::shape(l, T::BTN_TEXT, T::BTN_WEIGHT, d.fade(fg), 1.25, None, None, window, cx));
+            let gap = r(T::BTN_TEXT * 0.5);
+            let w = tint_w(Some(l), window, cx);
+            let h = T::BTN_H;
+            if let Some(c) = bg { d.bg(b(x, y, w, h), T::BTN_RADIUS, c); }
+            let inner = h - bw * 2.;
+            let cx0 = x + bw + T::BTN_PAD_X;
+            d.icon(icon, b(cx0, y + bw + r((inner - T::BTN_ICON) / 2.), T::BTN_ICON, T::BTN_ICON), fg);
+            let th_ = t.h;
+            d.text(t, point(cx0 + T::BTN_ICON + gap, y + bw + r((inner - th_) / 2.)));
+            if edge.a > 0. { d.border(b(x, y, w, h), T::BTN_RADIUS, bw, edge); }
+            w
+        }
+    };
+    d.hits.push((b(x, y, w, T::BTN_H.max(T::ICON_BTN)), hit.to_string()));
+    w
+}
+
+/// `button_tint`'s width.
+fn tint_w(label: Option<&str>, window: &mut Window, cx: &App) -> Pixels {
+    match label {
+        None => T::ICON_BTN,
+        Some(l) => px(2.) + T::BTN_PAD_X * 2. + T::BTN_ICON + r(T::BTN_TEXT * 0.5) + Txt::shape(l, T::BTN_TEXT, T::BTN_WEIGHT, T::white(), 1.25, None, None, window, cx).w,
+    }
+}
+
+/// The paperclip's colours (view.rs: .card-clip, .has, .open).
+pub(crate) fn clip_look(media: bool, open: bool) -> (Option<Hsla>, Hsla, Hsla) {
+    if open { (Some(T::bg_tertiary()), T::text(), T::border()) } else { (None, if media { T::text_secondary() } else { T::text_muted() }, transparent_black()) }
+}
+
+/// The menu button's colours (view.rs: .kc-menu, in the footer or a compact
+/// card's title; .menu-open tinted).
+pub(crate) fn menu_look(foot: bool, open: bool) -> (Option<Hsla>, Hsla, Hsla) {
+    if open { (Some(T::accent_dim()), T::accent_hover(), T::accent()) }
+    else if foot { (None, T::text_secondary(), T::border()) } else { (None, T::text_muted(), transparent_black()) }
+}
+
 /// Lay a card out at `width` (its box's width).
 pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
     let cd = &k.card;
     let mut d = Draw::default();
-    let on = |o: bool| if o { Look::Primary } else { Look::Ghost };
     let cw = k.width;
     let (x0, iw) = (px(1.) + T::SP_12, cw - px(2.) - T::SP_12 * 2.);
     let mut y = px(1.) + T::SP_12;
@@ -51,7 +104,7 @@ pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
     let mm_w = (cd.mm > 0).then(|| { let mut m = Draw::default(); crundi_widgets::paint::icon_tag_at(&mut m, px(0.), px(0.), IconName::Share2, &cd.mm.to_string(), "accent", window, cx).size.width });
     if let Some(w) = mm_w { rights.push(w); }
     let media = (cd.media > 0).then(|| cd.media.to_string());
-    rights.push(button_w(media.as_deref(), on(k.clip), window, cx));
+    rights.push(tint_w(media.as_deref(), window, cx));
     if cd.compact { rights.push(T::ICON_BTN); }
     let rw: Pixels = rights.iter().fold(px(0.), |a, w| a + *w) + T::SP_8 * rights.len() as f32;
     let tw = (iw - rw).max(px(0.));
@@ -67,9 +120,9 @@ pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
         d.hits.push((tb, "mm".into()));
         x += w + T::SP_8;
     }
-    let w = button(&mut d, x, y, media.as_deref(), IconName::Paperclip, on(k.clip), "clip", window, cx);
+    let w = button_tint(&mut d, x, y, media.as_deref(), IconName::Paperclip, clip_look(cd.media > 0, k.clip), "clip", window, cx);
     x += w + T::SP_8;
-    if cd.compact { button(&mut d, x, y, None, IconName::Menu, on(cd.menu_open), "menu", window, cx); }
+    if cd.compact { button_tint(&mut d, x, y, None, IconName::Menu, menu_look(false, cd.menu_open), "menu", window, cx); }
     let _ = th;
     y += row_h;
 
@@ -129,7 +182,7 @@ pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
     // The footer: the menu, then + Subtask (not on a compact card).
     if !cd.compact {
         y += T::SP_10;
-        button(&mut d, x0, y, None, IconName::Menu, on(cd.menu_open), "menu", window, cx);
+        button_tint(&mut d, x0, y, None, IconName::Menu, menu_look(true, cd.menu_open), "menu", window, cx);
         button(&mut d, x0 + T::ICON_BTN + T::SP_6, y, Some("Subtask"), IconName::Plus, Look::Default, "sub", window, cx);
         y += T::ICON_BTN.max(T::BTN_H);
     }
