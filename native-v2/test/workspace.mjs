@@ -285,6 +285,18 @@ await act('open-path', 'src/app.js:3');
 await T.until('a path from a chat opens the file', (s) => W(s).wins.some((w) => w.kind === 'edit' && /src\/app\.js$/.test(w.title)));
 for (const w of W(await T.state()).wins) await act('win-close', String(w.id));
 
+// F209: Files reloads each time its tab is shown (the web's switchTab:
+// loadFiles), keeping the folder on show; Git too (loadGitInfo), at once
+// rather than on its 8 s timer.
+await act('files-nav', join(P, 'docs'));
+await T.until('Files is in docs', (s) => W(s).files.path === join(P, 'docs') && W(s).files.rows.some((r) => r.name === 'notes.txt'));
+writeFileSync(join(P, 'docs/made-by-claude.txt'), 'new\n');
+await T.ui('tab', 'git');
+await T.until('a file made on disk shows in Git when its tab is shown', (s) => [...W(s).git.changes, ...W(s).git.staged].some((f) => /made-by-claude\.txt$/.test(f.file)), 4000);
+await T.ui('tab', 'files');
+await T.until('…and in Files when its tab is shown again, in the same folder', (s) => W(s).files.path === join(P, 'docs') && W(s).files.rows.some((r) => r.name === 'made-by-claude.txt'), 4000);
+rmSync(join(P, 'docs/made-by-claude.txt'), { force: true });
+
 // ─── Media ───
 await T.ui('tab', 'media');
 await T.until('Media loads', (s) => W(s).media.state === 'ok');
@@ -326,6 +338,14 @@ if (logo) {
   await T.until('Delete asks first (media)', (s) => s.dialog?.danger);
   await T.ui('dialog-answer', 'true');
   await T.until('then the card goes', (s) => W(s).media.cards.length === 1 && s.toast === 'Deleted');
+}
+// F209: Media reloads each time its tab is shown (loadMedia).
+{
+  await T.ui('tab', 'files');
+  const up = await T.api.http('POST', '/api/media/upload', { name: 'from-elsewhere.png', data: readFileSync(png).toString('base64'), project: 'demo' });
+  t.check('a media file added elsewhere', up.body?.ok, up.body);
+  await T.ui('tab', 'media');
+  await T.until('shows in Media when its tab is shown', (s) => W(s).media.cards.some((c) => c.name === 'from-elsewhere.png'), 4000);
 }
 
 // ─── The workbench: a Claude terminal pane (an Empty Shell) ───
