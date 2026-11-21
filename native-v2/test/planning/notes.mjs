@@ -235,6 +235,24 @@ export async function run(T, t) {
     const fb = await T.until('…and the format bar opens over the dragged words', (p) => N(p).float === 'fmt' && N(p).fmt && !N(p).fmt.link);
     t.check('the bar sits over the dragged words (its middle, its top)', fb && N(fb).fmt.x > w7.x + 20 && N(fb).fmt.x < w7.x + 100 && Math.abs(N(fb).fmt.y - w7.box.y) < w7.box.h + 8, fb && { fmt: N(fb).fmt, w7, g: g && E(g) });
     await T.key('Escape');
+    // F230: the block right under a heading takes a drag across its first
+    // line as words, not as a block selection (the heading's box ends where
+    // the heading does).
+    {
+      const p0 = await T.props();
+      t.check('…block 0 is a heading, block 1 right under it', blocks(p0)[0].kind === 'h1' && blocks(p0)[1].kind === 'p', blocks(p0).slice(0, 2).map((b) => b.kind));
+      const h0 = tabPage(p0).boxes.find((x) => x.id === blocks(p0)[0].id);
+      const u1 = await wordsAt(1);
+      t.check('the heading\'s box ends where the block under it starts', h0 && Math.abs(h0.y + h0.h - u1.box.y) <= 1, { h0, b1: u1.box });
+      const y = u1.box.y + 6;
+      await T.mouse('down', u1.x + 10, y);
+      for (let i = 1; i <= 8; i++) await T.mouse('move', u1.x + 10 + 8 * i, y, { buttons: ['left'] });
+      await T.until('a drag across the first line under a heading selects its words', (p) => N(p).tsel?.id === u1.id && N(p).tsel.b > N(p).tsel.a);
+      await T.mouse('up', u1.x + 74, y);
+      const g1 = await T.until('…let go, the words stay selected (no block selection)', (p) => E(p).on && E(p).id === u1.id && E(p).b > E(p).a && !blocks(p).some((b) => b.sel));
+      t.check('…not just a caret', g1 && E(g1).b - E(g1).a >= 3, g1 && E(g1));
+      await T.key('Escape');
+    }
     // A double-click on a word: the format bar over it, not at the window's corner.
     const w1b = await wordsAt(1);
     await T.mouse('click', w1b.x + 60, w1b.y);

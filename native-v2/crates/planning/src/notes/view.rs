@@ -869,7 +869,7 @@ impl PlaceView {
                 let bx = &mut s.places[i].boxes;
                 bx.retain(|x| x.0 != bbx);
                 bx.push((bbx.clone(), f32::from(bd.origin.y), f32::from(bd.size.height)));
-            }), |_, _, _, _| {}).absolute().size_full())
+            }), |_, _, _, _| {}).absolute().top_0().left_0().size_full())
             .when(r.sel, |d| d.child(div().absolute().left(margin - T::SP_6).right_0().top_0().bottom_0().bg(T::accent_dim())
                 .when(r.sel_top, |d| d.rounded_t(T::R_CONTROL)).when(r.sel_bottom, |d| d.rounded_b(T::R_CONTROL))))
             .child(margin_area)
