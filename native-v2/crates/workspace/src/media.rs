@@ -293,9 +293,9 @@ impl MediaView {
                     .child(link)))
             .child(div().flex().gap(T::SP_4).px(T::SP_8).pb(T::SP_8)
                 .child(div().flex_1().child(if kind == "other" {
-                    w::icon_label_button(("media-view", i), IconName::Download, "Get").tooltip("Download").w_full().on_click(cx.listener(move |m, _, _, cx| m.open(&b, cx)))
+                    w::inner(w::icon_label_button(("media-view", i), IconName::Download, "Get").tooltip("Download")).w_full().on_click(cx.listener(move |m, _, _, cx| m.open(&b, cx)))
                 } else {
-                    w::icon_label_button(("media-view", i), IconName::Image, "View").tooltip("Preview").w_full().on_click(cx.listener(move |m, _, _, cx| m.open(&b, cx)))
+                    w::inner(w::icon_label_button(("media-view", i), IconName::Image, "View").tooltip("Preview")).w_full().on_click(cx.listener(move |m, _, _, cx| m.open(&b, cx)))
                 }))
                 .when(!path.is_empty(), |d0| d0.child(w::icon_button(("media-copy", i), IconName::Copy, "Copy file path").on_click(cx.listener(move |m, _, _, cx| m.copy(&c, cx)))))
                 .when(linked, |d0| { let j = id.clone(); d0.child(w::disabled(w::icon_button(("media-jump", i), IconName::ExternalLink, "Jump to source"), deleted).on_click(cx.listener(move |m, _, window, cx| m.jump(&j, window, cx)))) })

@@ -318,6 +318,7 @@ fn state(window: &mut Window, cx: &mut App) -> Value {
         "copied": cx.try_global::<Copied>().map(|c| c.0.clone()).unwrap_or_default(),
         "menu": w::menu_props(cx),
         "pointerModal": w::modal_open(cx),
+        "tip": w::tip::last_drawn(),
         "windowW": vs,
     } })
 }

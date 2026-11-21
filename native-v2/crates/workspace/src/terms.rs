@@ -843,7 +843,7 @@ impl TermInput {
         let kb = |k: &'static str, label: &'static str| key(k, label, "");
         let col = || div().flex().flex_col().gap(T::SP_4);
         let row = || div().flex().gap(T::SP_4);
-        let cell = || div().flex_none().w(T::WS_TERM_NAV_W);
+        let at = |c0: i16, c1: i16, r: i16, k: Stateful<Div>| k.col_start(c0).col_end(c1).row_start(r).row_end(r + 1);
         div().mx(T::SP_8).my(T::SP_4).p(T::SP_10).rounded(T::R_CARD).border_1().border_color(T::border()).bg(T::bg_secondary()).shadow_lg()
             .flex().flex_wrap().items_start().justify_between().gap(T::SP_16)
             .child(col().child(kb("Escape", "Esc")).child(kb("Tab", "Tab")).child(key("shift+tab", "⇧Tab", "Shift+Tab")))
@@ -852,11 +852,13 @@ impl TermInput {
                 .child(row().child(kb("ctrl+a", "Ctrl+A")).child(kb("ctrl+e", "Ctrl+E")))
                 .child(row().child(kb("ctrl+d", "Ctrl+D")).child(kb("ctrl+l", "Ctrl+L")))
                 .child(kb("Space", "Space")))
-            .child(col().ml_auto()
-                .child(row().child(div().flex_none().w(T::WS_TERM_NAV_W * 2. + T::SP_4).child(kb("Home", "Home"))).child(cell().child(kb("End", "End"))))
-                .child(row().child(cell()).child(cell().child(kb("ArrowUp", "▲"))).child(cell()))
-                .child(row().child(cell().child(kb("ArrowLeft", "◀"))).child(cell().child(kb("Enter", "Enter"))).child(cell().child(kb("ArrowRight", "▶"))))
-                .child(row().child(cell()).child(cell().child(kb("ArrowDown", "▼"))).child(cell())))
+            // The d-pad (.ttg-nav): three equal columns as wide as the
+            // widest key (minmax(40px, 1fr)), so Enter shows whole.
+            .child(div().ml_auto().grid().grid_cols_min_content(3).gap(T::SP_4)
+                .child(at(1, 3, 1, kb("Home", "Home"))).child(at(3, 4, 1, kb("End", "End")))
+                .child(at(2, 3, 2, kb("ArrowUp", "▲")))
+                .child(at(1, 2, 3, kb("ArrowLeft", "◀"))).child(at(2, 3, 3, kb("Enter", "Enter"))).child(at(3, 4, 3, kb("ArrowRight", "▶")))
+                .child(at(2, 3, 4, kb("ArrowDown", "▼"))))
     }
 
     fn upload_strip(&self) -> Option<Div> {

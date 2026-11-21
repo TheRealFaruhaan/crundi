@@ -8,7 +8,9 @@
 //! 9 s; chatBlink, 1.15 s): the owner's call (OWNER-DECISIONS.md, 20 Nov),
 //! capped at 30 frames a second (rule 6) and running only while the button
 //! is drawn (an animation element asks for its next frame from its render;
-//! a launcher not on screen is not rendered, so it asks for none).
+//! a launcher not on screen is not rendered, so it asks for none) and
+//! `live`: the launcher passes false while the window is unfocused,
+//! minimised or covered, and the button rests on its first frame.
 
 use crundi_theme::{IconName, T};
 use gpui::{prelude::FluentBuilder as _, *};
@@ -27,8 +29,10 @@ pub enum LaunchLook { Shell, Chat, Normal, Shield }
 
 /// One launch button: `label` shown or folded away (a shield at rest, a
 /// main button while its shield is open); `busy` spins in place of its
-/// icon; `off`: another launch is under way.
-pub fn launch_button(id: impl Into<ElementId>, look: LaunchLook, icon: Option<IconName>, label: &'static str, show_label: bool, busy: bool, off: bool) -> Stateful<Div> {
+/// icon; `off`: another launch is under way; `live`: UI Mode's drift and
+/// blink run (else it rests on their first frame and asks for no frames).
+#[allow(clippy::too_many_arguments)]
+pub fn launch_button(id: impl Into<ElementId>, look: LaunchLook, icon: Option<IconName>, label: &'static str, show_label: bool, busy: bool, off: bool, live: bool) -> Stateful<Div> {
     let base = div().id(id).flex().items_center().justify_center().overflow_hidden().whitespace_nowrap()
         .py(T::LAUNCH_PY).rounded(T::R_CONTROL).border_1().text_size(T::TEXT_14)
         .when(!off, |d| d.cursor_pointer())
@@ -38,16 +42,11 @@ pub fn launch_button(id: impl Into<ElementId>, look: LaunchLook, icon: Option<Ic
             .when(!off, |d| d.hover(|s| s.text_color(T::text()).border_color(T::accent()))),
         LaunchLook::Chat => base.relative().flex_1().min_w_0().px(T::SP_12).border_color(T::launch_chat_edge()).text_color(T::white()).font_weight(T::W_SEMIBOLD)
             .bg(T::launch_chat_stops()[0])
-            .child(div().absolute().inset_0().flex().with_animation("chat-drift", fx(), |d, delta| {
-                let segs = drift_segments(drift_offset(delta * FX_LOOP));
-                let n = segs.len();
-                d.children(segs.into_iter().enumerate().map(move |(i, (x0, x1, a, b))| {
-                    let r = T::R_CONTROL - px(1.);
-                    div().h_full().w(relative(x1 - x0)).flex_none()
-                        .bg(linear_gradient(90., linear_color_stop(a, 0.), linear_color_stop(b, 1.)))
-                        .when(i == 0, |d| d.rounded_l(r)).when(i + 1 == n, |d| d.rounded_r(r))
-                }))
-            }))
+            .child({
+                let bed = div().absolute().inset_0().flex();
+                if live { bed.with_animation("chat-drift", fx(), |d, delta| drift(d, delta * FX_LOOP)).into_any_element() }
+                else { drift(bed, 0.).into_any_element() }
+            })
             .when(!off, |d| d.hover(|s| s.border_color(T::accent_hover()))),
         LaunchLook::Normal => base.flex_1().min_w_0().px(T::SP_12).border_color(T::accent_edge()).bg(T::launch_normal_bg()).text_color(T::text())
             .when(!off, |d| d.hover(|s| s.border_color(T::accent()).bg(T::accent_dim()))),
@@ -56,12 +55,25 @@ pub fn launch_button(id: impl Into<ElementId>, look: LaunchLook, icon: Option<Ic
     };
     let mark: Option<AnyElement> = if busy { Some(crate::spinner(T::ICON_MD).into_any_element()) }
         else if look == LaunchLook::Chat {
-            Some(div().relative().font_family(T::MONO).child("\u{258d}")
-                .with_animation("chat-blink", fx(), |d, delta| d.opacity(blink_opacity(delta * FX_LOOP))).into_any_element())
+            let caret = div().relative().font_family(T::MONO).child("\u{258d}");
+            Some(if live { caret.with_animation("chat-blink", fx(), |d, delta| d.opacity(blink_opacity(delta * FX_LOOP))).into_any_element() }
+                else { caret.opacity(blink_opacity(0.)).into_any_element() })
         }
         else { icon.map(|i| div().flex_none().child(crate::icon(i, T::ICON_MD)).into_any_element()) };
     let gap = if look == LaunchLook::Chat { T::LAUNCH_CHAT_GAP } else { T::LAUNCH_GAP };
     b.children(mark).when(show_label, |d| d.child(div().relative().when(look != LaunchLook::Shell, |d| d.ml(gap)).child(label)))
+}
+
+/// The gradient's pieces at `t` s of the drift.
+fn drift(d: Div, t: f32) -> Div {
+    let segs = drift_segments(drift_offset(t));
+    let n = segs.len();
+    d.children(segs.into_iter().enumerate().map(move |(i, (x0, x1, a, b))| {
+        let r = T::R_CONTROL - px(1.);
+        div().h_full().w(relative(x1 - x0)).flex_none()
+            .bg(linear_gradient(90., linear_color_stop(a, 0.), linear_color_stop(b, 1.)))
+            .when(i == 0, |d| d.rounded_l(r)).when(i + 1 == n, |d| d.rounded_r(r))
+    }))
 }
 
 fn fx() -> Animation { Animation::new(Duration::from_secs_f32(FX_LOOP)).repeat().with_max_fps(FX_FPS) }

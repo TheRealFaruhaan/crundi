@@ -65,6 +65,11 @@ pub struct Launcher {
     /// "skip" or ""), read when the launcher is made.
     last: String,
     _peek: Option<Task<()>>,
+    /// UI Mode's drift and blink run only while the window is focused and
+    /// on screen (OWNER-DECISIONS, 20 Nov): unfocused, minimised or
+    /// covered, the button rests and draws no frames.
+    live: bool,
+    _live: [Subscription; 2],
 }
 
 /// The modes the mark knows (the web's LAUNCH_MODES).
@@ -90,7 +95,7 @@ pub fn remember_mode(project: &str, mode: &str) {
 }
 
 impl Launcher {
-    pub fn new(key: &str, cx: &mut Context<Self>) -> Self {
+    pub fn new(key: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // The shields peek open once on first paint (the web's peekShields:
         // the first row at 300 ms for 900 ms, the second 1150 ms later).
         let peek = cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -104,7 +109,16 @@ impl Launcher {
         launchers.0.retain(|_, w| w.upgrade().is_some());
         launchers.0.insert(key.to_string(), me);
         let last = last_mode(&crundi_shell::project(cx));
-        Launcher { key: key.to_string(), busy: 0, open: 0, peek: 0, last, _peek: Some(peek) }
+        let live = window.is_window_active() && window.is_visible();
+        let relive = |l: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+            let on = window.is_window_active() && window.is_visible();
+            if on != l.live { l.live = on; cx.notify(); }
+        };
+        let _live = [
+            cx.observe_window_activation(window, move |l, window, cx| relive(l, window, cx)),
+            cx.observe_window_visibility(window, move |l, _, window, cx| relive(l, window, cx)),
+        ];
+        Launcher { key: key.to_string(), busy: 0, open: 0, peek: 0, last, _peek: Some(peek), live, _live }
     }
 
     fn chat(&mut self, skip: bool, cx: &mut Context<Self>) {
@@ -170,17 +184,17 @@ impl Render for Launcher {
             let words = if tip.is_empty() { "Last used for this project".to_string() } else { format!("{tip} \u{2014} Last used for this project") };
             b.child(w::launch_mark()).tooltip(w::tooltip(words))
         };
-        let ui = mark(w::launch_button("ui-mode", L::Chat, None, "UI Mode", !open(1), busy == 1, off), "chat", "")
+        let ui = mark(w::launch_button("ui-mode", L::Chat, None, "UI Mode", !open(1), busy == 1, off, self.live), "chat", "")
             .on_click(cx.listener(|this, _, _, cx| this.chat(false, cx)));
-        let ui_skip = mark(w::launch_button("ui-skip", L::Shield, Some(IconName::ShieldAlert), "Skip Permissions", open(1), busy == 2, off), "chat-skip", "UI Mode \u{2014} Skip Permissions")
+        let ui_skip = mark(w::launch_button("ui-skip", L::Shield, Some(IconName::ShieldAlert), "Skip Permissions", open(1), busy == 2, off, false), "chat-skip", "UI Mode \u{2014} Skip Permissions")
             .on_hover(cx.listener(|this, on: &bool, _, cx| this.hover_shield(1, *on, cx)))
             .on_click(cx.listener(|this, _, _, cx| this.chat(true, cx)));
-        let term = mark(w::launch_button("term-mode", L::Normal, Some(IconName::Terminal), "Terminal", !open(2), busy == 4, off), "normal", "")
+        let term = mark(w::launch_button("term-mode", L::Normal, Some(IconName::Terminal), "Terminal", !open(2), busy == 4, off, false), "normal", "")
             .on_click(cx.listener(|this, _, window, cx| this.terminal("normal", window, cx)));
-        let term_skip = mark(w::launch_button("term-skip", L::Shield, Some(IconName::ShieldAlert), "Skip Permissions", open(2), busy == 5, off), "skip", "Terminal \u{2014} Skip Permissions")
+        let term_skip = mark(w::launch_button("term-skip", L::Shield, Some(IconName::ShieldAlert), "Skip Permissions", open(2), busy == 5, off, false), "skip", "Terminal \u{2014} Skip Permissions")
             .on_hover(cx.listener(|this, on: &bool, _, cx| this.hover_shield(2, *on, cx)))
             .on_click(cx.listener(|this, _, window, cx| this.terminal("skip", window, cx)));
-        let shell = w::launch_button("empty-shell", L::Shell, None, "Empty Shell", true, busy == 3, off)
+        let shell = w::launch_button("empty-shell", L::Shell, None, "Empty Shell", true, busy == 3, off, false)
             .on_click(cx.listener(|this, _, window, cx| this.terminal("shell", window, cx)));
         let claude = div().flex().flex_col().items_center().gap(T::SP_10).mt(T::SP_4).py(T::LAUNCH_BOX_PY).px(T::LAUNCH_BOX_PX)
             .rounded(T::R_CARD).border_1().border_color(T::border())
