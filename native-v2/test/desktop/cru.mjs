@@ -212,6 +212,22 @@ export async function run(T, t) {
     await T.act('cru-menu-open', 'false');
     await T.ui('tab', 'workbench');
   }
+  // A kanban card, a file row… dropped on Cru: a chip, sent with the next turn as a reference (addRef).
+  await T.act('cru-ref', '[Kanban  Task ID: 42]');
+  await T.until('a reference dropped on Cru: a chip, its spaces folded', (p) => (C(p).refs || []).length === 1 && C(p).refs[0] === '[Kanban Task ID: 42]' && C(p).attachments === 1);
+  await T.act('cru-unattach', '0');
+  await T.until('…its × takes it off', (p) => C(p).attachments === 0);
+  // show_in_crundi (the cru-ui event for this window): the tab, the project, then back.
+  t.check('this window has its page id (sent with each turn)', /^pg[0-9a-z]+$/.test(C(await T.state()).page || ''));
+  await T.act('cru-ui-go', JSON.stringify({ id: 'nav1', tab: 'kanban' }));
+  await T.until('Cru moves the window: the Kanban tab', (p) => p.tab === 'kanban');
+  await T.act('cru-ui-go', JSON.stringify({ id: 'nav2', project: 'shop', tab: 'workbench' }));
+  await T.until('…another project and its workbench', (p) => p.project === 'shop' && p.tab === 'workbench');
+  await T.act('cru-ui-go', JSON.stringify({ id: 'nav3', project: 'nowhere' }));
+  await t.sleep(600);
+  t.check('…a project not on the page: nothing moves', (await T.state()).project === 'shop');
+  await T.act('cru-ui-go', JSON.stringify({ id: 'nav4', project: 'demo', tab: 'workbench' }));
+  await T.until('…and back', (p) => p.project === 'demo' && p.tab === 'workbench');
   await T.act('cru-keyboard', 'false');
   await T.until('…off needs a Deepgram key here: it says so and stays', (p) => C(p).keyboard && /Deepgram key/.test(C(p).notice));
   await T.key('Escape');

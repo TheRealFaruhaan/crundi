@@ -54,6 +54,10 @@ impl T {
     pub fn kid_sun() -> Hsla { rgb(0xfef9c3).into() }
     pub fn kid_text() -> Hsla { rgb(0x312e81).into() }
     pub fn kid_button() -> Hsla { rgb(0x4f46e5).into() }
+    /// The kid screen's buttons' flat shadow (rgba(49,46,129,.18)), and mute while on (#fee2e2 / #b91c1c).
+    pub fn kid_btn_shadow() -> Hsla { rgba(0x312e812e).into() }
+    pub fn kid_mute_on() -> Hsla { rgb(0xfee2e2).into() }
+    pub fn kid_mute_on_fg() -> Hsla { rgb(0xb91c1c).into() }
     pub fn kid_wait() -> Hsla { rgb(0xb45309).into() }
     pub fn kid_heard_bg() -> Hsla { rgb(0xdbeafe).into() }
     pub fn kid_heard() -> Hsla { rgb(0x1e3a8a).into() }
@@ -621,6 +625,9 @@ impl T {
     pub const CRU_BTN_ICON: Pixels = px(16.);
     pub const CRU_MENU_W: Pixels = px(220.);
     pub const CRU_BUBBLE_R: Pixels = px(16.);
+    /// A card in a reply (.cv-card): 560px at most, 14px corners.
+    pub const CRU_CARD_MAX_W: Pixels = px(560.);
+    pub const CRU_CARD_R: Pixels = px(14.);
     pub const CRU_BUBBLE_TAIL: Pixels = px(5.);
     pub const CRU_SAY_ROOM: Pixels = px(40.);
     /// The × by his words (.cv-cx 26) and on a faded bubble (.cv-drop 28).
@@ -677,6 +684,8 @@ impl T {
     pub const KID_REPLY: Pixels = px(28.);
     pub const KID_HEARD: Pixels = px(20.);
     pub const KID_MIC: Pixels = px(150.);
+    /// The kid mic's largest size (clamp(110px, 15vmin, 170px)).
+    pub const KID_MIC_MAX: Pixels = px(170.);
     pub const KID_MIC_ICON: Pixels = px(56.);
     pub const KID_BTN: Pixels = px(64.);
     pub const KID_KEY: Pixels = px(64.);
@@ -703,6 +712,10 @@ impl T {
     pub const PCL_BOX_R: Pixels = px(18.);
     pub const PCL_IN_W: Pixels = px(220.);
     pub const PCL_IN_W_VIS: Pixels = px(160.);
+    /// .pcl-in's height: 24px text, 10px padding and a 1px edge (18px, 8px when visible).
+    pub const PCL_IN_H: Pixels = px(52.);
+    pub const PCL_IN_H_VIS: Pixels = px(40.);
+    pub const PCL_IN_R: Pixels = px(10.);
     pub const PCL_ERR_H: Pixels = px(18.);
     pub const PCL_HINT: f32 = 0.7;
     pub const SP_14: Pixels = px(14.);
@@ -721,6 +734,8 @@ impl T {
     pub fn pcl_key() -> Hsla { rgba(0xffffff14).into() }
     pub fn pcl_key_hover() -> Hsla { rgba(0xffffff29).into() }
     pub fn pcl_key_edge() -> Hsla { rgba(0xffffff2e).into() }
+    /// .pcl-in's edge (white at .3).
+    pub fn pcl_in_edge() -> Hsla { rgba(0xffffff4d).into() }
     pub fn pcl_err() -> Hsla { rgb(0xfca5a5).into() }
     // ── end desktop ──
     // ── chat ──

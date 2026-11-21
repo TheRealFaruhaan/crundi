@@ -18,6 +18,17 @@ export async function run(T, t) {
   { const n = 16000, b = Buffer.alloc(44 + n * 2); b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(16000, 24); b.writeUInt32LE(32000, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * 2, 40); writeFileSync(silent, b); }
   let p = await T.state();
   t.check('off and untrained at first', !W(p).enabled && !W(p).trained, W(p));
+  {
+    // F129: Settings › Voice assistant › On this device draws Desktop's part ("Train Hey Cru").
+    const r0 = (await T.state()).renders || {};
+    await T.ui('tab', 'settings'); await T.ui('ops:settings-open', 'voice'); await t.sleep(600);
+    for (let i = 0; i < 5; i++) await T.mouse('wheel', 800, 500, { dy: -300 });
+    await t.sleep(800);
+    const r1 = (await T.state()).renders || {};
+    t.check('Settings › Voice assistant shows "On this device" (Desktop\'s part)', (r1['voice-device'] || 0) > (r0['voice-device'] || 0), { before: r0['voice-device'], after: r1['voice-device'] });
+    await T.ui('ops:settings-open', 'voice', 'false');
+    await T.ui('tab', 'workbench');
+  }
   // Training fetches the models first (engine::install, ~40 MB): never on every run. Without a
   // models folder for the run (CRUNDI_WAKE_MODELS, kept between runs), the rest is skipped.
   if (!models) { console.log('skip: "Hey Cru" training and listening need CRUNDI_WAKE_MODELS=<a folder kept between runs> (the app downloads into it once)'); return; }

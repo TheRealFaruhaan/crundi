@@ -132,6 +132,21 @@ pub fn props() -> Value {
 
 // ─── The lock screen (#pc-lock) ───
 
+/// The clock's and the date's formats, as the web's toLocaleTimeString([],
+/// { hour: '2-digit', minute: '2-digit' }) and toLocaleDateString([], {
+/// weekday: 'long', day: 'numeric', month: 'long' }) give them in the PC's
+/// locale: en-US (and a locale-less "C") "02:19 AM" and "Saturday,
+/// November 21"; elsewhere "02:19" and "Saturday 21 November" (F139).
+fn clock_formats(locale: &str) -> (&'static str, &'static str) {
+    let l = locale.split(['.', '@']).next().unwrap_or("").replace('-', "_");
+    let us = matches!(l.as_str(), "" | "C" | "POSIX" | "en_US" | "en" | "en_PH" | "en_CA" | "es_US");
+    if us { ("%I:%M %p", "%A, %B %-d") } else { ("%H:%M", "%A %-d %B") }
+}
+
+fn locale() -> String {
+    ["LC_ALL", "LC_TIME", "LANG"].iter().filter_map(|k| std::env::var(k).ok()).find(|v| !v.is_empty()).unwrap_or_default()
+}
+
 /// The keypad's look (.pcl-keys button).
 fn pad_look() -> w::PinLook {
     w::PinLook { key_w: T::PCL_KEY_W, key_h: T::PCL_KEY_H, gap: T::SP_10, radius: T::PCL_KEY_R, bg: T::pcl_key(), hover: Some(T::pcl_key_hover()), edge: T::pcl_key_edge(), fg: T::white(), text: T::TEXT_20, icons: true }
@@ -215,21 +230,31 @@ impl Render for PcLockScreen {
         if !l.on { return div().id("pc-lock-off").into_any_element(); }
         let full = l.mode != "visible";
         let now = chrono::Local::now();
+        let (tf, df) = clock_formats(&locale());
+        // The box's spacing and the keys' height follow the window's height:
+        // gap clamp(6px,1.4vh,12px), padding clamp(12px,2.4vh,20px), keys clamp(38px,6.5vh,52px).
+        let vh = f32::from(vp.height) / 100.;
+        let gap = px((vh * 1.4).clamp(6., 12.));
+        let pad_y = px((vh * 2.4).clamp(12., 20.));
+        let key_h = px((vh * 6.5).clamp(38., f32::from(T::PCL_KEY_H)));
         let input = self.input.clone();
         let this = cx.entity().downgrade();
         let badge = div().absolute().top(T::PCL_TOP).left_0().right_0().flex().justify_center()
             .child(div().flex().items_center().gap(T::SP_8).px(T::SP_16).py(T::SP_8).rounded(T::R_PILL)
                 .bg(T::pcl_badge()).border_1().border_color(T::pcl_badge_edge()).text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD)
                 .child(w::icon(IconName::Lock, T::ICON_MD)).child("Locked"));
+        // .pcl-in: 24px text with 10px 12px padding (18px, 8px 10px when visible), a light fill, a white edge.
         let pin = input.as_ref().map(|i| w::input(i).w(if full { T::PCL_IN_W } else { T::PCL_IN_W_VIS }).text_center()
+            .min_h(if full { T::PCL_IN_H } else { T::PCL_IN_H_VIS }).px(if full { T::SP_12 } else { T::SP_10 }).rounded(T::PCL_IN_R)
+            .bg(T::pcl_key()).border_color(T::pcl_in_edge()).text_color(T::white())
             .text_size(if full { T::TEXT_24 } else { T::TEXT_18 }).font_family(T::MONO));
         let err = div().min_h(T::PCL_ERR_H).text_size(T::TEXT_13).text_color(T::pcl_err()).child(l.err.clone());
         let mut boxed = div().id("pc-lock-box").flex().items_center().rounded(T::PCL_BOX_R).bg(T::pcl_box()).border_1().border_color(T::pcl_box_edge()).shadow_lg()
-            .when(full, |d| d.flex_col().gap(T::SP_10).px(T::SP_22).py(T::SP_20))
+            .when(full, |d| d.flex_col().gap(gap).px(T::SP_22).py(pad_y))
             .when(!full, |d| d.flex_row().gap(T::SP_10).px(T::SP_14).py(T::SP_10))
             .when_some(pin, |d, p| d.child(p));
         if full {
-            let pad = w::pin_pad("pcl-key", pad_look(), move |k, window, cx| { let _ = this.update(cx, |s, cx| { s.press(k, window, cx); }); });
+            let pad = w::pin_pad("pcl-key", w::PinLook { key_h, ..pad_look() }, move |k, window, cx| { let _ = this.update(cx, |s, cx| { s.press(k, window, cx); }); });
             boxed = boxed.child(pad);
         }
         boxed = boxed.child(err).when(full, |d| d.child(div().text_size(T::TEXT_12).opacity(T::PCL_HINT).child("Say Hey Cru to talk to Cru")));
@@ -257,12 +282,28 @@ impl Render for PcLockScreen {
                 }).absolute().inset_0())
                 .child(div())
                 .child(div().relative().flex().flex_col().items_center()
-                    .child(div().text_size(time_px).font_weight(FontWeight::LIGHT).line_height(relative(1.05)).child(now.format("%H:%M").to_string()))
-                    .child(div().text_size(date_px).opacity(0.9).child(now.format("%A %-d %B").to_string())))
+                    .child(div().text_size(time_px).font_weight(FontWeight::LIGHT).line_height(relative(1.05)).child(now.format(tf).to_string()))
+                    .child(div().text_size(date_px).opacity(0.9).child(now.format(df).to_string())))
                 .child(boxed);
         } else {
             root = root.justify_end().pb(relative(0.05)).bg(T::pcl_vis()).border(T::SP_4).border_color(T::pcl_vis_ring()).child(boxed);
         }
         root.child(badge).into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod clock_tests {
+    use super::clock_formats;
+
+    /// The owner's PC (en_US.UTF-8) gives the web's "02:19 AM" and "Saturday, November 21".
+    #[test]
+    fn formats_follow_the_locale() {
+        assert_eq!(clock_formats("en_US.UTF-8"), ("%I:%M %p", "%A, %B %-d"));
+        assert_eq!(clock_formats(""), ("%I:%M %p", "%A, %B %-d"));
+        assert_eq!(clock_formats("en_GB.UTF-8"), ("%H:%M", "%A %-d %B"));
+        let t = chrono::NaiveDate::from_ymd_opt(2026, 11, 21).unwrap().and_hms_opt(2, 19, 0).unwrap();
+        assert_eq!(t.format(clock_formats("en_US.UTF-8").0).to_string(), "02:19 AM");
+        assert_eq!(t.format(clock_formats("en_US.UTF-8").1).to_string(), "Saturday, November 21");
     }
 }

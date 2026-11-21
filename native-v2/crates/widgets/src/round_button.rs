@@ -32,3 +32,14 @@ pub fn round_pill_button(id: impl Into<ElementId>, icon: IconName, label: impl I
         .child(label.into())
         .tooltip(crate::tooltip(tip))
 }
+
+/// A round button in colours of its own (the kid screen's .cv-kid-mic and
+/// .cv-mute: a big state-coloured mic, a white mute with an indigo icon),
+/// with an optional drop `shadow` under it. Added by Desktop.
+#[allow(clippy::too_many_arguments)]
+pub fn round_solid(id: impl Into<ElementId>, icon: IconName, size: Pixels, icon_size: Pixels, bg: Hsla, fg: Hsla, shadow: Option<BoxShadow>) -> Stateful<Div> {
+    div().id(id).relative().flex().flex_none().items_center().justify_center().size(size).rounded_full().cursor_pointer()
+        .bg(bg).text_color(fg).text_size(icon_size)
+        .when_some(shadow, |d, s| d.shadow(vec![s]))
+        .child(icon)
+}

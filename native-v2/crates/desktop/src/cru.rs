@@ -24,7 +24,7 @@ const SERVICES_EVERY: Duration = Duration::from_secs(15);
 /// A file for Cru's next turn (the web's S.att): uploading, uploaded (its
 /// id and kind), or failed (why).
 #[derive(Clone, Default, Debug, PartialEq)]
-pub struct Att { pub name: String, pub id: String, pub kind: String, pub up: bool, pub bad: String }
+pub struct Att { pub name: String, pub id: String, pub kind: String, pub up: bool, pub bad: String, pub r#ref: String }
 
 #[derive(Default)]
 pub struct Cru {
@@ -323,7 +323,7 @@ fn after_phase(c: &Cru) -> String { if c.listen.is_some() || c.keyboard { "liste
 /// they wait for it to finish; otherwise asked now.
 pub fn utter(text: &str, typed: bool) {
     let t = text.trim().to_string();
-    if t.is_empty() && with(|c| c.att.iter().all(|a| a.id.is_empty())) { return; }
+    if t.is_empty() && with(|c| c.att.iter().all(|a| a.id.is_empty() && a.r#ref.is_empty())) { return; }
     let phase = with(|c| c.phase.clone());
     if phase == "speak" && typed { stop_saying(); let id = with(|c| c.say_id); said(id); }
     let phase = with(|c| c.phase.clone());
@@ -407,10 +407,11 @@ fn ask_pending() {
 /// A turn: what was said (or typed) to Cru's brain, with the files attached.
 pub fn ask(text: &str, typed: bool) {
     let text = text.trim().to_string();
-    let ready: Vec<Att> = with(|c| c.att.iter().filter(|a| !a.id.is_empty()).cloned().collect());
+    // The uploaded files and the dropped references (takeAtt); the tray keeps what is still uploading.
+    let ready: Vec<Att> = with(|c| c.att.iter().filter(|a| !a.id.is_empty() || !a.r#ref.is_empty()).cloned().collect());
     if text.is_empty() && ready.is_empty() { return; }
     with(|c| c.att.retain(|a| a.up));
-    let label = ready.iter().map(|a| format!("[The owner attached: \"{}\" ({}), id {}.]", a.name, if a.kind.is_empty() { "file" } else { &a.kind }, a.id)).collect::<Vec<_>>().join("\n");
+    let label = ready.iter().map(|a| if a.r#ref.is_empty() { format!("[The owner attached: \"{}\" ({}), id {}.]", a.name, if a.kind.is_empty() { "file" } else { &a.kind }, a.id) } else { format!("[The owner dropped in: {}]", a.r#ref) }).collect::<Vec<_>>().join("\n");
     let asked = if label.is_empty() { text.clone() } else if text.is_empty() { label } else { format!("{label}\n{text}") };
     let host = gethostname::gethostname().to_string_lossy().to_string();
     let wh = where_text(&host, &kit::project(), &kit::get().tab);
@@ -419,8 +420,11 @@ pub fn ask(text: &str, typed: bool) {
     with(|c| { c.heard = asked.clone(); c.interim.clear(); c.phase = "think".into(); c.reply.clear(); c.detail.clear(); c.question.clear(); c.notice.clear(); c.turns.push(json!({ "said": asked, "at": crundi_webview::engine::now_ms() })); });
     if !typed { tone_out(true); }
     render();
-    let ids: Vec<String> = ready.iter().map(|a| a.id.clone()).collect();
-    let body = json!({ "text": text, "where": wh, "page": "", "locked": false, "typed": typed, "attachments": ids, "refs": [], "requestId": rid, "sayNow": true });
+    let ids: Vec<String> = ready.iter().filter(|a| !a.id.is_empty()).map(|a| a.id.clone()).collect();
+    let refs: Vec<String> = ready.iter().filter(|a| !a.r#ref.is_empty()).map(|a| a.r#ref.clone()).collect();
+    let body = json!({ "text": text, "where": wh, "page": "", "locked": false, "typed": typed, "attachments": ids, "refs": refs, "requestId": rid, "sayNow": true });
+    let mut body = body;
+    body["page"] = json!(page_id());
     kit::call(move |api| api.post("/api/voice/turn", &body), move |r| {
         // Taken back meanwhile (or a newer question): not this answer's place.
         if with(|c| c.turn != turn || c.phase != "think") { return; }
@@ -439,7 +443,7 @@ fn answered(v: &Value, typed: bool) {
         c.detail = kit::s(v, "show");
         c.question = v.get("pending").and_then(|p| p.as_array()).and_then(|p| p.first()).map(|q| kit::s(q, "question")).unwrap_or_default();
         if v.pointer("/speaker/unrecognised").and_then(|x| x.as_bool()).unwrap_or(false) { c.notice = "Cru could not recognise who was speaking, so nothing was changed.".into(); }
-        if let Some(t) = c.turns.last_mut() { t["speak"] = json!(speak); t["show"] = v["show"].clone(); }
+        if let Some(t) = c.turns.last_mut() { t["speak"] = json!(speak); t["show"] = v["show"].clone(); t["media"] = Value::Array(media_of(v.get("media"))); }
     });
     let close_after = kit::truthy(v.get("close").unwrap_or(&Value::Null));
     // Typed turns are read, not said; "voice off" is never said.
@@ -541,10 +545,17 @@ pub fn mic() {
 /// A voice report (/ws voice-report): the screen opens and says it.
 pub fn report(v: &Value) {
     let speak = kit::s(v, "speak");
-    if speak.is_empty() { return; }
+    let media = media_of(v.get("media"));
+    if speak.is_empty() && media.is_empty() { return; }
     if !with(|c| c.open) { open(true); }
-    with(|c| { c.reply = speak.clone(); c.detail = kit::s(v, "show"); c.turns.push(json!({ "speak": speak, "at": crundi_webview::engine::now_ms() })); });
-    say(&speak, false);
+    with(|c| { c.reply = speak.clone(); c.detail = kit::s(v, "show"); c.turns.push(json!({ "speak": speak, "show": kit::s(v, "show"), "media": media, "at": crundi_webview::engine::now_ms() })); });
+    if !speak.is_empty() { say(&speak, false); } else { render(); }
+}
+
+/// A reply's media as it came (a turn, a report, the history): only objects
+/// with a kind, 24 at most (mediaOf).
+pub fn media_of(list: Option<&Value>) -> Vec<Value> {
+    list.and_then(|l| l.as_array()).map(|l| l.iter().filter(|x| x.get("kind").is_some_and(|k| k.is_string())).take(24).cloned().collect()).unwrap_or_default()
 }
 
 /// The ⋯ menu (its open state), and its items: the chat or voice view,
@@ -593,19 +604,44 @@ pub fn set_keyboard(on: bool) {
 /// each file uploaded for Cru (/api/voice/attach), shown as a chip until the
 /// next turn takes it.
 pub fn attach() {
-    kit::bg(|_| crundi_core::driver::take_pick().map(|p| vec![p]).or_else(|| rfd::FileDialog::new().pick_files()).unwrap_or_default(), |paths| {
-        for p in paths.into_iter().take(10) { attach_file(p); }
-    });
+    kit::bg(|_| crundi_core::driver::take_pick().map(|p| vec![p]).or_else(|| rfd::FileDialog::new().pick_files()).unwrap_or_default(), attach_paths);
 }
 
-fn attach_file(p: std::path::PathBuf) {
+/// Files for Cru from a drop anywhere on its screen (and the attach button):
+/// ten at most, none in kid mode (attachFiles).
+pub fn attach_paths(paths: Vec<std::path::PathBuf>) {
+    if crate::cru_kid::on() { return; }
+    for p in paths.into_iter().take(10) {
+        let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
+        upload(name, Box::new(move || std::fs::read(&p).map_err(|e| e.to_string())));
+    }
+}
+
+/// A picture pasted into the typing box (the paste's files).
+pub fn attach_bytes(name: String, bytes: Vec<u8>) {
+    if crate::cru_kid::on() { return; }
+    upload(name, Box::new(move || Ok(bytes)));
+}
+
+/// A kanban card, a file row, a mindmap idea… dragged from Crundi onto Cru:
+/// its reference ("[Kanban Task ID: …]"), sent with the next turn (addRef).
+pub fn add_ref(t: &str) {
+    if crate::cru_kid::on() { return; }
+    let t: String = t.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(400).collect();
+    if t.is_empty() { return; }
+    with(|c| c.att.push(Att { name: t.clone(), r#ref: t, ..Default::default() }));
+    render();
+}
+
+type Read = Box<dyn FnOnce() -> Result<Vec<u8>, String> + Send>;
+
+fn upload(name: String, read: Read) {
     use base64::Engine;
-    let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
     let i = with(|c| { c.att.push(Att { name: name.clone(), up: true, ..Default::default() }); c.att.len() - 1 });
     render();
     let n2 = name.clone();
     kit::bg(move |api| {
-        let bytes = std::fs::read(&p).map_err(|e| e.to_string())?;
+        let bytes = read()?;
         if bytes.len() > 50 * 1024 * 1024 { return Err("Too large (50 MB at most)".to_string()); }
         let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
         api.post("/api/voice/attach", &json!({ "name": n2, "type": "", "data": data, "from": "web" })).map_err(|e| e.to_string())
@@ -707,14 +743,15 @@ pub fn cells() -> Vec<Cell> {
     }).collect()
 }
 
-/// The chat view's messages, oldest first: (mine, text, show, at ms).
-pub fn turns() -> Vec<(bool, String, String, f64)> {
+/// The chat view's messages, oldest first: (mine, text, show, at ms, media).
+/// A reply with only media is a message too (its media under no bubble).
+pub fn turns() -> Vec<(bool, String, String, f64, Vec<Value>)> {
     with(|c| c.turns.iter().flat_map(|t| {
         let mut v = vec![];
         let at = kit::n(t, "at");
-        if !kit::s(t, "said").is_empty() { v.push((true, kit::s(t, "said"), String::new(), at)); }
-        let (sp, sh) = (kit::s(t, "speak"), kit::s(t, "show"));
-        if !sp.is_empty() || !sh.is_empty() { v.push((false, sp, sh, at)); }
+        if !kit::s(t, "said").is_empty() { v.push((true, kit::s(t, "said"), String::new(), at, vec![])); }
+        let (sp, sh, mm) = (kit::s(t, "speak"), kit::s(t, "show"), media_of(t.get("media")));
+        if !sp.is_empty() || !sh.is_empty() || !mm.is_empty() { v.push((false, sp, sh, at, mm)); }
         v
     }).collect())
 }
@@ -745,8 +782,91 @@ pub fn props() -> Value {
     with(|c| json!({
         "open": c.open, "phase": c.phase, "heard": c.heard, "interim": c.interim, "reply": c.reply, "notice": c.notice, "keyboard": c.keyboard, "turns": c.turns.len(),
         "unavailable": c.unavailable, "listening": c.listen.is_some(), "chatView": c.chat_view, "menu": c.menu, "confirm": c.confirm, "voiceOff": c.voice_off,
-        "how": c.how, "ptt": c.ptt, "tone": tone(&c.phase, un), "word": status_word(&c.phase, un), "legend": leg, "attachments": c.att.len(), "ui": c.ui, "pending": c.pending, "queued": queued(c), "hearing": hearing(c), "canCancel": can_cancel(c),
+        "how": c.how, "ptt": c.ptt, "tone": tone(&c.phase, un), "word": status_word(&c.phase, un), "legend": leg, "attachments": c.att.len(), "refs": c.att.iter().filter(|a| !a.r#ref.is_empty()).map(|a| a.r#ref.clone()).collect::<Vec<_>>(), "page": page_id(), "ui": c.ui, "pending": c.pending, "queued": queued(c), "hearing": hearing(c), "canCancel": can_cancel(c),
     }))
+}
+
+
+// ─── Cru shows the owner things in Crundi (show_in_crundi, voice/ui-nav.js) ───
+
+/// This window's own id, sent with each turn: Cru moves only the page the
+/// owner talked from (crundiPageId).
+pub fn page_id() -> &'static str {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| {
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        let r = std::collections::hash_map::RandomState::new();
+        let n = { use std::hash::{BuildHasher, Hasher}; let mut h = r.build_hasher(); h.write_u128(t); h.finish() };
+        format!("pg{}{}", radix36(t as u64), &radix36(n)[..6.min(radix36(n).len())])
+    })
+}
+
+fn radix36(mut n: u64) -> String {
+    const D: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    if n == 0 { return "0".into(); }
+    let mut v = vec![];
+    while n > 0 { v.push(D[(n % 36) as usize]); n /= 36; }
+    v.reverse();
+    String::from_utf8(v).unwrap_or_default()
+}
+
+/// The tabs that need no project (GLOBAL_TABS).
+const GLOBAL_TABS: [&str; 8] = ["media", "mindmap", "widgets", "docker", "homepool", "info", "secrets", "settings"];
+
+/// What the window shows, for Cru's "looking at" (cruUiWhere).
+pub fn ui_where() -> String {
+    let c = kit::get();
+    let name = c.projects.iter().find(|p| kit::s(p, "alias") == c.project).map(|p| { let n = kit::s(p, "name"); if n.is_empty() { kit::s(p, "alias") } else { n } });
+    let mut bits = vec![name.map(|n| format!("project {n}")).unwrap_or_else(|| "no project open".into()), format!("{} tab", c.tab)];
+    if c.tab == "workbench" && !c.focused.is_empty() {
+        if let Some(t) = c.terminals.iter().find(|t| kit::s(t, "id") == c.focused && kit::s(t, "kind") == "ui") {
+            bits.push(format!("chat \"{}\"", kit::s(t, "title").chars().take(60).collect::<String>()));
+        }
+    }
+    bits.join(", ")
+}
+
+/// One move from Cru (the `cru-ui` event, for this window only): the
+/// project, the tab, the chat; then the note. Answers the server
+/// (/api/voice/ui/ack). A card, an idea, a file, a panel or words to ring
+/// need the areas' own hooks, which v2 has not got yet: Cru is told so.
+pub fn ui_go(d: &Value) {
+    if kit::s(d, "page") != page_id() { return; }
+    let id = kit::s(d, "id");
+    let ack = move |mut r: Value| {
+        r["id"] = json!(id.clone());
+        // Where the window is once the move has landed (the next pump).
+        kit::on_app(move |_, _| { r["where"] = json!(ui_where()); let body = r.clone(); kit::call(move |api| api.post("/api/voice/ui/ack", &body), |_| {}); });
+    };
+    let c = kit::get();
+    let project = kit::s(d, "project");
+    if !project.is_empty() && project != c.project {
+        if !c.projects.iter().any(|p| kit::s(p, "alias") == project) { return ack(json!({ "ok": false, "error": "That project is not on this page" })); }
+        kit::select_project(&project);
+    }
+    let has_project = !project.is_empty() || !c.project.is_empty();
+    let tab = kit::s(d, "tab");
+    if !tab.is_empty() {
+        if !has_project && !GLOBAL_TABS.contains(&tab.as_str()) && tab != "inbox" { return ack(json!({ "ok": false, "error": "No project is open on the page: say which project" })); }
+        if tab != c.tab { kit::show_tab(&tab); }
+    }
+    let chat = kit::s(d, "chat");
+    if !chat.is_empty() {
+        let key = format!("live:{chat}");
+        kit::on_app(move |_, cx| if let Some(wb) = crundi_workbench::workbench(cx) { wb.update(cx, |w, cx| { w.place(&key, cx); w.focus_key(&key, cx); }); });
+    }
+    let note = kit::s(d, "note");
+    let unreachable = ["card", "node", "file", "widget"].iter().find(|k| !kit::s(d, k).is_empty());
+    if let Some(k) = unreachable {
+        if !note.is_empty() { kit::toast(&format!("Cru: {note}")); }
+        return ack(json!({ "ok": false, "error": format!("This PC app cannot open a {} for Cru yet: say where it is instead", match *k { "node" => "mindmap idea", "widget" => "panel", "card" => "kanban card", _ => "file" }) }));
+    }
+    if !kit::s(d, "highlight").is_empty() {
+        if !note.is_empty() { kit::toast(&format!("Cru: {note}")); }
+        return ack(json!({ "ok": true, "found": false }));
+    }
+    if !note.is_empty() { kit::toast(&format!("Cru: {note}")); }
+    ack(json!({ "ok": true }));
 }
 
 #[cfg(test)]

@@ -33,3 +33,11 @@ pub fn tone_outline(id: impl Into<ElementId>, label: impl Into<SharedString>, co
         .hover(|d| d.bg(color.opacity(T::WS_ML_BTN_O)))
         .child(label.into())
 }
+
+/// A quiet pill of words on a dark fill, no edge (crundi-voice.js .cv-more:
+/// "Earlier messages", 12 px secondary text, 4 px by 10 px). Added by Desktop.
+pub fn quiet_pill(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
+    div().id(id).flex().flex_none().items_center().px(T::SP_10).py(T::SP_4).rounded(T::R_BUBBLE).cursor_pointer()
+        .bg(T::bg_tertiary()).text_color(T::text_secondary()).text_size(T::TEXT_12)
+        .child(label.into())
+}
