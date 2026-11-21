@@ -175,6 +175,9 @@ pub struct CruScreen {
     anchor: Option<(Pixels, Pixels, Pixels)>,
     /// An animated frame is asked for (at most T::ANIM_FPS).
     frame_due: bool,
+    /// The window the boxes were made in (a window the tray's × closed and Open made again
+    /// gets boxes of its own: one made with the old window hears nothing in the new).
+    win: Option<AnyWindowHandle>,
     _subs: Vec<Subscription>,
 }
 
@@ -192,12 +195,17 @@ impl CruScreen {
             if this.copy.open { this.retake(cx); }
         });
         CruScreen { input: None, pin_in: None, frame, focus: cx.focus_handle(), shown: false, scroll: ScrollHandle::new(), turns: 0, field: Default::default(), liquid: Default::default(), start: Instant::now(), prev: None,
-            copy: Copy::default(), usage, level: 0., anchor: None, frame_due: false, _subs: vec![sub] }
+            copy: Copy::default(), usage, level: 0., anchor: None, frame_due: false, win: None, _subs: vec![sub] }
     }
 
     /// The window opened: the typing box (Enter sends; Shift+Enter is a new line).
     pub fn attach(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.input.is_some() { return; }
+        let win = window.window_handle();
+        if self.win == Some(win) { return; }
+        self.win = Some(win);
+        // (The first is the usage watch, made with the view; the rest heard the old window.)
+        self._subs.truncate(1);
+        self.prev = None;
         let input = cx.new(|cx| w::TextareaState::new(window, cx).auto_grow(1, 6).placeholder("Type to Cru…"));
         self._subs.push(cx.subscribe_in(&input, window, |_, st, ev: &w::InputEvent, window, cx| if let w::InputEvent::PressEnter { shift: false, .. } = ev {
             let t = st.read(cx).value().to_string();

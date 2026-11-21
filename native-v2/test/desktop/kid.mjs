@@ -2,6 +2,8 @@
 // Ported from native-gpui/test/desktop.mjs ("Kid mode…"), with v2's check:
 // the PIN pad's keys re-render Cru's view alone.
 
+import { join } from 'node:path';
+
 const delta = (r0, r1) => Object.fromEntries(Object.keys(r1 || {}).map((k) => [k, (r1[k] || 0) - ((r0 || {})[k] || 0)]).filter(([, v]) => v));
 
 export async function run(T, t) {
@@ -53,5 +55,27 @@ export async function run(T, t) {
     await T.ui('dialog-answer', 'false');
     await T.until('…answered', (p) => !p.dialog, 5000);
   }
+  // F236: kid mode from the Inbox opened by a real click on its button, left with a real pointer
+  // on the pad: the Inbox button looks as it did before (no focus ring left on it).
+  await T.ui('tab', 'workbench');
+  await t.sleep(300);
+  await T.mouse('click', 120, 832);
+  await T.until('the Inbox, from its button', (p) => p.tab === 'inbox', 3000);
+  await T.mouse('move', 700, 500);
+  await t.sleep(400);
+  const before = join(T.OUT, 'kid-inbox-before.png'), after = join(T.OUT, 'kid-inbox-after.png');
+  await T.d.send({ cmd: 'snapshot', path: before });
+  await T.act('kid-start', 'tray');
+  await T.until('kid mode again', (p) => K(p).on && D(p).cru.open, 15000);
+  await T.act('kid-pin');
+  await T.until('the PIN pad', (p) => K(p).pin);
+  await t.sleep(500);
+  for (const [x, y] of [[699, 350], [625, 416], [773, 416], [699, 482], [773, 548]]) { await T.mouse('click', x, y); await t.sleep(120); }
+  await T.until('…left with the pad, clicked', (p) => !K(p).on && !D(p).cru.open, 10000);
+  await T.mouse('move', 700, 500);
+  await t.sleep(700);
+  await T.d.send({ cmd: 'snapshot', path: after });
+  const n = T.diff(before, after, '240x100+0+760');
+  t.check('…the Inbox button looks as before kid mode (no ring left on it)', n === 0, n);
   await T.ui('tab', 'workbench');
 }
