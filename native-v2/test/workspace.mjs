@@ -295,6 +295,13 @@ await T.ui('tab', 'git');
 await T.until('a file made on disk shows in Git when its tab is shown', (s) => [...W(s).git.changes, ...W(s).git.staged].some((f) => /made-by-claude\.txt$/.test(f.file)), 4000);
 await T.ui('tab', 'files');
 await T.until('…and in Files when its tab is shown again, in the same folder', (s) => W(s).files.path === join(P, 'docs') && W(s).files.rows.some((r) => r.name === 'made-by-claude.txt'), 4000);
+// F219: a reload clears the search, and the box with it (the web's
+// filesSearchQuery = '' and a fresh empty input).
+await act('files-search', 'notes');
+await T.until('a search is typed in the box', (s) => W(s).files.searching && W(s).files.query === 'notes');
+await T.ui('tab', 'git');
+await T.ui('tab', 'files');
+await T.until('a tab switch reloads Files: the folder again and the search box empty', (s) => !W(s).files.searching && W(s).files.query === '' && W(s).files.rows.some((r) => r.name === 'made-by-claude.txt'), 4000);
 rmSync(join(P, 'docs/made-by-claude.txt'), { force: true });
 
 // ─── Media ───
@@ -530,6 +537,23 @@ await T.until('Git, Files and Media in panes', (s) => s.panes?.includes('panel:g
 await T.ui('toasts-clear');
 await t.sleep(800);
 await snap('workbench-panels');
+
+// F220: showing the Workbench tab again reloads each panel in its layout
+// (the web's switchTab('workbench') -> embedWbPanels -> wbLoad).
+{
+  await act('files-nav', P);
+  await T.until('the Files pane lists the project', (s) => W(s).files.path === P && W(s).files.rows.some((r) => r.name === 'src'));
+  await T.ui('tab', 'kanban');
+  writeFileSync(join(P, 'made-on-kanban.txt'), 'new\n');
+  const up = await T.api.http('POST', '/api/media/upload', { name: 'while-on-kanban.png', data: readFileSync(png).toString('base64'), project: 'demo' });
+  t.check('a media file added while away', up.body?.ok, up.body);
+  await t.sleep(300);
+  await T.ui('tab', 'workbench');
+  await T.until('back on the Workbench, the Files pane shows a file made meanwhile', (s) => W(s).files.rows.some((r) => r.name === 'made-on-kanban.txt'), 2500);
+  await T.until('…the Git pane lists it as a change', (s) => [...W(s).git.changes, ...W(s).git.staged].some((f) => /made-on-kanban\.txt$/.test(f.file)), 2500);
+  await T.until('…and the Media pane its new card', (s) => W(s).media.cards.some((c) => c.name === 'while-on-kanban.png'), 2500);
+  rmSync(join(P, 'made-on-kanban.txt'), { force: true });
+}
 
 // A Files row dragged onto the terminal (with the pointer): its path goes
 // to the program, "Sent to terminal".

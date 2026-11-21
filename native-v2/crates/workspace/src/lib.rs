@@ -134,6 +134,15 @@ fn watch_tab_switch(stores: &crundi_shell::Stores, cx: &mut App) {
             "git" => if let Some(g) = git::view(cx) { g.update(cx, |g, cx| g.load(cx)); },
             "files" => if let Some(f) = files::view(cx) { f.update(cx, |f, cx| f.load(None, cx)); },
             "media" => if let Some(m) = media::view(cx) { m.update(cx, |m, cx| m.load(cx)); },
+            // The Workbench shown again: each panel in its layout reloads,
+            // as the web's embedWbPanels -> wbLoad(kind).
+            "workbench" => {
+                let Some(w) = wb::workbench(cx) else { return };
+                let keys = w.update(cx, |w, _| w.keys());
+                for p in ["panel:git", "panel:files", "panel:media"] {
+                    if keys.iter().any(|k| k == p) { refresh(p, cx); }
+                }
+            }
             _ => {}
         }
     }).detach();
@@ -272,7 +281,7 @@ fn test_ui(stores: &crundi_shell::Stores, name: &str, a: &[String], window: &mut
             "nav" => f.load(Some(s(0)), cx),
             "up" => f.up(cx),
             "refresh" => f.load(None, cx),
-            "search" => f.search(&s(0), cx),
+            "search" => f.type_search(&s(0), window, cx),
             "open" => f.open(&s(0), cx),
             "menu" => f.menu(&s(0), point(px(0.), px(0.)), cx),
             "paste" => f.paste_here(cx),
