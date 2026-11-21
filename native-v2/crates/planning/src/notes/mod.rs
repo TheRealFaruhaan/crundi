@@ -143,7 +143,7 @@ pub(crate) struct Item { pub id: String, pub title: String, pub preview: String,
 /// A block as drawn: the block, its number, in the selection (and the ends
 /// of that run), its grip's menu open.
 #[derive(Clone, Hash)]
-pub(crate) struct BlockRow { pub b: Block, pub num: String, pub sel: bool, pub sel_top: bool, pub sel_bottom: bool, pub menu_open: bool }
+pub(crate) struct BlockRow { pub b: Block, pub num: String, pub sel: bool, pub sel_top: bool, pub sel_bottom: bool, pub menu_open: bool, pub kids: bool }
 
 /// One place as the view draws it (the Slint PlanningNotesPane).
 #[derive(Clone, Default)]
@@ -170,6 +170,11 @@ pub(crate) struct S {
     drag: Option<Drag>,
     drag_label: String,
     press: Option<(String, String, bool)>,
+    /// A press held in a block's words while it has no caret: the drag
+    /// selects them as it goes (the browser's own drag-select in the web).
+    pub(crate) tsel: Option<TSel>,
+    /// Where a reference dragged over a page would go in (dropSpot).
+    pub(crate) dspot: Option<DropSpot>,
     caret_xy: (f32, f32),
     /// Where the caret was when nothing was selected (the selection's
     /// other end: the format bar centres between the two).
@@ -188,6 +193,56 @@ pub(crate) struct S {
     bar: Option<Entity<view::TabBar>>,
     /// The workbench is watched (panes closed there let their page go).
     wb_watch: Option<Subscription>,
+}
+
+/// A drag-select in a block without the caret: the place, the block (and
+/// cell), and the selection's ends as offsets in the words drawn.
+#[derive(Clone, PartialEq)]
+pub(crate) struct TSel { pub key: String, pub id: String, pub r: i32, pub c: i32, pub a: usize, pub b: usize }
+
+/// The press in a block's words: the drag-select starts there.
+pub(crate) fn tsel_start(t: TSel, cx: &mut App) { with(cx, |s| s.tsel = Some(t)); }
+
+/// The pointer moved with the press held in the words: the selection's end.
+pub(crate) fn tsel_move(key: &str, id: &str, r: i32, c: i32, at: usize, cx: &mut App) {
+    let changed = with(cx, |s| match s.tsel.as_mut() {
+        // Gone onto other blocks, the press selects blocks (blk_over), not words.
+        Some(_) if s.press.as_ref().is_some_and(|p| p.2) => { s.tsel = None; true }
+        Some(t) if t.key == key && t.id == id && t.r == r && t.c == c && t.b != at => { t.b = at; true }
+        _ => false,
+    });
+    if changed { render(key, cx); }
+}
+
+/// The press let go: what it selected, if it moved (and clears it).
+pub(crate) fn tsel_end(key: &str, cx: &mut App) -> Option<TSel> {
+    let t = with(cx, |s| s.tsel.take());
+    if t.as_ref().is_some_and(|t| t.a != t.b) { render(key, cx); }
+    t.filter(|t| t.key == key)
+}
+
+/// Where something dragged over a page would be typed in (the web's
+/// dropSpot): the block (and cell), a source offset, and where in the words
+/// drawn the caret shows (None: the block has the text box, whose own
+/// caret is moved there).
+#[derive(Clone, PartialEq)]
+pub(crate) struct DropSpot { pub key: String, pub id: String, pub r: i32, pub c: i32, pub at: usize, pub ix: Option<usize> }
+
+/// The pointer, with something in hand, over a block's words (`spot`) or
+/// off them (None): the caret follows it (the web's dropPreview).
+pub(crate) fn drop_over(key: &str, id: &str, r: i32, c: i32, spot: Option<(usize, Option<usize>)>, cx: &mut App) {
+    let changed = with(cx, |s| {
+        let mine = s.dspot.as_ref().is_some_and(|d| d.key == key && d.id == id && d.r == r && d.c == c);
+        match spot {
+            Some((at, ix)) => {
+                let n = DropSpot { key: key.into(), id: id.into(), r, c, at, ix };
+                if s.dspot.as_ref() == Some(&n) { false } else { s.dspot = Some(n); true }
+            }
+            None if mine => { s.dspot = None; true }
+            None => false,
+        }
+    });
+    if changed { render(key, cx); }
 }
 
 struct Handle(Entity<S>);
@@ -494,9 +549,11 @@ pub(crate) fn place_row(s: &S, key: &str) -> Option<PlaceRow> {
             Some(ed) => {
                 let nums = doc::numbers(&ed.blocks);
                 let (lo, hi) = sel_range(ed).unwrap_or((usize::MAX, 0));
-                let rows: Vec<BlockRow> = ed.blocks.iter().enumerate().map(|(k, b)| {
+                // The children of a folded block are not drawn.
+                let hid = doc::hidden(&ed.blocks);
+                let rows: Vec<BlockRow> = ed.blocks.iter().enumerate().filter(|(k, _)| !hid[*k]).map(|(k, b)| {
                     let inn = k >= lo && k <= hi;
-                    BlockRow { b: b.clone(), num: nums[k].clone(), sel: inn, sel_top: inn && k == lo, sel_bottom: inn && k == hi, menu_open: float_menu.as_deref() == Some(b.id.as_str()) }
+                    BlockRow { b: b.clone(), num: nums[k].clone(), sel: inn, sel_top: inn && k == lo, sel_bottom: inn && k == hi, menu_open: float_menu.as_deref() == Some(b.id.as_str()), kids: doc::has_kids(&ed.blocks, k) }
                 }).collect();
                 let n = if lo == usize::MAX { 0 } else { hi - lo + 1 };
                 (rows, n, (ed.save_state.clone(), ed.save_text.clone(), ed.save_tip.clone()))
@@ -1017,6 +1074,47 @@ fn insert_after(key: &str, after: Option<&str>, b: Block, cx: &mut App) -> Strin
     id
 }
 
+fn insert_at(key: &str, at: usize, b: Block, cx: &mut App) -> String {
+    let id = b.id.clone();
+    with(cx, |s| ed_mut(s, key, |e| { let at = at.min(e.blocks.len()); e.blocks.insert(at, b); }));
+    changed(key, cx);
+    render(key, cx);
+    id
+}
+
+/// A new block below block `id` (Enter, the "+"): the first child of a
+/// parent, after a folded block's children, else right after it, level with
+/// it (doc::below); what does not nest sits at the left.
+fn insert_below(key: &str, id: &str, mut b: Block, cx: &mut App) -> String {
+    let spot = with(cx, |s| ed_mut(s, key, |e| e.blocks.iter().position(|x| x.id == id).map(|i| doc::below(&e.blocks, i))).flatten());
+    let Some((at, level)) = spot else { return insert_after(key, Some(id), b, cx) };
+    b.level = if doc::nesty(&b.kind) { level } else { 0 };
+    insert_at(key, at, b, cx)
+}
+
+/// Fold or open block `id`'s children (the fold beside it).
+pub(crate) fn toggle_fold(key: &str, id: &str, cx: &mut App) {
+    let ok = with(cx, |s| ed_mut(s, key, |e| {
+        let i = e.blocks.iter().position(|b| b.id == id)?;
+        if !doc::has_kids(&e.blocks, i) && !e.blocks[i].folded { return None; }
+        e.blocks[i].folded = !e.blocks[i].folded;
+        // A selection or the caret inside what folds away goes.
+        let hid = doc::hidden(&e.blocks);
+        if e.sel.as_ref().is_some_and(|(a, f)| e.blocks.iter().enumerate().any(|(k, b)| hid[k] && (&b.id == a || &b.id == f))) { e.sel = None; }
+        Some(())
+    }).flatten());
+    if ok.is_some() { changed(key, cx); render(key, cx); }
+}
+
+/// Block `id` with its children removed (the menu's Delete, Ctrl+Shift+K).
+fn remove_unit(e: &mut Ed, id: &str) {
+    if let Some(i) = e.blocks.iter().position(|b| b.id == id) {
+        let end = doc::sub_end(&e.blocks, i);
+        e.blocks.drain(i..end);
+    }
+    if e.blocks.is_empty() { e.blocks.push(Block::new("p", "")); }
+}
+
 fn remove_block(e: &mut Ed, id: &str) {
     e.blocks.retain(|b| b.id != id);
     if e.blocks.is_empty() { e.blocks.push(Block::new("p", "")); }
@@ -1036,8 +1134,9 @@ fn convert(key: &str, id: &str, kind: &str, checked: bool, lang: Option<String>,
 
 fn neighbours(key: &str, id: &str, cx: &mut App) -> (Option<Block>, Option<Block>) {
     with(cx, |s| ed_mut(s, key, |e| {
+        // The blocks shown around it (a folded block's children are skipped).
         let i = e.blocks.iter().position(|b| b.id == id);
-        match i { Some(i) => (i.checked_sub(1).map(|j| e.blocks[j].clone()), e.blocks.get(i + 1).cloned()), None => (None, None) }
+        match i { Some(i) => (doc::shown_before(&e.blocks, i).map(|j| e.blocks[j].clone()), doc::shown_after(&e.blocks, i).map(|j| e.blocks[j].clone())), None => (None, None) }
     }).unwrap_or((None, None)))
 }
 
@@ -1148,14 +1247,14 @@ fn text_key(key: &str, id: &str, name: &str, anchor: i32, caret: i32, first: boo
         "ctrl-shift-s" => { mark(key, id, -1, -1, a, c, Mark::S, cx); true }
         "ctrl-k" => { open_fmt(key, id, -1, -1, a, c, true, cx); true }
         "ctrl-v" => paste(key, id, -1, -1, a, c, cx),
-        "tab" | "shift-tab" if doc::listy(&b.kind) => { close_float(cx); nest(key, id, name == "shift-tab", cx); true }
+        "tab" | "shift-tab" if doc::nesty(&b.kind) => { close_float(cx); nest(key, id, name == "shift-tab", cx); true }
         // Elsewhere Tab types no tab into the words (the web's leaves the line).
         "tab" | "shift-tab" => true,
         "enter" => {
             close_float(cx);
-            if doc::listy(&b.kind) && b.level > 0 && doc::src_plain(&b.text).trim().is_empty() {
-                // An empty nested item steps out one level.
-                edit_block(key, id, cx, |b| b.level -= 1);
+            if doc::nesty(&b.kind) && b.level > 0 && doc::src_plain(&b.text).trim().is_empty() {
+                // An empty nested block steps out one level (its children with it).
+                nest(key, id, true, cx);
                 return true;
             }
             if doc::listy(&b.kind) && doc::src_plain(&b.text).trim().is_empty() {
@@ -1170,14 +1269,16 @@ fn text_key(key: &str, id: &str, name: &str, anchor: i32, caret: i32, first: boo
             let (_, right) = doc::split_runs(&rest, hi - lo);
             set_text(key, id, doc::runs_to_src(&left), cx);
             let kind = if doc::listy(&b.kind) { b.kind.as_str() } else { "p" };
-            // A list goes on at the same level.
-            let level = if doc::listy(&b.kind) { b.level } else { 0 };
-            let nb = Block { id: doc::gen_id(), kind: kind.into(), text: doc::runs_to_src(&right), level, ..Default::default() };
-            let n = insert_after(key, Some(id), nb, cx);
+            // A list goes on at the same level; under a parent, first among
+            // its children; after a folded block, past its children.
+            let nb = Block { id: doc::gen_id(), kind: kind.into(), text: doc::runs_to_src(&right), ..Default::default() };
+            let n = insert_below(key, id, nb, cx);
             focus_block(key, &n, At::Start, cx);
             true
         }
         "backspace" if collapsed && c == 0 => {
+            // At the start of a nested paragraph: one level out first.
+            if b.kind == "p" && b.level > 0 { nest(key, id, true, cx); return true; }
             if b.kind != "p" { convert(key, id, "p", false, None, cx); focus_block(key, id, At::Start, cx); return true; }
             let Some(p) = prev else { return false };
             if p.kind == "divider" { with(cx, |s| ed_mut(s, key, |e| remove_block(e, &p.id))); changed(key, cx); render(key, cx); return true; }
@@ -1306,7 +1407,7 @@ pub(crate) fn add_below(key: &str, id: &str, at: Option<(f32, f32)>, cx: &mut Ap
         let x = match at { Some((x, _)) => x + f32::from(crundi_theme::T::SP_40), None => p.page_box.0 + f32::from(crundi_theme::T::SP_48) };
         (x, bottom)
     }));
-    let n = insert_after(key, Some(id), Block::new("p", ""), cx);
+    let n = insert_below(key, id, Block::new("p", ""), cx);
     focus_block(key, &n, At::End, cx);
     if let Some(p) = place { with(cx, |s| s.caret_xy = p); }
     open_slash(key, &n, None, cx);
@@ -1325,12 +1426,8 @@ fn tail(key: &str, cx: &mut App) {
 /// Blocks lo..=hi one place up or down (Alt+Up / Alt+Down): the block past
 /// the range moves to its other side. False at the page's edge.
 fn move_range(key: &str, lo: usize, hi: usize, up: bool, cx: &mut App) -> bool {
-    let ok = with(cx, |s| ed_mut(s, key, |e| {
-        if hi >= e.blocks.len() || lo > hi { return false; }
-        if up { if lo == 0 { return false; } let b = e.blocks.remove(lo - 1); e.blocks.insert(hi, b); }
-        else { if hi + 1 >= e.blocks.len() { return false; } let b = e.blocks.remove(hi + 1); e.blocks.insert(lo, b); }
-        true
-    }).unwrap_or(false));
+    // The blocks go with their children (doc::move_unit).
+    let ok = with(cx, |s| ed_mut(s, key, |e| doc::move_unit(&mut e.blocks, lo, hi, up).is_some()).unwrap_or(false));
     if ok { changed(key, cx); render(key, cx); }
     ok
 }
@@ -1339,6 +1436,8 @@ fn move_range(key: &str, lo: usize, hi: usize, up: bool, cx: &mut App) -> bool {
 fn dup_range(key: &str, lo: usize, hi: usize, cx: &mut App) -> Vec<String> {
     let ids = with(cx, |s| ed_mut(s, key, |e| {
         if hi >= e.blocks.len() || lo > hi { return vec![]; }
+        // Their children are copied with them.
+        let hi = doc::with_kids(&e.blocks, lo, hi);
         let copies: Vec<Block> = e.blocks[lo..=hi].iter().map(|b| Block { id: doc::gen_id(), ..b.clone() }).collect();
         let ids = copies.iter().map(|b| b.id.clone()).collect();
         for (k, b) in copies.into_iter().enumerate() { e.blocks.insert(hi + 1 + k, b); }
@@ -1365,7 +1464,7 @@ fn block_key(key: &str, id: &str, r: i32, c: i32, name: &str, a: usize, b: usize
         "ctrl-d" => {
             let i = pos_of(key, id, cx)?;
             close_float(cx);
-            if let Some(n) = dup_range(key, i, i, cx).pop() { request_focus(key, &n, r, c, a, b, cx); }
+            if let Some(n) = dup_range(key, i, i, cx).first() { request_focus(key, n, r, c, a, b, cx); }
             Some(true)
         }
         "ctrl-shift-k" => { close_float(cx); block_menu_do(key, id, "del", cx); Some(true) }
@@ -1373,14 +1472,12 @@ fn block_key(key: &str, id: &str, r: i32, c: i32, name: &str, a: usize, b: usize
     }
 }
 
-/// Tab / Shift+Tab on a list item: one level deeper (at most one below the
-/// item above it, when that is a list item) or one level out.
+/// Tab / Shift+Tab on a paragraph or list item: it and its children one
+/// level deeper (at most one below the block shown above it, when that
+/// nests) or one level out (doc::nest_at).
 fn nest(key: &str, id: &str, out: bool, cx: &mut App) {
-    let (prev, _) = neighbours(key, id, cx);
-    let Some(b) = cur_block(key, id, cx) else { return };
-    let most = prev.filter(|p| doc::listy(&p.kind)).map(|p| p.level + 1).unwrap_or(0).min(doc::LEVEL_MAX);
-    let level = if out { b.level.saturating_sub(1) } else if b.level < most { b.level + 1 } else { b.level };
-    if level != b.level { edit_block(key, id, cx, |b| b.level = level); }
+    let ok = with(cx, |s| ed_mut(s, key, |e| e.blocks.iter().position(|b| b.id == id).is_some_and(|i| doc::nest_at(&mut e.blocks, i, out))).unwrap_or(false));
+    if ok { changed(key, cx); render(key, cx); }
 }
 
 fn divider_key(key: &str, id: &str, name: &str, cx: &mut App) -> bool {
@@ -1541,7 +1638,8 @@ fn sel_range(e: &Ed) -> Option<(usize, usize)> {
     let (a, f) = e.sel.as_ref()?;
     let i = e.blocks.iter().position(|b| &b.id == a)?;
     let j = e.blocks.iter().position(|b| &b.id == f)?;
-    Some((i.min(j), i.max(j)))
+    // A selected block's children are selected with it.
+    Some((i.min(j), doc::with_kids(&e.blocks, i.min(j), i.max(j))))
 }
 
 fn set_sel(key: &str, a: &str, f: &str, cx: &mut App) {
@@ -1599,7 +1697,7 @@ fn sel_act(key: &str, a: &str, cx: &mut App) {
 /// Keys while blocks are selected.
 fn sel_key(key: &str, name: &str, cx: &mut App) -> bool {
     let Some((sa, sf)) = with(cx, |s| ed_mut(s, key, |e| e.sel.clone()).flatten()) else { return false };
-    let ids: Vec<String> = with(cx, |s| ed_mut(s, key, |e| e.blocks.iter().map(|b| b.id.clone()).collect()).unwrap_or_default());
+    let ids: Vec<String> = with(cx, |s| ed_mut(s, key, |e| { let hid = doc::hidden(&e.blocks); e.blocks.iter().enumerate().filter(|(k, _)| !hid[*k]).map(|(_, b)| b.id.clone()).collect() }).unwrap_or_default());
     match name {
         "escape" => { clear_sel(key, cx); focus_block(key, &sf, At::End, cx); true }
         "backspace" | "delete" => { delete_selected(key, cx); true }
@@ -1656,6 +1754,7 @@ fn blk_over(key: &str, y: f32, cx: &mut App) {
     let under = with(cx, |s| idx(s, key).and_then(|i| s.places[i].boxes.iter().find(|b| y >= b.1 && y < b.1 + b.2).map(|b| b.0.clone())));
     let Some(under) = under else { return };
     if under != from || moved {
+        if with(cx, |s| s.tsel.take().is_some()) { render(key, cx); }
         let again = moved && with(cx, |s| ed_mut(s, key, |e| e.sel.as_ref().is_some_and(|x| x.1 == under)).unwrap_or(false));
         with(cx, |s| s.press = Some((k, from.clone(), true)));
         if !again { set_sel(key, &from, &under, cx); }
@@ -1686,8 +1785,9 @@ fn drag_what(key: &str, id: &str, cx: &mut App) -> Option<(String, Vec<String>, 
         if sel.len() > 1 && sel.iter().any(|b| b.id == id) {
             (key.to_string(), sel.iter().map(|b| b.id.clone()).collect(), doc::to_markdown(&sel))
         } else {
-            let b = cur_block(key, id, cx).into_iter().collect::<Vec<_>>();
-            (key.to_string(), vec![id.to_string()], doc::to_markdown(&b))
+            // The block with its children.
+            let b = with(cx, |s| ed_mut(s, key, |e| e.blocks.iter().position(|b| b.id == id).map(|i| e.blocks[i..doc::sub_end(&e.blocks, i)].to_vec())).flatten()).unwrap_or_default();
+            (key.to_string(), b.iter().map(|b| b.id.clone()).collect(), doc::to_markdown(&b))
         }
     })
 }
@@ -1716,16 +1816,37 @@ pub(crate) fn drag_key(cx: &App) -> Option<String> { cx.try_global::<Handle>().a
 /// A reference from another panel (a file, a task, an idea…) dropped on a
 /// page: its text goes in under the block at the pointer (the web's
 /// dropText), and a toast says so.
-pub(crate) fn drop_text(key: &str, y: f32, text: &str, cx: &mut App) {
-    if text.trim().is_empty() { return; }
-    let after = with(cx, |s| idx(s, key).and_then(|i| {
-        let p = &s.places[i];
-        p.boxes.iter().filter(|b| b.1 <= y).max_by(|a, b| a.1.total_cmp(&b.1)).map(|b| b.0.clone())
-    }));
-    let has_page = with(cx, |s| ed_mut(s, key, |_| ()).is_some());
-    if !has_page { return; }
-    let n = insert_after(key, after.as_deref(), Block::new("p", &doc::runs_to_src(&[doc::Run { text: text.to_string(), st: Default::default() }])), cx);
-    focus_block(key, &n, At::End, cx);
+/// Dropped on a page: typed in where the caret was shown (the web's
+/// dropText: a space before it after a word, one after it), the caret
+/// after it. Off any block's words, nothing goes in.
+pub(crate) fn drop_text(key: &str, text: &str, cx: &mut App) {
+    let spot = with(cx, |s| s.dspot.take());
+    if spot.is_some() { render(key, cx); }
+    let Some(sp) = spot.filter(|d| d.key == key) else { return };
+    if text.is_empty() { return; }
+    let Some(src) = src_of(key, &sp.id, sp.r, sp.c, cx) else { return };
+    let code = sp.r < 0 && cur_block(key, &sp.id, cx).is_some_and(|b| b.kind == "code");
+    if code {
+        let mut at = sp.at.min(src.len());
+        while !src.is_char_boundary(at) { at -= 1; }
+        let pad = src[..at].chars().last().is_some_and(|c| !c.is_whitespace());
+        let ins = format!("{}{text} ", if pad { " " } else { "" });
+        put_src(key, &sp.id, sp.r, sp.c, format!("{}{ins}{}", &src[..at], &src[at..]), cx);
+        changed(key, cx);
+        render(key, cx);
+        request_focus(key, &sp.id, sp.r, sp.c, at + ins.len(), at + ins.len(), cx);
+    } else {
+        let runs = doc::src_to_runs(&src);
+        let pa = doc::src_to_plain_at(&src, sp.at);
+        let pad = pa > 0 && doc::plain(&runs).chars().nth(pa - 1).is_some_and(|c| !c.is_whitespace());
+        let ins = format!("{}{text} ", if pad { " " } else { "" });
+        let (l, rt) = doc::split_runs(&runs, pa);
+        // Typed as keyboard input: it takes the words' style before it (not a link).
+        let st = l.last().map(|r| doc::Sty { href: None, ..r.st.clone() }).unwrap_or_default();
+        let n = ins.chars().count();
+        let all = doc::norm(l.into_iter().chain(std::iter::once(Run { text: ins, st })).chain(rt).collect());
+        rewrite(key, &sp.id, sp.r, sp.c, all, pa + n, pa + n, cx);
+    }
     toast(cx, "Added to the note");
 }
 
@@ -1737,7 +1858,9 @@ fn drag_move(_x: f32, y: f32, cx: &mut App) {
         let p = &s.places[i];
         let ed = p.ed.as_ref()?;
         if d.ids.is_empty() { return None; }
-        let order: Vec<(usize, &(String, f32, f32))> = ed.blocks.iter().enumerate().filter(|(_, b)| !d.ids.contains(&b.id)).filter_map(|(k, b)| p.boxes.iter().find(|x| x.0 == b.id).map(|x| (k, x))).collect();
+        // The blocks shown (a folded block's children have no place of their own).
+        let hid = doc::hidden(&ed.blocks);
+        let order: Vec<(usize, &(String, f32, f32))> = ed.blocks.iter().enumerate().filter(|(k, b)| !hid[*k] && !d.ids.contains(&b.id)).filter_map(|(k, b)| p.boxes.iter().find(|x| x.0 == b.id).map(|x| (k, x))).collect();
         if order.is_empty() { return None; }
         let mut spot = (order[order.len() - 1].0, false, order[order.len() - 1].1 .1 + order[order.len() - 1].1 .2);
         for (k, b) in &order { if y < b.1 + b.2 / 2.0 { spot = (*k, true, b.1); break; } }
@@ -1761,8 +1884,11 @@ fn drag_end(commit: bool, cx: &mut App) {
         with(cx, |s| ed_mut(s, &d.key, |e| {
             let moving: Vec<Block> = e.blocks.iter().filter(|b| d.ids.contains(&b.id)).cloned().collect();
             e.blocks.retain(|b| !d.ids.contains(&b.id));
-            let at = anchor.and_then(|a| e.blocks.iter().position(|b| b.id == a)).map(|i| if before { i } else { i + 1 }).unwrap_or(e.blocks.len());
+            // After a block: past its children too when it is folded.
+            let at = anchor.and_then(|a| e.blocks.iter().position(|b| b.id == a)).map(|i| if before { i } else if e.blocks[i].folded { doc::sub_end(&e.blocks, i) } else { i + 1 }).unwrap_or(e.blocks.len());
+            let n = moving.len();
             for (j, b) in moving.into_iter().enumerate() { e.blocks.insert(at + j, b); }
+            doc::settle(&mut e.blocks, at, n);
         }));
         changed(&d.key, cx);
         render(&d.key, cx);
@@ -1864,23 +1990,21 @@ fn block_menu_do(key: &str, id: &str, what: &str, cx: &mut App) {
     if let Some(t) = what.strip_prefix("to:") { convert(key, id, t, false, None, cx); focus_block(key, id, At::End, cx); return; }
     match what {
         "up" | "down" => {
-            let moved = with(cx, |s| ed_mut(s, key, |e| {
-                let i = e.blocks.iter().position(|b| b.id == id)?;
-                let j = if what == "up" { i.checked_sub(1)? } else { (i + 1 < e.blocks.len()).then_some(i + 1)? };
-                e.blocks.swap(i, j);
-                Some(())
-            }).flatten());
-            if moved.is_some() { changed(key, cx); render(key, cx); }
+            // With its children (doc::move_unit).
+            if let Some(i) = pos_of(key, id, cx) { move_range(key, i, i, what == "up", cx); }
         }
         "dup" => {
-            let Some(mut b) = cur_block(key, id, cx) else { return };
-            b.id = doc::gen_id();
-            let n = insert_after(key, Some(id), b, cx);
-            focus_block(key, &n, At::End, cx);
+            let Some(i) = pos_of(key, id, cx) else { return };
+            if let Some(n) = dup_range(key, i, i, cx).first() { focus_block(key, n, At::End, cx); }
         }
         "del" => {
-            let (prev, next) = neighbours(key, id, cx);
-            with(cx, |s| ed_mut(s, key, |e| remove_block(e, id)));
+            let (prev, next) = with(cx, |s| ed_mut(s, key, |e| {
+                // Focus goes to the block shown above, or the one after its children.
+                let i = e.blocks.iter().position(|b| b.id == id)?;
+                let end = doc::sub_end(&e.blocks, i);
+                Some((doc::shown_before(&e.blocks, i).map(|j| e.blocks[j].clone()), e.blocks.get(end).cloned()))
+            }).flatten()).unwrap_or((None, None));
+            with(cx, |s| ed_mut(s, key, |e| remove_unit(e, id)));
             changed(key, cx);
             render(key, cx);
             if let Some(p) = prev.or(next) { focus_block(key, &p.id, At::End, cx); }
@@ -1943,7 +2067,8 @@ fn menu_key(name: &str, cx: &mut App) -> bool {
 
 /// The caret or selection moved in a block (x, y: the caret, window px).
 #[allow(clippy::too_many_arguments)]
-fn sel_moved(key: &str, id: &str, a: i32, c: i32, x: f32, y: f32, cx: &mut App) {
+/// `span`: the selection's start (x, y) and its end's x, when laid out.
+fn sel_moved(key: &str, id: &str, a: i32, c: i32, x: f32, y: f32, span: Option<(f32, f32, f32)>, cx: &mut App) {
     with(cx, |s| s.caret_xy = (x, y));
     let (a, c) = (a.max(0) as usize, c.max(0) as usize);
     let (r, cc) = with(cx, |s| ed_mut(s, key, |e| if cur_block_kind(e, id) == "table" { (e.cell.0 as i32, e.cell.1 as i32) } else { (-1, -1) }).unwrap_or((-1, -1)));
@@ -1952,7 +2077,15 @@ fn sel_moved(key: &str, id: &str, a: i32, c: i32, x: f32, y: f32, cx: &mut App) 
     let fl = with(cx, |s| s.float.clone());
     if a != c {
         // Over the selection's middle, its top (the web's showFormatBar).
-        if !matches!(fl, Some(Float::Fmt { link: true, .. })) { open_fmt(key, id, r, cc, a, c, false, cx); with(cx, |s| { let (ax, ay) = s.sel_anchor; s.fmt.x = (ax + x) / 2.; s.fmt.y = ay.min(y); }); }
+        if !matches!(fl, Some(Float::Fmt { link: true, .. })) {
+            // The bar's place is known before it opens, so its first frame is there.
+            with(cx, |s| {
+                let (mx, my) = match span { Some((sx, sy, ex)) => ((sx + ex) / 2., sy), None => { let (ax, ay) = s.sel_anchor; ((ax + x) / 2., ay.min(y)) } };
+                s.caret_xy = (mx, my); s.fmt.x = mx; s.fmt.y = my;
+            });
+            open_fmt(key, id, r, cc, a, c, false, cx);
+            with(cx, |s| s.caret_xy = (x, y));
+        }
     } else {
         with(cx, |s| s.sel_anchor = (x, y));
         if matches!(fl, Some(Float::Fmt { link: false, .. })) { close_float(cx); }
@@ -2063,6 +2196,8 @@ pub fn test_ui(_: &Stores, name: &str, args: &[String], _window: &mut Window, cx
         "notes-cell-key" => { let k = a(0); let id = bid(&k, n(1), cx); let r = cell_key(&k, &id, n(2), n(3), &a(4), n(5), n(6), cx); json!({ "ok": true, "handled": r }) }
         "notes-table" => { let k = a(0); let id = bid(&k, n(1), cx); table_act(&k, &id, &a(2), cx); json!({ "ok": true }) }
         "notes-check" => { let k = a(0); let id = bid(&k, n(1), cx); let v = a(2) == "true"; edit_block(&k, &id, cx, |b| b.checked = v); json!({ "ok": true }) }
+        // The fold beside block i: its children hidden or shown.
+        "notes-fold" => { let k = a(0); let id = bid(&k, n(1), cx); toggle_fold(&k, &id, cx); json!({ "ok": true }) }
         "notes-grip" => { let k = a(0); let id = bid(&k, n(1), cx); block_menu(&k, &id, 300.0, 300.0, cx); json!({ "ok": true }) }
         "notes-add-below" => { let k = a(0); let id = bid(&k, n(1), cx); add_below(&k, &id, None, cx); json!({ "ok": true }) }
         "notes-code" => { let k = a(0); let id = bid(&k, n(1), cx); code_act(&k, &id, &a(2), 600.0, 300.0, cx); json!({ "ok": true }) }
@@ -2104,7 +2239,7 @@ pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
         "headTitle": pane_title_in(s, &p.key),
         "blocks": p.blocks.iter().map(|r| json!({ "id": r.b.id, "kind": r.b.kind, "src": if r.b.kind == "table" || r.b.kind == "divider" { String::new() } else { r.b.text.clone() }, "num": r.num, "checked": r.b.checked,
             "lang": doc::lang_name(&doc::norm_lang(&r.b.lang)), "wrap": r.b.wrap, "header": r.b.header, "sel": r.sel, "menuOpen": r.menu_open,
-            "rows": r.b.rows, "level": r.b.level })).collect::<Vec<_>>(),
+            "rows": r.b.rows, "level": r.b.level, "folded": r.b.folded, "kids": r.kids })).collect::<Vec<_>>(),
         "items": p.items.iter().map(|i| json!({ "id": i.id, "title": i.title, "meta": i.meta, "busy": i.busy, "preview": i.preview })).collect::<Vec<_>>(),
         "listMsg": p.list_msg, "newBusy": p.new_busy,
     })).collect();
@@ -2135,8 +2270,12 @@ pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
         "float": float,
         "menu": if m.open { json!({ "x": m.x, "y": m.y, "label": m.label, "act": m.act, "query": m.query, "queryOn": m.query_on, "empty": m.empty,
             "items": m.items.iter().map(|i| json!({ "id": i.id, "k": i.k, "name": i.name, "d": i.d, "check": i.check, "danger": i.danger })).collect::<Vec<_>>() }) } else { Value::Null },
-        "fmt": if s.fmt.open { json!({ "link": s.fmt.link, "value": s.fmt.link_value, "hasLink": s.fmt.has_link }) } else { Value::Null },
+        "fmt": if s.fmt.open { json!({ "link": s.fmt.link, "value": s.fmt.link_value, "hasLink": s.fmt.has_link, "x": s.fmt.x, "y": s.fmt.y }) } else { Value::Null },
         "drag": s.drag.is_some(),
+        // A drag-select under way in a block's words; where a dragged
+        // reference would be typed in.
+        "tsel": s.tsel.as_ref().map(|t| json!({ "key": t.key, "id": t.id, "a": t.a, "b": t.b })),
+        "dropSpot": s.dspot.as_ref().map(|d| json!({ "key": d.key, "id": d.id, "r": d.r, "c": d.c, "at": d.at })),
         // The text this screen last copied (the driver has no clipboard state).
         "clipboard": s.clipboard,
     })

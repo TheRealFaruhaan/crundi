@@ -127,7 +127,11 @@ impl Render for AskView {
             let mut pills = div().flex().flex_wrap().gap(T::SP_6);
             for (i, (k, t)) in c.options.iter().enumerate() {
                 let key = k.clone();
-                pills = pills.child(w::toggle(("kanban-ask-pill", i), t.clone(), self.chosen == *k)
+                // .im-choice button: a pill on the page's ground, outlined;
+                // the chosen one tinted (aria-checked).
+                let on = self.chosen == *k;
+                pills = pills.child(w::toggled(("kanban-ask-pill", i), t.clone(), on).rounded(T::R_PILL)
+                    .when(!on, |b| b.bg(T::bg()).text_color(T::text_secondary()))
                     .on_click(cx.listener(move |this, _, _, cx| { this.chosen = key.clone(); cx.notify(); })));
             }
             form = form.child(div().flex().flex_col().gap(T::SP_6).pt(T::SP_12)

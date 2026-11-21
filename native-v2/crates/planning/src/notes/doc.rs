@@ -481,6 +481,10 @@ pub fn placeholder(t: &str) -> &'static str {
 }
 pub fn texty(t: &str) -> bool { matches!(t, "p" | "h1" | "h2" | "h3" | "todo" | "bullet" | "number" | "quote") }
 pub fn listy(t: &str) -> bool { matches!(t, "todo" | "bullet" | "number") }
+/// What nests (Tab / Shift+Tab; the owner's 20 Nov decision): paragraphs
+/// and list items. A nested block's children are the blocks right after it
+/// that sit deeper; they move, copy, delete and fold with it.
+pub fn nesty(t: &str) -> bool { t == "p" || listy(t) }
 
 #[derive(Clone, Debug, PartialEq, Default, Hash)]
 pub struct Block {
@@ -494,9 +498,12 @@ pub struct Block {
     /// A table's cells, as sources.
     pub rows: Vec<Vec<String>>,
     pub header: bool,
-    /// A list item's nesting (0 at the left; Tab / Shift+Tab, the owner's
-    /// decision): stored as "level" only when above 0.
+    /// A paragraph's or list item's nesting (0 at the left; Tab /
+    /// Shift+Tab, the owner's decision): stored as "level" only when above 0.
     pub level: u8,
+    /// Its children hidden (the fold beside it): stored as "folded" only
+    /// when set.
+    pub folded: bool,
 }
 
 /// The deepest a list item nests.
@@ -537,7 +544,10 @@ impl Block {
             _ => {
                 b.text = html_to_src(&s("text"));
                 b.checked = kind == "todo" && v.get("checked").and_then(|x| x.as_bool()).unwrap_or(false);
-                if listy(&kind) { b.level = v.get("level").and_then(|x| x.as_u64()).unwrap_or(0).min(LEVEL_MAX as u64) as u8; }
+                if nesty(&kind) {
+                    b.level = v.get("level").and_then(|x| x.as_u64()).unwrap_or(0).min(LEVEL_MAX as u64) as u8;
+                    b.folded = v.get("folded").and_then(|x| x.as_bool()).unwrap_or(false);
+                }
             }
         }
         b
@@ -555,7 +565,8 @@ impl Block {
     }
 
     fn leveled(&self, mut o: Value) -> Value {
-        if self.level > 0 && listy(&self.kind) { o["level"] = json!(self.level); }
+        if self.level > 0 && nesty(&self.kind) { o["level"] = json!(self.level); }
+        if self.folded && nesty(&self.kind) { o["folded"] = json!(true); }
         o
     }
 
@@ -568,10 +579,125 @@ impl Block {
             "divider" => {}
             _ => nb.text = if self.kind == "code" { runs_to_src(&[Run { text: self.text.clone(), st: Sty::default() }]) } else if self.kind == "table" || self.kind == "divider" { String::new() } else { self.text.clone() },
         }
-        // A list item turned into another list item keeps its nesting.
-        if listy(kind) && listy(&self.kind) { nb.level = self.level; }
+        // A paragraph or list item turned into another keeps its nesting.
+        if nesty(kind) && nesty(&self.kind) { nb.level = self.level; nb.folded = self.folded; }
         nb
     }
+}
+
+// ─── Nesting: a block and its children ───
+
+/// A block's depth (0 for what does not nest).
+pub fn lvl(b: &Block) -> u8 { if nesty(&b.kind) { b.level.min(LEVEL_MAX) } else { 0 } }
+
+/// The end (exclusive) of block i's children: the blocks after it that sit deeper.
+pub fn sub_end(bs: &[Block], i: usize) -> usize {
+    let l = lvl(&bs[i]);
+    let mut j = i + 1;
+    while j < bs.len() && lvl(&bs[j]) > l { j += 1; }
+    j
+}
+
+/// Block i has children.
+pub fn has_kids(bs: &[Block], i: usize) -> bool { i < bs.len() && sub_end(bs, i) > i + 1 }
+
+/// Which blocks are hidden, being under a folded block.
+pub fn hidden(bs: &[Block]) -> Vec<bool> {
+    let mut out = vec![false; bs.len()];
+    for i in 0..bs.len() {
+        if bs[i].folded && nesty(&bs[i].kind) { for h in out.iter_mut().take(sub_end(bs, i)).skip(i + 1) { *h = true; } }
+    }
+    out
+}
+
+/// Blocks lo..=hi with every child of theirs: the last index.
+pub fn with_kids(bs: &[Block], lo: usize, hi: usize) -> usize {
+    if bs.is_empty() { return hi; }
+    (lo..=hi.min(bs.len() - 1)).map(|i| sub_end(bs, i) - 1).max().unwrap_or(hi).max(hi)
+}
+
+/// The nearest block before i that shows.
+pub fn shown_before(bs: &[Block], i: usize) -> Option<usize> {
+    let hid = hidden(bs);
+    (0..i.min(bs.len())).rev().find(|&j| !hid[j])
+}
+
+/// The nearest block after i that shows.
+pub fn shown_after(bs: &[Block], i: usize) -> Option<usize> {
+    let hid = hidden(bs);
+    (i + 1..bs.len()).find(|&j| !hid[j])
+}
+
+/// Tab / Shift+Tab on block i: it and its children one level in (at most
+/// one below the block shown above it, when that nests; a folded one
+/// opens to take it) or one level out. Whether anything changed.
+pub fn nest_at(bs: &mut [Block], i: usize, out: bool) -> bool {
+    if i >= bs.len() || !nesty(&bs[i].kind) { return false; }
+    let end = sub_end(bs, i);
+    let l = lvl(&bs[i]);
+    if out {
+        if l == 0 { return false; }
+        for b in bs[i..end].iter_mut() { if nesty(&b.kind) { b.level = b.level.saturating_sub(1); } }
+        return true;
+    }
+    let p = shown_before(bs, i);
+    let most = match p { Some(j) if nesty(&bs[j].kind) => (lvl(&bs[j]) + 1).min(LEVEL_MAX), _ => 0 };
+    if l >= most { return false; }
+    for b in bs[i..end].iter_mut() { if nesty(&b.kind) { b.level = (b.level + 1).min(LEVEL_MAX); } }
+    if let Some(j) = p { bs[j].folded = false; }
+    true
+}
+
+/// The run starting at s (len blocks) just put there: its first block no
+/// deeper than the block shown above allows (one below it; level with a
+/// folded one, so it lands after the fold, not in it), the rest with it.
+pub fn settle(bs: &mut [Block], s: usize, len: usize) {
+    if s >= bs.len() || len == 0 { return; }
+    let limit = match shown_before(bs, s) {
+        Some(j) if nesty(&bs[j].kind) => if j + 1 < s { lvl(&bs[j]) } else { bs[j].folded = false; (lvl(&bs[j]) + 1).min(LEVEL_MAX) },
+        _ => 0,
+    };
+    let head = lvl(&bs[s]);
+    if head <= limit { return; }
+    let (d, end) = (head - limit, (s + len).min(bs.len()));
+    for b in bs[s..end].iter_mut() { if nesty(&b.kind) { b.level = b.level.saturating_sub(d); } }
+}
+
+/// Blocks lo..=hi with their children one place up or down (Alt+Up /
+/// Alt+Down, the menu's Move up / Move down): up, past the block before
+/// with its children when it is level with them (otherwise just past it);
+/// down, past the next block with its children when it is level with them
+/// or folded (otherwise in under it, first). The run's new start.
+pub fn move_unit(bs: &mut Vec<Block>, lo: usize, hi: usize, up: bool) -> Option<usize> {
+    if hi >= bs.len() || lo > hi { return None; }
+    let end = with_kids(bs, lo, hi) + 1;
+    let l = lvl(&bs[lo]);
+    let len = end - lo;
+    let to = if up {
+        if lo == 0 { return None; }
+        match (0..lo).rev().find(|&j| lvl(&bs[j]) <= l) { Some(j) if lvl(&bs[j]) == l => j, _ => lo - 1 }
+    } else {
+        if end >= bs.len() { return None; }
+        let k = end;
+        let past = if lvl(&bs[k]) == l || (bs[k].folded && has_kids(bs, k)) { sub_end(bs, k) } else { k + 1 };
+        past - len
+    };
+    let run: Vec<Block> = bs.drain(lo..end).collect();
+    for (n, b) in run.into_iter().enumerate() { bs.insert(to + n, b); }
+    settle(bs, to, len);
+    Some(to)
+}
+
+/// Where a new block below block i goes (Enter, the "+"): its index and
+/// depth. Under a block with its children shown, it is the first child;
+/// under a folded one, after its children; otherwise right after it,
+/// level with it.
+pub fn below(bs: &[Block], i: usize) -> (usize, u8) {
+    if i >= bs.len() { return (bs.len(), 0); }
+    let l = lvl(&bs[i]);
+    if has_kids(bs, i) {
+        if bs[i].folded { (sub_end(bs, i), l) } else { (i + 1, (l + 1).min(LEVEL_MAX)) }
+    } else { (i + 1, l) }
 }
 
 pub fn blocks_from(v: &Value) -> Vec<Block> {
@@ -586,8 +712,10 @@ pub fn blocks_from(v: &Value) -> Vec<Block> {
 pub fn numbers(blocks: &[Block]) -> Vec<String> {
     let mut n = [0usize; LEVEL_MAX as usize + 1];
     blocks.iter().map(|b| {
-        let l = (b.level.min(LEVEL_MAX)) as usize;
-        if !listy(&b.kind) { n = [0; LEVEL_MAX as usize + 1]; return String::new(); }
+        let l = lvl(b) as usize;
+        // Anything else ends the counts at its depth and deeper (a nested
+        // paragraph under "1." lets the list go on at "2.").
+        if !listy(&b.kind) { for d in n.iter_mut().skip(l) { *d = 0; } return String::new(); }
         for d in n.iter_mut().skip(l + 1) { *d = 0; }
         if b.kind == "number" { n[l] += 1; format!("{}.", n[l]) } else { n[l] = 0; String::new() }
     }).collect()
@@ -625,6 +753,8 @@ pub fn to_markdown(blocks: &[Block]) -> String {
                 l.extend(rows[1..].iter().map(line));
                 l.join("\n")
             }
+            // A nested paragraph indents two spaces a level, as a list item.
+            "p" if b.level > 0 => { let ind = "  ".repeat(lvl(b) as usize); format!("{ind}{}", rest(&t, &ind)) }
             _ => t,
         });
     }
@@ -1069,7 +1199,93 @@ mod tests {
         assert_eq!(Block::from_json(&j).level, 1);
         assert!(b[0].to_json().get("level").is_none());
         assert_eq!(b[1].converted("todo").level, 1);
-        assert_eq!(b[1].converted("p").level, 0);
+        // A paragraph nests too: a list item turned into one keeps its depth.
+        assert_eq!(b[1].converted("p").level, 1);
+        assert_eq!(b[1].converted("h1").level, 0);
+    }
+
+    /// The tree as "text:level" (a "+" after a folded one), for the tests.
+    fn tree(b: &[Block]) -> String { b.iter().map(|x| format!("{}:{}{}", x.text, x.level, if x.folded { "+" } else { "" })).collect::<Vec<_>>().join(",") }
+    fn page(spec: &[(&str, &str, u8)]) -> Vec<Block> { spec.iter().map(|(k, t, l)| { let mut b = Block::new(k, t); b.level = *l; b }).collect() }
+
+    #[test]
+    fn paragraphs_nest() {
+        let mut b = page(&[("p", "a", 0), ("p", "b", 0), ("h1", "H", 0), ("p", "c", 0)]);
+        assert!(nest_at(&mut b, 1, false), "a paragraph nests under the one above");
+        assert!(!nest_at(&mut b, 1, false), "at most one below the block above");
+        assert!(!nest_at(&mut b, 3, false), "not under a heading");
+        assert!(!nest_at(&mut b, 2, false), "a heading does not nest");
+        assert_eq!(tree(&b), "a:0,b:1,H:0,c:0");
+        let j = b[1].to_json();
+        assert_eq!(j["level"], 1);
+        assert_eq!(Block::from_json(&j).level, 1);
+        assert!(nest_at(&mut b, 1, true));
+        assert_eq!(b[1].level, 0);
+        // A nested paragraph under "1." lets the list go on at "2.".
+        let n = page(&[("number", "a", 0), ("p", "note", 1), ("number", "b", 0)]);
+        assert_eq!(numbers(&n), vec!["1.", "", "2."]);
+        assert_eq!(to_markdown(&n), "1. a\n\n  note\n\n2. b");
+    }
+
+    #[test]
+    fn children_go_with_their_parent() {
+        // Tab and Shift+Tab take the children along.
+        let mut b = page(&[("p", "a", 0), ("p", "b", 0), ("p", "c", 1), ("p", "d", 2), ("p", "e", 0)]);
+        assert_eq!(sub_end(&b, 1), 4);
+        assert!(nest_at(&mut b, 1, false));
+        assert_eq!(tree(&b), "a:0,b:1,c:2,d:3,e:0");
+        assert!(nest_at(&mut b, 1, true));
+        assert_eq!(tree(&b), "a:0,b:0,c:1,d:2,e:0");
+        // Down past a level sibling with its children; up again.
+        let mut b = page(&[("p", "a", 0), ("p", "a1", 1), ("p", "b", 0), ("p", "b1", 1), ("p", "c", 0)]);
+        assert_eq!(move_unit(&mut b, 0, 0, false), Some(2));
+        assert_eq!(tree(&b), "b:0,b1:1,a:0,a1:1,c:0");
+        assert_eq!(move_unit(&mut b, 2, 2, true), Some(0));
+        assert_eq!(tree(&b), "a:0,a1:1,b:0,b1:1,c:0");
+        // A child moved down past its parent's end goes in under the next block, first.
+        let mut b = page(&[("p", "a", 0), ("p", "a1", 1), ("p", "a2", 2), ("p", "b", 0)]);
+        assert_eq!(move_unit(&mut b, 1, 1, false), Some(2));
+        assert_eq!(tree(&b), "a:0,b:0,a1:1,a2:2");
+        // Up past its parent: out to the parent's depth, the children with it.
+        assert_eq!(move_unit(&mut b, 2, 2, true), Some(1));
+        assert_eq!(tree(&b), "a:0,a1:1,a2:2,b:0");
+        let mut b = page(&[("p", "a", 0), ("p", "a1", 1), ("p", "a2", 2)]);
+        assert_eq!(move_unit(&mut b, 1, 1, true), Some(0));
+        assert_eq!(tree(&b), "a1:0,a2:1,a:0");
+        assert_eq!(move_unit(&mut b, 2, 2, false), None, "nothing below the last");
+        // A selection takes its blocks' children too.
+        assert_eq!(with_kids(&page(&[("p", "a", 0), ("p", "a1", 1), ("p", "b", 0)]), 0, 0), 1);
+        // A new block below: the first child of a parent, after a folded one's children.
+        let mut b = page(&[("p", "a", 0), ("p", "a1", 1), ("p", "b", 0)]);
+        assert_eq!(below(&b, 0), (1, 1));
+        assert_eq!(below(&b, 1), (2, 1));
+        b[0].folded = true;
+        assert_eq!(below(&b, 0), (2, 0));
+    }
+
+    #[test]
+    fn folding() {
+        let mut b = page(&[("p", "a", 0), ("bullet", "a1", 1), ("p", "a2", 2), ("p", "b", 0)]);
+        b[0].folded = true;
+        assert_eq!(hidden(&b), vec![false, true, true, false]);
+        let j = b[0].to_json();
+        assert_eq!(j["folded"], true);
+        assert!(Block::from_json(&j).folded);
+        assert!(b[3].to_json().get("folded").is_none());
+        assert_eq!(shown_before(&b, 3), Some(0));
+        assert_eq!(shown_after(&b, 0), Some(3));
+        // Nested under a folded block, it opens.
+        assert!(nest_at(&mut b, 3, false));
+        assert_eq!(tree(&b), "a:0,a1:1,a2:2,b:1");
+        // Moved past a folded block, a block lands after its children, not in them.
+        let mut b = page(&[("p", "x", 0), ("p", "a", 0), ("p", "a1", 1)]);
+        b[1].folded = true;
+        assert_eq!(move_unit(&mut b, 0, 0, false), Some(2));
+        assert_eq!(tree(&b), "a:0+,a1:1,x:0");
+        assert_eq!(move_unit(&mut b, 2, 2, true), Some(0));
+        assert_eq!(tree(&b), "x:0,a:0+,a1:1");
+        // The Markdown has the folded children (folding only hides them).
+        assert_eq!(to_markdown(&b), "x\n\na\n\n  a1");
     }
 
     #[test]

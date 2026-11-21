@@ -798,7 +798,13 @@ impl Sched {
             } else {
                 let mut days = div().flex().gap(T::SP_4);
                 for (i, n) in rules::DAYS.iter().enumerate() {
-                    days = days.child(w::toggle(("sched-day", i), *n, m.days[i]).on_click(cx.listener(move |s, _, _, cx| s.day(i as i64, cx))));
+                    // .sm-day: a 34x32 bordered square; on, tinted (.sm-day.on).
+                    let on = m.days[i];
+                    days = days.child(div().id(("sched-day", i)).w(px(34.)).h(T::SP_32).flex().items_center().justify_center().cursor_pointer()
+                        .rounded(T::R_CONTROL).border_1().border_color(if on { T::accent() } else { T::border() })
+                        .bg(if on { T::accent_dim() } else { T::bg_tertiary() }).text_color(if on { T::accent_hover() } else { T::text_secondary() })
+                        .text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).child(*n)
+                        .on_click(cx.listener(move |s, _, _, cx| s.day(i as i64, cx))));
                 }
                 row = row.child(days);
             }

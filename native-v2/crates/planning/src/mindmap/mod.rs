@@ -172,6 +172,10 @@ pub struct M {
     grab_x: f32,
     grab_y: f32,
     drag_text: String,
+    /// The pointer in the window while dragging (the clone follows it
+    /// at the window's level, over any pane).
+    drag_wx: f32,
+    drag_wy: f32,
     // The idea dialog.
     detail: Option<String>,
     d_open: bool,
@@ -1108,6 +1112,7 @@ pub(crate) fn pointer_move(x: f32, y: f32, window: &mut Window, cx: &mut App) {
         });
         drag_start(&p.id, window, cx);
     }
+    with(cx, |s| { s.drag_wx = x; s.drag_wy = y; });
     drag_move(ux, uy, cx);
     redraw(cx);
 }
@@ -1640,7 +1645,8 @@ pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
     put("sel", json!(s.sel)); put("anchor", json!(s.anchor)); put("saving", json!(s.saving));
     put("collapsed", json!(s.collapsed.iter().collect::<Vec<_>>())); put("hidden", json!(s.hidden.iter().collect::<Vec<_>>()));
     put("ring", ring); put("hover", s.hover.as_ref().map(|h| json!(h.id)).unwrap_or(Value::Null));
-    put("drag", if s.drag_id.is_empty() { Value::Null } else { json!({ "id": s.drag_id }) });
+    // (x, y: the clone's top-left in the window, drawn over every pane.)
+    put("drag", if s.drag_id.is_empty() { Value::Null } else { json!({ "id": s.drag_id, "x": s.drag_wx - s.grab_x * s.zoom, "y": s.drag_wy - s.grab_y * s.zoom }) });
     put("detail", detail); put("link", link); put("help", help);
     put("dialogOpen", json!(s.d_open || s.l_open || s.h_shown));
     put("relayouts", json!(s.relayouts));

@@ -7,9 +7,18 @@
 //! show (a missed push must not leave it behind).
 //!
 //! The web folds the journal with the server's reducer to replay any
-//! moment; this client draws the run from the server's record, and a past
-//! moment from the history up to it. Known gap (as the Slint client): the
-//! replayed moment shows no waits or asks of that time.
+//! moment; so does this client (journal.rs, on the same engine as the Dry
+//! run): a past moment shows its tokens (who was working, waiting, asked),
+//! its asks and its history as they were then. Live, it draws the run from
+//! the server's record.
+//!
+//! What ticks while on show: the run's duration with the poll (every 3 s,
+//! as the web's re-render on each poll) and a Wait's countdown every second
+//! (the web's WaitCard), each drawing only when its words change.
+//!
+//! A person's transcript is their live chat (the web's /chat/<id> page in a
+//! frame): the chat area's log and box (crundi_chat), on a store of its own
+//! that this area subscribes and feeds from the live events (`route_chat`).
 
 use super::model::{self, arr, b, n, s, truthy, Rect};
 use super::parts::{self, btn, kv, note, AskRow, Edge, Kv, Node, Opt, Out, StepRow, Tl, Wait, Worker};
@@ -66,6 +75,11 @@ pub(crate) struct V {
     findings_open: bool,
     /// The poll while the graph is on show (F52): none while it is hidden.
     timer: Option<Task<()>>,
+    /// A Wait's countdown (every second) while one is on show, live.
+    wait_timer: Option<Task<()>>,
+    /// The journal folded (journal.rs): recs[i] is the run after i events
+    /// (recs[0] none), made as far as a replay asked.
+    recs: Vec<Value>,
     z: f32, px: f32, py: f32, cw: f32, ch: f32,
     fitted: bool,
     active_key: String,
@@ -96,7 +110,6 @@ pub(crate) fn blank() -> V { V { z: 1.0, tab: "run".into(), ..Default::default()
 fn with<R>(cx: &mut App, f: impl FnOnce(&mut V) -> R) -> R { super::with_fx(cx, |x| f(&mut x.v)) }
 /// While drawing: the graph's state and the tab's, from the store being drawn.
 fn rv<R>(fx: &mut Fx, f: impl FnOnce(&mut V) -> R) -> R { f(&mut fx.v) }
-fn rf<R>(fx: &mut Fx, f: impl FnOnce(&mut super::F) -> R) -> R { f(&mut fx.f) }
 
 /// Every few seconds while the graph is on show (ACTIVITY_MS): a missed push
 /// must not leave it behind. The poll runs only while the graph shows (F52):
@@ -109,10 +122,61 @@ pub fn sync_timer(cx: &mut App) {
     if !on { with(cx, |v| v.timer = None); return; }
     let t = cx.spawn(async move |cx: &mut AsyncApp| loop {
         cx.background_executor().timer(std::time::Duration::from_millis(3000)).await;
-        let go = cx.update(|cx| { if showing(cx) { fetch(cx); true } else { with(cx, |v| v.timer = None); false } });
+        let go = cx.update(|cx| { if showing(cx) { tick_progress(cx); fetch(cx); true } else { with(cx, |v| { v.timer = None; v.wait_timer = None; }); false } });
         if !go { break; }
     });
     with(cx, |v| v.timer = Some(t));
+}
+
+/// The run's duration as the web's progress line reads it now (Date.now()
+/// at each poll's re-render): drawn again only when its words changed.
+fn tick_progress(cx: &mut App) {
+    let changed = with(cx, |v| {
+        let Some(run) = v.run.as_ref() else { return false };
+        if v.ui.state != "ok" { return false; }
+        let p = model::progress(run, model::now_ms());
+        if p == v.ui.progress { return false; }
+        v.ui.progress = p;
+        true
+    });
+    if changed { super::bump(cx); }
+}
+
+/// The Waits in progress as the run pane shows them (WaitCard), at `now`.
+fn waits_of(run: &Value, now: f64, base: &str) -> Vec<Wait> {
+    arr(run, "tokens").iter().filter(|t| t.get("wait").map(|w| w.is_object()).unwrap_or(false)).map(|t| {
+        let w = &t["wait"];
+        let two = { let k = s(w, "kind"); k == "command" || k == "signal" };
+        let sp = s(w, "signalPath");
+        Wait { token: s(t, "id"), head: model::wait_head(t, now, false), gives: if two { format!("Gives up in {}.", model::left(&s(w, "timeoutAt"), now)) } else { String::new() },
+            last: if s(w, "kind") == "command" { s(w, "last") } else { String::new() }, url: if sp.is_empty() { String::new() } else { format!("{base}{sp}") }, two }
+    }).collect()
+}
+
+/// A Wait's countdown ticks every second while one shows, live (WaitCard's
+/// interval); no timer otherwise. Drawn only when its words change.
+fn sync_wait_timer(cx: &mut App) {
+    let want = showing(cx) && with(cx, |v| v.at.is_none() && !v.waits.is_empty());
+    let has = with(cx, |v| v.wait_timer.is_some());
+    if want == has { return; }
+    if !want { with(cx, |v| v.wait_timer = None); return; }
+    let t = cx.spawn(async move |cx: &mut AsyncApp| loop {
+        cx.background_executor().timer(std::time::Duration::from_millis(1000)).await;
+        let go = cx.update(|cx| {
+            if !showing(cx) || with(cx, |v| v.at.is_some() || v.waits.is_empty()) { with(cx, |v| v.wait_timer = None); return false; }
+            let changed = with(cx, |v| {
+                let Some(run) = v.run.as_ref() else { return false };
+                let now = waits_of(run, model::now_ms(), &v.base);
+                if now == v.waits { return false; }
+                v.waits = now;
+                true
+            });
+            if changed { super::bump(cx); }
+            true
+        });
+        if !go { break; }
+    });
+    with(cx, |v| v.wait_timer = Some(t));
 }
 
 pub fn reset(cx: &mut App) { with(cx, |v| *v = blank()); }
@@ -142,7 +206,7 @@ pub fn open(id: &str, panel: bool, cx: &mut App) {
 }
 
 pub fn close(cx: &mut App) {
-    with(cx, |v| { v.open = false; v.chat = None; v.ui.chat = false; v.timer = None; });
+    with(cx, |v| { v.open = false; v.chat = None; v.ui.chat = false; v.timer = None; v.wait_timer = None; });
 }
 
 /// The journal (only what is new) and the run's record, then drawn.
@@ -170,7 +234,7 @@ pub fn fetch(cx: &mut App) {
             if b(e, "ok") {
                 let evs = arr(e, "events");
                 if !evs.is_empty() && n(e, "from") as usize == v.events.len() { v.events.extend(evs.iter().cloned()); }
-                else if (n(e, "total") as usize) < v.events.len() { v.events.clear(); again = true; }
+                else if (n(e, "total") as usize) < v.events.len() { v.events.clear(); v.recs.clear(); again = true; }
             }
         });
         if with(cx, |v| (v.run.clone(), v.events.len(), v.state.clone(), v.error.clone())) != before {
@@ -188,10 +252,6 @@ fn names_of(f: &Value) -> HashMap<String, String> { arr(f, "roster").iter().map(
 /// The history's handoffs, oldest first.
 fn handoffs(history: &[Value]) -> Vec<&Value> { history.iter().filter(|h| s(h, "type") == "handoff").collect() }
 
-/// How many of the journal's first `n` events were handoffs that moved the work.
-fn handoffs_in(events: &[Value], n: usize) -> usize {
-    events.iter().take(n).filter(|e| s(e, "type") == "handoff" && !b(&e["payload"], "escalate")).count()
-}
 
 /// Edge use, from the order the steps handed off in.
 fn edge_counts(f: &Value, seq: &[String], active: &[String]) -> HashMap<String, i64> {
@@ -212,26 +272,38 @@ pub fn build(cx: &mut App) {
     }
     let now = model::now_ms();
     let (run, events, at, sel, tab, panel, busy) = with(cx, |v| (v.run.clone().unwrap_or(Value::Null), v.events.clone(), v.at, v.sel.clone(), v.tab.clone(), v.panel, v.busy));
-    let f = run.get("snapshot").cloned().unwrap_or(json!({ "nodes": [], "edges": [], "roster": [] }));
-    let history: Vec<Value> = arr(&run, "history").to_vec();
-    let names = names_of(&f);
-    let nodes_by: HashMap<String, Value> = arr(&f, "nodes").iter().map(|x| (s(x, "id"), x.clone())).collect();
     let total = events.len();
     let nn = at.unwrap_or(total).min(total);
     let live = at.is_none();
+    // A past moment: the journal folded up to it (the web's recs[n]).
+    let rec = if live { Value::Null } else { with(cx, |v| {
+        if v.recs.is_empty() { v.recs.push(Value::Null); }
+        while v.recs.len() <= nn {
+            let i = v.recs.len();
+            let next = super::journal::reduce(if v.recs[i - 1].is_null() { None } else { Some(&v.recs[i - 1]) }, &v.events[i - 1]);
+            v.recs.push(next);
+        }
+        v.recs[nn].clone()
+    }) };
+    let f = if !live && rec["state"]["snapshot"].is_object() { rec["state"]["snapshot"].clone() } else { run.get("snapshot").cloned().unwrap_or(json!({ "nodes": [], "edges": [], "roster": [] })) };
+    let history: Vec<Value> = if live { arr(&run, "history").to_vec() } else { arr(&rec["state"], "history").to_vec() };
+    let names = names_of(&f);
+    let nodes_by: HashMap<String, Value> = arr(&f, "nodes").iter().map(|x| (s(x, "id"), x.clone())).collect();
     let status = s(&run, "status");
     let quiet = ["crashed", "paused", "stopped", "finished"].contains(&status.as_str());
 
     let hs = handoffs(&history);
-    let k = if live { hs.len() } else { handoffs_in(&events, nn).min(hs.len()) };
-    let done: Vec<&Value> = hs.iter().take(k).copied().collect();
-    let tokens: Vec<Value> = if live { arr(&run, "tokens").to_vec() } else { hs.get(k).map(|h| vec![json!({ "id": "replay", "nodeId": s(h, "nodeId"), "status": "work" })]).unwrap_or_default() };
+    let done: Vec<&Value> = hs.clone();
+    // Live, the server's tokens; a past moment, that moment's (the fold's).
+    let tokens: Vec<Value> = if live { arr(&run, "tokens").to_vec() } else { arr(&rec["state"], "tokens").to_vec() };
     let mut tokens_at: HashMap<String, Vec<Value>> = HashMap::new();
     for t in &tokens { if !s(t, "nodeId").is_empty() && s(t, "job").is_empty() { tokens_at.entry(s(t, "nodeId")).or_default().push(t.clone()); } }
     let visited: HashSet<String> = done.iter().map(|h| s(h, "nodeId")).collect();
     let mut skills_at: HashMap<String, Vec<String>> = HashMap::new();
     for h in &done { for k2 in arr(h, "skills") { if let Some(x) = k2.as_str() { let e = skills_at.entry(s(h, "nodeId")).or_default(); if !e.iter().any(|y| y == x) { e.push(x.to_string()); } } } }
     let employees = run.get("employees").cloned().unwrap_or(json!({}));
+    // Who was stopped for now: live, the server's; a past moment, the fold's.
+    let retired_of = |who: &str| if live { b(&employees[who], "retired") } else { b(&rec["run"]["retired"], who) };
 
     let mut out_nodes: Vec<Node> = vec![];
     let mut rects: Vec<(String, Rect)> = vec![];
@@ -285,7 +357,7 @@ pub fn build(cx: &mut App) {
         out_nodes.push(Node {
             id: id.clone(), kind: ty.clone(), kind_label: model::kind_label(&ty).to_uppercase(), title: model::node_title(node, &f), body: body.clone(), lines,
             x, y, w, h, sel: sel == id, bad: false, active: !toks.is_empty(), visited: visited.contains(&id) && toks.is_empty(),
-            retired: !who.is_empty() && b(&employees[who.as_str()], "retired"), badge: 0, badge_level: String::new(), token, token_kind,
+            retired: !who.is_empty() && retired_of(&who), badge: 0, badge_level: String::new(), token, token_kind,
             doing, doing_who, doing_text, doing_busy, skills,
             outs: outs.iter().map(|h2| Out { id: h2.clone(), label: model::handle_label(node, h2), finish: h2 == "finish" }).collect(),
             agent: model::is_agent(&ty), has_in: ty != "start", doing_chat: doing_chat_of,
@@ -297,7 +369,7 @@ pub fn build(cx: &mut App) {
     let seq: Vec<String> = done.iter().map(|h| s(h, "nodeId")).collect();
     let active_ids: Vec<String> = tokens_at.keys().cloned().collect();
     let counts = edge_counts(&f, &seq, &active_ids);
-    let finished = !run.get("outcome").map(|o| o.is_null()).unwrap_or(true) && live;
+    let finished = if live { !run.get("outcome").map(|o| o.is_null()).unwrap_or(true) } else { truthy(&rec["state"]["outcome"]) };
     let prev = with(cx, |v| std::mem::replace(&mut v.counts, counts.clone()));
     let pulse: HashSet<String> = counts.iter().filter(|(k2, c)| **c > prev.get(*k2).copied().unwrap_or(0) && !prev.is_empty()).map(|(k2, _)| k2.clone()).collect();
     let lanes = model::lanes(&f);
@@ -360,7 +432,7 @@ pub fn build(cx: &mut App) {
         with(cx, |v| { v.z = z; v.px = px; v.py = py; v.fitted = true; v.active_key = active_key.clone(); });
     } else { with(cx, |v| v.active_key = active_key.clone()); }
 
-    let (kv, asks, waits, findings, steps, timeline, working, mut vx) = side(cx, &run, &f, &history, &events, nn, live, &sel, &names, &nodes_by, &tokens, now, panel);
+    let (kv, asks, waits, findings, steps, timeline, working, mut vx) = side(cx, &run, &rec, &f, &history, &events, nn, live, &sel, &names, &nodes_by, &tokens, now, panel);
     vx.tab = tab;
     vx.busy = busy;
     vx.bx = bounds.x; vx.by = bounds.y; vx.bw = bounds.w; vx.bh = bounds.h;
@@ -368,10 +440,11 @@ pub fn build(cx: &mut App) {
         vx.zoom = v.z; vx.pan_x = v.px; vx.pan_y = v.py;
         v.ui = vx; v.nodes = out_nodes; v.edges = out_edges; v.kv = kv; v.asks = asks; v.waits = waits; v.findings = findings; v.steps = steps; v.timeline = timeline; v.working = working;
     });
+    sync_wait_timer(cx);
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn side(cx: &mut App, run: &Value, f: &Value, history: &[Value], events: &[Value], nn: usize, live: bool, sel: &str, names: &HashMap<String, String>, nodes_by: &HashMap<String, Value>, tokens: &[Value], now: f64, panel: bool)
+fn side(cx: &mut App, run: &Value, rec: &Value, f: &Value, history: &[Value], events: &[Value], nn: usize, live: bool, sel: &str, names: &HashMap<String, String>, nodes_by: &HashMap<String, Value>, tokens: &[Value], now: f64, panel: bool)
     -> (Vec<Kv>, Vec<AskRow>, Vec<Wait>, Vec<String>, Vec<StepRow>, Vec<Tl>, Vec<Worker>, Vx) {
     let st = s(run, "status");
     let quiet = ["crashed", "paused", "stopped", "finished"].contains(&st.as_str());
@@ -409,7 +482,9 @@ fn side(cx: &mut App, run: &Value, f: &Value, history: &[Value], events: &[Value
     }
     if live { for x in arr(run, "waitingForSeat") { working.push(Worker { id: s(x, "tokenId"), name: s(x, "employee"), what: "Waiting its turn".into(), queued: true, ..Default::default() }); } }
 
-    let mut kv = vec![Kv { k: "Task".into(), v: s(run, "task") }, Kv { k: "Handoffs".into(), v: (n(run, "handoffs") as i64).to_string() }];
+    // Task and Handoffs as of the moment shown (the web's rec.state).
+    let at_run = if live { run } else { &rec["state"] };
+    let mut kv = vec![Kv { k: "Task".into(), v: s(at_run, "task") }, Kv { k: "Handoffs".into(), v: (n(at_run, "handoffs") as i64).to_string() }];
     if !s(run, "branch").is_empty() { kv.push(Kv { k: "Branch".into(), v: s(run, "branch") }); }
     if live && run.get("liveSessions").map(|x| !x.is_null()).unwrap_or(false) { kv.push(Kv { k: "Sessions".into(), v: format!("{} live", n(run, "liveSessions") as i64) }); }
     let u = &run["usage"];
@@ -426,14 +501,11 @@ fn side(cx: &mut App, run: &Value, f: &Value, history: &[Value], events: &[Value
     }
     vx.manager_talks = live && s(run, "waitingOn") == "manager";
     vx.manager_chat = live && !s(run, "managerChatId").is_empty();
-    let asks: Vec<AskRow> = if live { arr(run, "asks").iter().map(|a| AskRow { token: s(a, "tokenId"), prompt: s(a, "prompt"), replies: arr(a, "replies").iter().map(|r| Opt { id: s(r, "id"), label: s(r, "label") }).collect() }).collect() } else { vec![] };
-    let waits: Vec<Wait> = if live { arr(run, "tokens").iter().filter(|t| t.get("wait").map(|w| w.is_object()).unwrap_or(false)).map(|t| {
-        let w = &t["wait"];
-        let two = { let k = s(w, "kind"); k == "command" || k == "signal" };
-        let sp = s(w, "signalPath");
-        Wait { token: s(t, "id"), head: model::wait_head(t, now, false), gives: if two { format!("Gives up in {}.", model::left(&s(w, "timeoutAt"), now)) } else { String::new() },
-            last: if s(w, "kind") == "command" { s(w, "last") } else { String::new() }, url: if sp.is_empty() { String::new() } else { format!("{base}{sp}") }, two }
-    }).collect() } else { vec![] };
+    // The questions: live, the server's; a past moment, that moment's
+    // (asksOf), drawn without the replies to pick (the run pane's `live`).
+    let ask_list: Vec<Value> = if live { arr(run, "asks").to_vec() } else { super::journal::asks_of(rec) };
+    let asks: Vec<AskRow> = ask_list.iter().map(|a| AskRow { token: s(a, "tokenId"), prompt: s(a, "prompt"), replies: arr(a, "replies").iter().map(|r| Opt { id: s(r, "id"), label: s(r, "label") }).collect() }).collect();
+    let waits: Vec<Wait> = if live { waits_of(run, now, &base) } else { vec![] };
     let fl = arr(run, "findings");
     let (fh, flines) = model::findings(fl, true);
     vx.findings = if fl.is_empty() { String::new() } else { fh };
@@ -449,7 +521,7 @@ fn side(cx: &mut App, run: &Value, f: &Value, history: &[Value], events: &[Value
         let chat_id = if live { if who == "manager" { s(run, "managerChatId") } else if !who.is_empty() { s(&employees[who.as_str()], "chatId") } else { String::new() } } else { String::new() };
         let visits: Vec<&Value> = history.iter().filter(|h| s(h, "type") == "handoff" && s(h, "nodeId") == sel).collect();
         let toks: Vec<&Value> = tokens.iter().filter(|t| s(t, "nodeId") == sel).collect();
-        let retired = !who.is_empty() && b(&employees[who.as_str()], "retired");
+        let retired = !who.is_empty() && if live { b(&employees[who.as_str()], "retired") } else { b(&rec["run"]["retired"], &who) };
         vx.sel = sel.to_string();
         vx.sel_title = { let l = s(node, "label"); if !l.is_empty() { l } else if let Some(p) = &person { s(p, "name") } else { s(node, "type") } };
         vx.who = person.as_ref().map(|p| { let m = s(p, "model"); format!("{}{}", s(p, "name"), if m.is_empty() { String::new() } else { format!(" · {m}") }) }).unwrap_or_default();
@@ -530,23 +602,33 @@ pub fn pane_click(cx: &mut App) { if with(cx, |v| !v.sel.is_empty()) { with(cx, 
 
 // ─── People ───
 
+/// The panel's transcript over the graph, on this chat (the driver's).
+pub fn open_transcript_here(chat: &str, name: &str, cx: &mut App) {
+    with(cx, |v| v.chat = Some((chat.to_string(), name.to_string())));
+    build(cx);
+}
+
 /// A person's transcript: inside the panel, or the host's sheet.
 fn open_person(chat: &str, name: &str, cx: &mut App) {
     if chat.is_empty() { return; }
-    if with(cx, |v| v.panel) {
+    // (A chat that is a pane of the workbench, the Manager's, is that pane:
+    // the chat area's views are made once per chat.)
+    if with(cx, |v| v.panel) && !in_workbench(chat, cx) {
         with(cx, |v| v.chat = Some((chat.to_string(), name.to_string())));
-        load_transcript(chat, cx);
         build(cx);
         return;
     }
     open_chat(chat, name, cx);
 }
 
+fn in_workbench(chat: &str, cx: &mut App) -> bool {
+    crundi_shell::stores(cx).projects.read(cx).terminals.iter().any(|t| s(t, "id") == chat && s(t, "kind") == "ui")
+}
+
 /// openChat(): the Manager's chat is in the workbench; anyone else's opens as a sheet.
 pub fn open_chat(chat: &str, name: &str, cx: &mut App) {
     if chat.is_empty() { return; }
-    let in_workbench = crundi_shell::stores(cx).projects.read(cx).terminals.iter().any(|t| s(t, "id") == chat && s(t, "kind") == "ui");
-    if in_workbench {
+    if in_workbench(chat, cx) {
         // The workbench, on that chat's pane.
         crate::util::show_tab(cx, "workbench");
         let key = format!("live:{chat}");
@@ -554,24 +636,110 @@ pub fn open_chat(chat: &str, name: &str, cx: &mut App) {
         return;
     }
     fwith(cx, |s2| { s2.chat = Some((chat.to_string(), name.to_string())); s2.chat_name = if name.is_empty() { "Chat".into() } else { name.to_string() }; s2.chat_open = true; });
-    load_transcript(chat, cx);
+    super::bump(cx);
 }
 
-pub fn load_transcript(chat: &str, cx: &mut App) {
-    fwith(cx, |f| f.chat_state = "loading".into());
-    parts::get(cx, format!("/api/ui-sessions/{}/history", parts::enc(chat)), move |r, cx| {
-        if !b(&r, "ok") { fwith(cx, |f| f.chat_state = "error".into()); return; }
-        let lines: Vec<Kv> = arr(&r["session"], "messages").iter().rev().take(300).collect::<Vec<_>>().into_iter().rev().filter_map(|m| {
-            let kind = s(m, "kind");
-            match kind.as_str() {
-                "user" => Some(Kv { k: "user".into(), v: s(m, "text") }),
-                "assistant-text" | "result" | "error" => { let t = s(m, "text"); (!t.is_empty()).then(|| Kv { k: "claude".into(), v: t }) }
-                "tool" => Some(Kv { k: "tool".into(), v: format!("{} {}", s(m, "name"), model::first(&m.get("input").map(|i| { let c = s(i, "command"); if !c.is_empty() { c } else { let p = s(i, "file_path"); if !p.is_empty() { p } else { i.to_string() } } }).unwrap_or_default(), 160)) }),
-                _ => None,
-            }
-        }).collect();
-        fwith(cx, |f| { f.chat_lines = lines; f.chat_state = "ok".into(); });
+// ─── A person's live chat (the web's /chat/<id> page in a frame) ───
+
+/// A transcript on show: the chat's own store (subscribed by this area and
+/// fed from the live events, `route_chat`), the chat area's log and box over
+/// it, and the page's header.
+pub struct ChatView {
+    pub id: String,
+    pub pane: crundi_chat::pane::ChatPane,
+    head: Entity<ChatHead>,
+    /// The chat area held this chat too when it was made (it unsubscribes
+    /// the chat when it lets go of it; then this area subscribes again).
+    shared: bool,
+}
+
+/// The chats a transcript shows now: the panel's (over the graph), the tab's sheet.
+fn wanted_chats(fx: &Fx) -> Vec<String> {
+    let mut out = vec![];
+    if fx.v.open && fx.v.panel && let Some((id, _)) = &fx.v.chat { out.push(id.clone()); }
+    if fx.f.chat_open && let Some((id, _)) = &fx.f.chat && !out.contains(id) { out.push(id.clone()); }
+    out
+}
+
+/// Transcripts no longer on show let go of their chat (from a handler: the
+/// store's `bump`). Unsubscribed unless the chat area holds it too.
+pub(crate) fn release_chats(cx: &mut App) {
+    let gone: Vec<String> = super::with_fx(cx, |fx| {
+        let want = wanted_chats(fx);
+        let gone: Vec<String> = fx.f.chats.iter().filter(|c| !want.contains(&c.id)).map(|c| c.id.clone()).collect();
+        fx.f.chats.retain(|c| want.contains(&c.id));
+        gone
     });
+    for id in gone { if crundi_chat::find(cx, &id).is_none() { crundi_shell::unsubscribe(cx, &id); } }
+}
+
+/// The frame's messages for the chats on show (ui-history, ui-event), in one
+/// update per chat; a chat the chat area let go of is subscribed again.
+pub(crate) fn route_chat(batch: &[crundi_core::live::Event], cx: &mut App) {
+    let stores: Vec<(String, Entity<crundi_chat::store::ChatStore>)> = super::with_fx(cx, |fx| fx.f.chats.iter().map(|c| (c.id.clone(), c.pane.store.clone())).collect());
+    if stores.is_empty() { return; }
+    for (id, st) in &stores {
+        let msgs: Vec<Value> = batch.iter().filter_map(|e| match e {
+            crundi_core::live::Event::Chat(m) if m.get("id").and_then(|i| i.as_str()).or_else(|| m.pointer("/session/id").and_then(|i| i.as_str())) == Some(id.as_str()) => Some(m.clone()),
+            _ => None,
+        }).collect();
+        if !msgs.is_empty() { st.update(cx, |s2, cx| s2.apply_batch(&msgs, cx)); }
+    }
+    // The chat area unsubscribes a chat it drops (its pane closed): ours
+    // stays subscribed.
+    if batch.iter().any(|e| matches!(e, crundi_core::live::Event::State(_))) {
+        let gone: Vec<String> = stores.iter().map(|(id, _)| id.clone()).filter(|id| crundi_chat::find(cx, id).is_none()).collect();
+        for id in gone {
+            let was_shared = super::with_fx(cx, |fx| fx.f.chats.iter_mut().find(|c| c.id == id).map(|c| std::mem::replace(&mut c.shared, false)).unwrap_or(false));
+            if was_shared { crundi_shell::subscribe(cx, &id); }
+        }
+    }
+}
+
+/// The chat's view for a transcript, made (and subscribed) the first time.
+fn chat_of(fx: &mut Fx, id: &str, back: &'static str, project: &str, window: &mut Window, cx: &mut Context<Fx>) -> (crundi_chat::pane::ChatPane, Entity<ChatHead>) {
+    if let Some(c) = fx.f.chats.iter().find(|c| c.id == id) {
+        let (pane, head) = (c.pane.clone(), c.head.clone());
+        head.update(cx, |h, cx| if h.back != back || h.project != project { h.back = back; h.project = project.to_string(); cx.notify(); });
+        return (pane, head);
+    }
+    let store = cx.new(|cx| crundi_chat::store::ChatStore::new(id, cx));
+    let mut pane = crundi_chat::pane::ChatPane::new(store.clone(), window, cx);
+    // Mini lives in the workbench's chats, not here.
+    pane.mini = None;
+    crundi_chat::mini::detach(id, cx);
+    let meta = store.read(cx).meta.clone();
+    let head = cx.new(|cx| ChatHead { meta: meta.clone(), back, project: project.to_string(), _sub: cx.observe(&meta, |_, _, cx| cx.notify()) });
+    // The server replays the conversation on subscribe (ui-history).
+    crundi_shell::subscribe(cx, id);
+    let shared = crundi_chat::find(cx, id).is_some();
+    fx.f.chats.push(ChatView { id: id.to_string(), pane: pane.clone(), head: head.clone(), shared });
+    (pane, head)
+}
+
+/// The chat page's header (#cp-head): back, the project's mark, the chat's
+/// title and, under it, its state's dot, the project and the state's word.
+pub struct ChatHead { meta: Entity<crundi_chat::store::ChatMeta>, back: &'static str, project: String, _sub: Subscription }
+impl Render for ChatHead {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let m = &self.meta.read(cx).0;
+        let title = if m.title.is_empty() { "Chat".to_string() } else { m.title.clone() };
+        let word = match m.state.as_str() { "working" => "Working", "needs-input" => "Needs you", "waiting" => "Waiting", "idle" => "Ready", _ => "" };
+        let sub = format!("{}{}{}", self.project, if !word.is_empty() && !self.project.is_empty() { " · " } else { "" }, word);
+        let dot = match m.state.as_str() { "working" => T::amber(), "needs-input" => T::accent_hover(), "idle" => T::green(), _ => T::text_muted() };
+        let back = self.back;
+        div().flex().flex_none().items_center().gap(T::SP_10).px(T::SP_10).py(T::SP_8).bg(T::bg_secondary()).border_b_1().border_color(T::border_subtle())
+            .child(div().id("fx-cp-back").flex_none().size(T::SP_32 + T::SP_6).rounded_full().flex().items_center().justify_center().cursor_pointer()
+                .text_color(T::text_secondary()).active(|s| s.bg(T::bg_hover())).child(w::icon(IconName::ArrowLeft, T::SP_20))
+                .on_click(move |_, _, cx| fact(back, "", "", cx)))
+            .child(div().flex_none().size(T::SP_32 + T::SP_6).rounded(T::R_BUBBLE).bg(T::bg_tertiary()).flex().items_center().justify_center()
+                .text_size(T::TEXT_15).font_weight(T::W_BOLD).text_color(T::white()).child(crundi_core::head::project_initials(&self.project)))
+            .child(div().flex().flex_col().flex_1().min_w_0()
+                .child(div().truncate().text_size(T::TEXT_15).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(title))
+                .child(div().flex().items_center().gap(T::SP_6).min_w_0().text_size(T::TEXT_12).text_color(T::text_secondary())
+                    .child(div().flex_none().size(px(7.)).rounded_full().bg(dot))
+                    .child(div().truncate().child(sub))))
+    }
 }
 
 // ─── Actions ───
@@ -656,6 +824,18 @@ pub fn edit(cx: &mut App, form: &str, k: &str, v: &str) {
 }
 
 pub fn props(cx: &mut App) -> Value {
+    // The transcripts' conversations, as their stores hold them (rows, entries, state).
+    let chats: Vec<Value> = super::with_fx(cx, |fx| fx.f.chats.iter().map(|c| (c.id.clone(), c.pane.store.clone())).collect::<Vec<_>>()).into_iter().map(|(id, st)| {
+        let s2 = st.read(cx);
+        let m = &s2.meta.read(cx).0;
+        json!({ "id": id, "rows": s2.rows.len(), "batches": s2.batches, "title": m.title, "state": m.state })
+    }).collect();
+    let mut o = props_of(cx);
+    o["transcript"]["stores"] = json!(chats);
+    o
+}
+
+fn props_of(cx: &mut App) -> Value {
     super::with_fx(cx, |fx| {
         let v = &mut fx.v;
         let u = &v.ui;
@@ -675,7 +855,9 @@ pub fn props(cx: &mut App) -> Value {
             "timeline": v.timeline.iter().map(|t| json!({ "i": t.i, "main": t.main, "sub": t.sub, "k": t.k })).collect::<Vec<_>>(),
             "asks": v.asks.iter().map(|a| a.prompt.clone()).collect::<Vec<_>>(),
             "waits": v.waits.iter().map(|w| w.head.clone()).collect::<Vec<_>>(),
-            "transcript": (|f: &super::F| json!({ "open": f.chat_open || v.chat.is_some(), "name": v.chat.as_ref().map(|c| c.1.clone()).unwrap_or_else(|| f.chat_name.clone()), "state": f.chat_state, "lines": f.chat_lines.len() }))(&fx.f),
+            "transcript": (|f: &super::F| json!({ "open": f.chat_open || v.chat.is_some(), "name": v.chat.as_ref().map(|c| c.1.clone()).unwrap_or_else(|| f.chat_name.clone()),
+                "chat": v.chat.as_ref().or(f.chat.as_ref()).map(|c| c.0.clone()).unwrap_or_default(), "views": f.chats.iter().map(|c| c.id.clone()).collect::<Vec<_>>() }))(&fx.f),
+            "waitTimer": v.wait_timer.is_some(),
         });
         if let (Value::Object(a), Value::Object(b)) = (&mut o, lists) { a.extend(b); }
         o
@@ -761,6 +943,12 @@ pub fn render(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElem
         }
         col = col.child(row);
     }
+    // The transcript over the graph (.ff-chatover): the graph under it is
+    // not drawn (a streamed reply then redraws the panel without it).
+    if chat_over {
+        let id = rv(fx, |v| v.chat.as_ref().map(|c| c.0.clone()).unwrap_or_default());
+        return col.child(div().relative().flex().flex_col().flex_1().min_h_0().bg(T::bg()).child(transcript_body(fx, &id, "v-chat-close", window, cx))).into_any_element();
+    }
     let cv = parts::canvas_view(&mut fx.p, cx.entity(), parts::Canvas { which: "v", nodes, edges, zoom: z, pan_x: px, pan_y: py, editable: false, minimap: !panel, controls_top: false, bounds: (u.bx, u.by, u.bw, u.bh), conn: None, cb: calls() }, window, cx);
     let column = !panel && width < T::FACTORIES_NARROW;
     let mut bodyd = div().relative().flex().flex_1().min_h_0();
@@ -778,7 +966,6 @@ pub fn render(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElem
             .on_scroll(|_, _, cx| cx.stop_propagation())
             .child(side_view(&u, fx, window, cx)));
     }
-    if chat_over { bodyd = bodyd.child(div().absolute().top_0().left_0().size_full().bg(T::bg()).flex().flex_col().child(transcript_body(fx))); }
     col = col.child(bodyd);
     if !panel && u.events > 1 { col = col.child(replay(&u)); }
     col.into_any_element()
@@ -914,21 +1101,17 @@ fn replay(u: &Vx) -> AnyElement {
         .into_any_element()
 }
 
-/// A person's transcript, read-only (the web shows the chat page in a frame).
-pub fn transcript_body(fx: &mut Fx) -> AnyElement {
-    let (state, lines) = rf(fx, |f| (f.chat_state.clone(), f.chat_lines.clone()));
-    match state.as_str() {
-        "loading" | "" => w::loading("Loading…").into_any_element(),
-        "error" => div().p(T::SP_16).child(note("err", "Could not load the chat.")).into_any_element(),
-        _ => {
-            let mut d = div().id("fx-transcript").flex().flex_col().flex_1().min_h_0().overflow_y_scroll().p(T::SP_12).gap(T::SP_10);
-            if lines.is_empty() { d = d.child(note("note", "Nothing in this chat yet.")); }
-            for l in &lines {
-                d = d.child(div().flex().flex_col().min_w_0().overflow_hidden().gap(T::SP_2).p(T::SP_8).rounded(T::R_FIELD).bg(if l.k == "user" { T::accent_dim() } else { T::bg_card() })
-                    .child(div().text_size(T::TEXT_10).text_color(T::text_muted()).child(match l.k.as_str() { "user" => "PROMPT", "tool" => "TOOL", _ => "CLAUDE" }))
-                    .child(div().text_size(T::TEXT_12).text_color(if l.k == "tool" { T::text_secondary() } else { T::text() }).when(l.k == "tool", |d| d.font_family(T::MONO)).child(l.v.clone())));
-            }
-            d.into_any_element()
-        }
-    }
+/// A person's transcript: their live chat, as the web's chat page in a
+/// frame (its header; the conversation as the workbench draws it, Markdown
+/// and all, live; the message box). `back` is the header's back arrow's
+/// action (the panel's "back to the graph", the sheet's close).
+pub fn transcript_body(fx: &mut Fx, chat: &str, back: &'static str, window: &mut Window, cx: &mut Context<Fx>) -> AnyElement {
+    if chat.is_empty() { return div().into_any_element(); }
+    let project = { let p = fx.v.run.as_ref().map(|r| s(r, "project")).unwrap_or_default(); if p.is_empty() { fx.f.panel.project.clone() } else { p } };
+    let (pane, head) = chat_of(fx, chat, back, &project, window, cx);
+    // (#cp-head: 8 px above and below a 38 px button.)
+    div().id("fx-transcript").flex().flex_col().flex_1().min_h_0().size_full()
+        .child(head.cached(StyleRefinement::default().w_full().h(T::SP_32 + T::SP_6 + T::SP_16).flex_none()))
+        .child(div().flex().flex_col().flex_1().min_h_0().child(pane.body(cx)))
+        .into_any_element()
 }

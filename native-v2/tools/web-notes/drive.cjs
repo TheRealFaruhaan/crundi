@@ -51,9 +51,9 @@ app.whenReady().then(async () => {
   ok('Enter on an empty nested item steps out one level', s[6].t === 'bullet' && s[6].l === 0, s[6]);
   await key('Return'); s = await state();
   ok('…and at level 0 ends the list', s[6].t === 'p' && s.length === 8, s);
-  // Tab on a paragraph doesn't nest it.
+  // A paragraph nests too (the owner's 20 Nov decision): under "Veg", one in.
   await focusText(6, 'end'); await key('Tab'); s = await state();
-  ok('a paragraph never nests', s[6].l === 0, s[6]);
+  ok('a paragraph nests', s[6].l === 1, s[6]);
   // Alt+Up / Alt+Down move the block, caret kept.
   await focusText(3, 'end'); await key('Up', ['alt']); s = await state();
   ok('Alt+Up moves a block up', s[2].x === 'Green' && s[3].x === 'Red', s);
@@ -98,7 +98,7 @@ app.whenReady().then(async () => {
   ok('Turn into To-do keeps the level', s[1].t === 'todo' && s[1].l === 1, s[1]);
   await js(`(function(){ var b=document.querySelectorAll('.nt-tabhost .nt-block')[1]; b.querySelector('.nt-grip').click(); var x=[...document.querySelectorAll('.nt-menu button')].find(e=>/^.?Text$/.test(e.textContent.trim()) || /Text/.test(e.textContent)); x.click(); return true; })()`);
   s = await state();
-  ok('Turn into Text drops it', s[1].t === 'p' && s[1].l === 0, s[1]);
+  ok('Turn into Text keeps it too (a paragraph nests)', s[1].t === 'p' && s[1].l === 1, s[1]);
   await js(`(function(){ var b=document.querySelectorAll('.nt-tabhost .nt-block')[1]; b.querySelector('.nt-grip').click(); var x=[...document.querySelectorAll('.nt-menu button')].find(e=>/Bulleted|Bullet/.test(e.textContent)); x.click(); return true; })()`);
   // A code block takes the block keys too (before CodeMirror's line moves).
   await js(`(function(){ var b=document.querySelectorAll('.nt-tabhost .nt-block')[6]; b.querySelector('.nt-grip').click(); var x=[...document.querySelectorAll('.nt-menu button')].find(e=>/Code/.test(e.textContent)); x.click(); return true; })()`);
@@ -108,13 +108,67 @@ app.whenReady().then(async () => {
   await js(`(function(){ var b=document.querySelectorAll('.nt-tabhost .nt-block')[${ci}]; b._cm ? b._cm.view.focus() : 0; return true; })()`);
   await key('Up', ['alt']);
   let after = await js(`[...document.querySelectorAll('.nt-tabhost .nt-block')].map(b=>b.dataset.type)`);
-  ok('Alt+Up in a code block moves the block', after.indexOf('code') === ci - 1, { before, after });
+  // (Level with "Fruit", it goes past Fruit and all of Fruit's children.)
+  ok('Alt+Up in a code block moves the block, past the block above with its children', after.indexOf('code') === 0, { before, after });
   await key('D', ['control']);
   after = await js(`[...document.querySelectorAll('.nt-tabhost .nt-block')].map(b=>b.dataset.type)`);
   ok('Ctrl+D in a code block duplicates it', after.filter((t) => t === 'code').length === 2, after);
   await key('K', ['control', 'shift']);
   after = await js(`[...document.querySelectorAll('.nt-tabhost .nt-block')].map(b=>b.dataset.type)`);
   ok('Ctrl+Shift+K in a code block deletes it', after.filter((t) => t === 'code').length === 1, after);
+  // ── Children go with their parent; folding ──
+  s = await state();
+  const ix = (t) => s.findIndex((b) => b.x === t);
+  const txt = (a) => a.map((b) => b.x + b.l).join();
+  console.log(JSON.stringify(s));
+  await focusText(ix('Apple'), 'end'); await key('Tab', ['shift']); s = await state();
+  ok('Shift+Tab takes the children out with it', s[ix('Apple')].l === 0 && s[ix('Red')].l === 1 && s[ix('Green')].l === 1, s);
+  ok('…and the blocks after it that were level with it become its children', s[ix('Pear')].l === 1 && s[ix('Veg')].l === 1, s);
+  await key('Tab'); s = await state();
+  ok('Tab takes them all in again', s[ix('Apple')].l === 1 && s[ix('Red')].l === 2 && s[ix('Green')].l === 2 && s[ix('Pear')].l === 2 && s[ix('Veg')].l === 2, s);
+  await focusText(ix('Pear'), 'end'); await key('Tab', ['shift']);
+  await focusText(ix('Veg'), 'end'); await key('Tab', ['shift']); s = await state();
+  ok('Shift+Tab on Pear and Veg: back as they were', txt(s.slice(ix('Fruit'), ix('Veg') + 1)) === 'Fruit0,Apple1,Red2,Green2,Pear1,Veg1', s);
+  const run0 = txt(s.slice(ix('Fruit'), ix('Pear') + 1));
+  await focusText(ix('Apple'), 'end'); await key('Down', ['alt']); s = await state();
+  ok('Alt+Down moves a block with its children past the next one', txt(s.slice(ix('Fruit'), ix('Green') + 1)) === 'Fruit0,Pear1,Apple1,Red2,Green2', s);
+  await key('Up', ['alt']); s = await state();
+  ok('Alt+Up brings them back', txt(s.slice(ix('Fruit'), ix('Pear') + 1)) === run0, s);
+  const look = () => js(`[...document.querySelectorAll('.nt-tabhost .nt-block')].map(b=>({x:(b.querySelector('.nt-text')||{}).textContent,shown:getComputedStyle(b).display!=='none',folded:b.classList.contains('folded'),kids:b.classList.contains('kids'),fold:(function(f){return f?{op:getComputedStyle(f).opacity,disp:getComputedStyle(f).display,title:f.title}:null})(b.querySelector(':scope > .nt-fold'))}))`);
+  let lk = await look();
+  ok('a block with children has a fold, hidden until hovered', lk[ix('Fruit')].kids && lk[ix('Fruit')].fold.disp === 'flex' && lk[ix('Fruit')].fold.op === '0' && lk[ix('Fruit')].fold.title === 'Fold', lk[ix('Fruit')]);
+  ok('…one without has none shown', lk[ix('Red')].fold.disp === 'none', lk[ix('Red')]);
+  await js(`document.querySelectorAll('.nt-tabhost .nt-block')[${ix('Fruit')}].querySelector('.nt-fold').click(); true`);
+  await wait(200);
+  lk = await look();
+  ok('a click on the fold hides the children', lk[ix('Fruit')].folded && ['Apple', 'Red', 'Green', 'Pear'].every((t) => !lk[ix(t)].shown), lk);
+  ok('…the fold stays shown while folded, to unfold', lk[ix('Fruit')].fold.op === '1' && lk[ix('Fruit')].fold.title === 'Unfold', lk[ix('Fruit')]);
+  await w.webContents.capturePage().then((i) => out && fs.writeFileSync(out + '/web-folded.png', i.toPNG()));
+  const after0 = s.findIndex((b, k) => k > ix('Fruit') && b.l === 0);
+  await focusText(ix('Fruit'), 'end'); await key('Down');
+  act = await js(`(function(){ var a=document.activeElement; var b=a&&a.closest('.nt-block'); return [...document.querySelectorAll('.nt-tabhost .nt-block')].indexOf(b); })()`);
+  ok('Down from a folded block skips its children', act === after0, { act, after0 });
+  await focusText(ix('Fruit'), 'end'); await key('Return'); s = await state();
+  ok('Enter on a folded block adds the next one after its children, level with it', s[after0] && s[after0].t === 'bullet' && s[after0].l === 0 && s[after0].x === '', s);
+  await key('K', ['control', 'shift']); s = await state();
+  await wait(2500);
+  let pg = await js(`fetch('/api/notes/page?project=demo&id=${sess.id}',{headers:{Authorization:'Bearer ${sess.t}'}}).then(r=>r.json())`);
+  ok('the fold is saved ("folded")', pg.page.blocks[ix('Fruit')].folded === true && pg.page.blocks.filter((b) => b.folded).length === 1, pg.page.blocks);
+  await js(`document.querySelectorAll('.nt-tabhost .nt-block')[${ix('Fruit')}].querySelector('.nt-fold').click(); true`);
+  await wait(200); lk = await look();
+  ok('a click again shows them', !lk[ix('Fruit')].folded && lk.every((b) => b.shown), lk);
+  // Enter at the end of a parent shown: its first child.
+  await focusText(ix('Apple'), 'end'); await key('Return'); s = await state();
+  ok('Enter on a parent adds its first child', s[ix('Apple') + 1].x === '' && s[ix('Apple') + 1].l === 2 && s[ix('Apple') + 1].t === 'bullet', s);
+  await key('K', ['control', 'shift']);
+  // Ctrl+Shift+K on a parent deletes its children too.
+  await focusText(ix('Apple'), 'end'); await key('D', ['control']); s = await state();
+  ok('Ctrl+D copies a block with its children', txt(s.slice(ix('Fruit'), ix('Pear') + 1)) === 'Fruit0,Apple1,Red2,Green2,Apple1,Red2,Green2,Pear1', s);
+  await key('K', ['control', 'shift']); s = await state();
+  ok('Ctrl+Shift+K deletes a block with its children', txt(s.slice(ix('Fruit'), ix('Pear') + 1)) === run0, s);
+  // A nested paragraph in Markdown: indented as a list item's.
+  const md2 = await js(`CrundiNotes.toMarkdown([{type:'number',text:'a'},{type:'p',text:'note',level:1},{type:'number',text:'b'}])`);
+  ok('a nested paragraph is indented in Markdown, the list goes on', md2 === '1. a\n\n  note\n\n2. b', md2);
   s = await state();
   // Saved with levels.
   await wait(2500);

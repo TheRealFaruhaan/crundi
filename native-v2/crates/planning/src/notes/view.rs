@@ -267,6 +267,9 @@ fn code_lang(b: &doc::Block) -> String {
 pub(crate) struct PlaceView {
     key: String,
     store: Entity<S>,
+    /// The store's drag-select, as this frame draws it.
+    tsel: Option<super::TSel>,
+    dspot: Option<super::DropSpot>,
     title_in: Entity<TextareaState>,
     edit_in: Entity<TextareaState>,
     search_in: Entity<InputState>,
@@ -354,7 +357,7 @@ impl PlaceView {
                 // The selection moved: the format bar follows it (sel_moved).
                 let Some((id, _, _)) = this.edit.clone() else { return };
                 if !this.editing { return; }
-                let (range, rev, caret) = { let s = st.read(cx); (s.selected_range(), s.is_selection_reversed(), s.cursor_layout()) };
+                let (range, rev, caret, span) = { let s = st.read(cx); let r = s.selected_range(); let span = (r.start != r.end).then(|| s.range_to_bounds(&r)).flatten(); (r, s.is_selection_reversed(), s.cursor_layout(), span) };
                 let sel = (range.start, range.end);
                 if sel == this.last_sel { return; }
                 this.last_sel = sel;
@@ -362,7 +365,10 @@ impl PlaceView {
                 let (a, c) = (this.to_src(a), this.to_src(c));
                 let (x, y) = caret.map(|(b, _)| (f32::from(b.origin.x), f32::from(b.origin.y))).unwrap_or_else(|| this.store.read(cx).caret_xy);
                 let k = this.key.clone();
-                cx.defer(move |cx| super::sel_moved(&k, &id, a as i32, c as i32, x, y, cx));
+                // The selection's own ends (a double-click selects a word in
+                // one go: no caret was seen before it to anchor the bar).
+                let span = span.map(|b| (f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.origin.x + b.size.width)));
+                cx.defer(move |cx| super::sel_moved(&k, &id, a as i32, c as i32, x, y, span, cx));
             }),
             cx.subscribe(&search_in, |this, st, ev: &InputEvent, cx| if let InputEvent::Change = ev { let q = st.read(cx).value().to_string(); let k = this.key.clone(); super::search(&k, &q, cx); }),
             cx.subscribe(&query_in, |this, st, ev: &InputEvent, cx| if let InputEvent::Change = ev {
@@ -375,7 +381,7 @@ impl PlaceView {
             key, store, title_in, edit_in, search_in, query_in, link_in, sel_focus: cx.focus_handle(), div_focus: cx.focus_handle(),
             applied_focus: 0, applied_title: -1, menu_gen: 0, fmt_gen: 0, menu_scroll: ScrollHandle::new(), menu_shown: std::cell::Cell::new((u64::MAX, -1)), fmt_size: Rc::new(std::cell::Cell::new((0., 0.))), edit: None, edit_src: String::new(), edit_lang: None, edit_done: false, editing: false, last_sel: (0, 0), width: 0.,
             page: ListState::new(0, ListAlignment::Top, T::SP_48 * 8.), page_sigs: vec![], pick: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.), pick_sigs: vec![],
-            mode: String::new(), shown_page: String::new(), rich: HashMap::new(), _subs: subs,
+            mode: String::new(), shown_page: String::new(), rich: HashMap::new(), tsel: None, dspot: None, _subs: subs,
         }
     }
 
@@ -721,14 +727,14 @@ impl PlaceView {
         // Anything held near the page's top or bottom scrolls it (the web's wbAutoScroll).
         let scroll = w::edge_scroll::<w::RefDrag>(div().id(sid(format!("nt-page-{key}"))), w::Scroller::List(self.page.clone()), false, true, cx.entity_id()).size_full()
             .on_mouse_move(move |e: &MouseMoveEvent, _, cx| if e.pressed_button == Some(MouseButton::Left) && !cx.has_active_drag() && super::store(cx).read(cx).press.is_some() { super::blk_over(&km, f32::from(e.position.y), cx); })
-            .on_mouse_up(MouseButton::Left, move |_, _, cx| { let _ = &ku; super::store(cx).update(cx, |s, _| s.press = None); })
+            .on_mouse_up(MouseButton::Left, move |_, _, cx| { super::store(cx).update(cx, |s, _| s.press = None); let _ = super::tsel_end(&ku, cx); })
             // Blocks of this page in hand: where they would land; let go: they move.
             .on_drag_move::<w::RefDrag>(move |e, _, cx| { if e.drag(cx).kind == "note" && super::drag_key(cx).as_deref() == Some(kb.as_str()) { super::drag_move(f32::from(e.event.position.x), f32::from(e.event.position.y), cx); } })
             // Anything else (another panel's reference, another page's
             // blocks) goes in as text under the pointer (the web's dropText).
             .on_drop::<w::RefDrag>({ let kd = key.clone(); move |d, window, cx| {
                 if d.kind == "note" && super::drag_key(cx).as_deref() == Some(kd.as_str()) { super::drag_end(true, cx); }
-                else { let y = f32::from(window.mouse_position().y); super::drop_text(&kd, y, &d.plain(), cx); }
+                else { let _ = window; super::drop_text(&kd, &d.plain(), cx); }
                 cx.stop_propagation();
             } })
             .child(canvas({ let key = key.clone(); move |b, _, cx| super::store(cx).update(cx, |s, _| if let Some(i) = super::idx(s, &key) { s.places[i].page_box = (f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width), f32::from(b.size.height)); }) }, |_, _, _, _| {}).absolute().size_full())
@@ -771,6 +777,8 @@ impl PlaceView {
     #[allow(clippy::too_many_arguments)]
     fn block(&mut self, p: &PlaceRow, ix: usize, r: &BlockRow, margin: Pixels, k: f32, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         crundi_core::driver::rendered("notes-block");
+        self.tsel = self.store.read(cx).tsel.clone();
+        self.dspot = if cx.has_active_drag() { self.store.read(cx).dspot.clone() } else { None };
         let b = &r.b;
         let key = p.key.clone();
         let group: SharedString = format!("nt-blk-{key}-{}", b.id).into();
@@ -796,6 +804,20 @@ impl PlaceView {
             .child(w::square_button(sid(format!("nt-add-{key}-{}", b.id)), IconName::Plus, "Add a block below", w::SquareLook::Bare, T::SP_20, T::ICON_MD * k)
                 .on_click(move |e, window, cx| { let p = e.position(); let p = if p.x > px(0.) { p } else { window.mouse_position() }; super::add_below(&ka, &ba, Some((f32::from(p.x), f32::from(p.y))), cx) }))
             .child(grip(&key, &b.id, "Click: turn into, move, duplicate, delete. Drag: onto a chat or terminal to send it as Markdown", k, true, cx));
+        // The fold (.nt-fold): left of the "+" and the grip, on a block with
+        // children; shown on hover, and always while folded.
+        let fold = r.kids.then(|| {
+            let (kf, bf) = (key.clone(), b.id.clone());
+            // Borderless and muted, as the web's gutter buttons; hover lights it.
+            div().id(sid(format!("nt-fold-{key}-{}", b.id))).absolute().left(margin - T::SP_40 - T::SP_2 - T::SP_14).top(top + T::SP_2).w(T::SP_14).h(T::SP_22)
+                .flex().items_center().justify_center().rounded(T::R_CHIP).cursor_pointer().text_color(T::text_muted())
+                .hover(|s| s.bg(T::bg_hover()).text_color(T::text()))
+                .when(!b.folded && !r.menu_open, |d| d.invisible().group_hover(group.clone(), |s| s.visible()))
+                .child(w::icon(if b.folded { IconName::ChevronRight } else { IconName::ChevronDown }, T::ICON_SM * k))
+                .tooltip(w::tooltip(if b.folded { "Unfold" } else { "Fold" }))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(move |_, _, cx| super::toggle_fold(&kf, &bf, cx))
+        });
         let lh = fs * T::LH_CHAT;
         let mut body = div().flex().w_full().gap(T::SP_6).py(px(1.));
         match b.kind.as_str() {
@@ -823,8 +845,8 @@ impl PlaceView {
         };
         let _ = cx;
         body = body.child(div().flex_1().min_w_0().child(content));
-        // A nested list item: its marker under its parent's words.
-        if doc::listy(&b.kind) && b.level > 0 { body = body.pl((T::SP_20 + T::SP_2 + T::SP_6) * b.level as f32); }
+        // A nested paragraph or list item: under its parent's words.
+        if doc::nesty(&b.kind) && b.level > 0 { body = body.pl((T::SP_20 + T::SP_2 + T::SP_6) * b.level as f32); }
         let (kbx, bbx) = (key.clone(), b.id.clone());
         div().id(sid(format!("nt-b-{key}-{ix}"))).group(group).relative().w_full().pt(top)
             .on_mouse_down(MouseButton::Left, move |e, _, cx| super::blk_press(&kp, &bp, e.modifiers.shift, cx))
@@ -837,6 +859,7 @@ impl PlaceView {
                 .when(r.sel_top, |d| d.rounded_t(T::R_CONTROL)).when(r.sel_bottom, |d| d.rounded_b(T::R_CONTROL))))
             .child(margin_area)
             .child(tools)
+            .children(fold)
             .child(div().pl(margin).child(body))
     }
 
@@ -855,6 +878,17 @@ impl PlaceView {
             // none above or below: pulled out by as much, the words stay
             // exactly where they are drawn at rest.
             let t = w::textarea(&self.edit_in).appearance(false).xsmall().w_full().text_size(fs).font_weight(weight).text_color(ink).line_height(relative(T::LH_CHAT));
+            // Something dragged over the box: its caret follows the pointer.
+            let (ein, k, i, src_s) = (self.edit_in.clone(), key.to_string(), id.to_string(), src.to_string());
+            let d = d.on_drag_move::<w::RefDrag>(move |e, _, cx| {
+                if e.drag(cx).kind == "note" && super::drag_key(cx).as_deref() == Some(k.as_str()) { return; }
+                let p = e.event.position;
+                if !e.bounds.contains(&p) { return super::drop_over(&k, &i, r, c, None, cx); }
+                let Some(bx) = caret_near(&ein.read(cx), p) else { return };
+                let at = if mono { bx } else { doc::box_to_src(&src_s, bx) };
+                ein.update(cx, |s, cx| s.set_selected_range(bx..bx, cx));
+                super::drop_over(&k, &i, r, c, Some((at, None)), cx);
+            });
             return d.child(div().mx(-T::SP_4).child(if mono { t.font_family(T::MONO) } else { t })).into_any_element();
         }
         // The parse, once per source.
@@ -869,15 +903,60 @@ impl PlaceView {
                 x
             }
         };
-        let styled = StyledText::new(rich.text.clone()).with_highlights(rich.hl.clone());
+        // A drag-select under way in these words: its range on the selection's colour.
+        let held = self.tsel.as_ref().filter(|t| t.key == key && t.id == id && t.r == r && t.c == c && t.a != t.b).map(|t| t.a.min(t.b)..t.a.max(t.b));
+        let styled = match held {
+            Some(sel) => StyledText::new(rich.text.clone()).with_highlights(with_sel(&rich.hl, sel, rich.text.len())),
+            None => StyledText::new(rich.text.clone()).with_highlights(rich.hl.clone()),
+        };
         let layout = styled.layout().clone();
         let (k, i) = (key.to_string(), id.to_string());
         let n = src.len();
         let src_s = src.to_string();
         let is_code = lang.is_some();
+        // A press here and a drag across the words selects them (the box
+        // opens on the release, with that selection).
+        let (lay_d, lay_m, k_d, k_m, i_d, i_m, tl) = (layout.clone(), layout.clone(), k.clone(), k.clone(), i.clone(), i.clone(), rich.text.len());
+        let hit_at = move |l: &TextLayout, p: Point<Pixels>| match l.index_for_position(p) { Ok(ix) | Err(ix) => ix.min(tl) };
+        let src_at = { let (rich, src_s) = (rich.clone(), src_s.clone()); move |ix: usize| -> usize {
+            if src_s.is_empty() { return n; }
+            if is_code { return ix.min(src_s.len()); }
+            let ix = ix.min(rich.text.len());
+            let k = rich.text.get(..ix).map(|t| t.chars().count()).unwrap_or(0);
+            doc::plain_to_src_at(&doc::src_to_runs_map(&src_s).1, k)
+        } };
+        // Something dragged over the words: the caret shows where it would go.
+        let (lay_g, k_g, i_g, src_g) = (layout.clone(), k.clone(), i.clone(), src_at.clone());
+        let caret_ix = self.dspot.as_ref().filter(|d| d.key == key && d.id == id && d.r == r && d.c == c).and_then(|d| d.ix);
+        let lay_c = layout.clone();
         div().id(sid(format!("nt-t-{key}-{id}-{r}-{c}"))).w_full().cursor_text().font_weight(weight).text_color(ink)
+            .on_drag_move::<w::RefDrag>(move |e, _, cx| {
+                if e.drag(cx).kind == "note" && super::drag_key(cx).as_deref() == Some(k_g.as_str()) { return; }
+                let p = e.event.position;
+                if !e.bounds.contains(&p) { return super::drop_over(&k_g, &i_g, r, c, None, cx); }
+                let ix = hit_at(&lay_g, p);
+                super::drop_over(&k_g, &i_g, r, c, Some((src_g(ix), Some(ix))), cx);
+            })
+            .when_some(caret_ix, |d, ix| d.child(canvas(|_, _, _| {}, move |_, _, window, _| {
+                if let Some(p) = lay_c.position_for_index(ix) {
+                    window.paint_quad(fill(Bounds { origin: p, size: size(px(1.5), lay_c.line_height()) }, T::text()));
+                }
+            }).absolute().size_full()))
+            .on_mouse_down(MouseButton::Left, move |e, window, cx| {
+                if e.modifiers.shift || e.click_count > 1 { return; }
+                let _ = window;
+                let at = hit_at(&lay_d, e.position);
+                super::tsel_start(super::TSel { key: k_d.clone(), id: i_d.clone(), r, c, a: at, b: at }, cx);
+            })
+            .on_mouse_move(move |e: &MouseMoveEvent, _, cx| {
+                if e.pressed_button != Some(MouseButton::Left) || cx.has_active_drag() { return; }
+                let at = hit_at(&lay_m, e.position);
+                super::tsel_move(&k_m, &i_m, r, c, at, cx);
+            })
             .on_click(move |e, window, cx| {
                 let m = window.modifiers();
+                let held = super::tsel_end(&k, cx).filter(|t| t.id == i && t.r == r && t.c == c && t.a != t.b);
+                if let Some(t) = held { super::request_focus(&k, &i, r, c, src_at(t.a), src_at(t.b), cx); return; }
                 // Shift with a press here selected blocks (blk_press): no caret.
                 if m.shift && super::has_sel(&k, cx) { return; }
                 let hit = if e.position().x > px(0.) { layout.index_for_position(e.position()) } else { Err(rich.text.len()) };
@@ -1074,4 +1153,40 @@ impl Render for DragGhost {
             .bg(T::bg_secondary()).border_1().border_color(T::accent()).opacity(T::NOTES_O_CLONE)
             .text_size(T::TEXT_12).text_color(T::text()).truncate().child(self.0.clone())
     }
+}
+
+/// The words' highlights with a selection's range laid over them (split
+/// where they meet: gpui wants them sorted and apart).
+fn with_sel(hl: &[(std::ops::Range<usize>, HighlightStyle)], sel: std::ops::Range<usize>, len: usize) -> Vec<(std::ops::Range<usize>, HighlightStyle)> {
+    let mut cuts: Vec<usize> = vec![0, len, sel.start.min(len), sel.end.min(len)];
+    for (r, _) in hl { cuts.push(r.start); cuts.push(r.end); }
+    cuts.sort_unstable(); cuts.dedup();
+    let mut out = vec![];
+    for w in cuts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if a >= b { continue; }
+        let base = hl.iter().find(|(r, _)| r.start <= a && b <= r.end).map(|(_, h)| *h);
+        let on = sel.start <= a && b <= sel.end;
+        match (base, on) {
+            (Some(h), false) => out.push((a..b, h)),
+            (h, true) => out.push((a..b, HighlightStyle { background_color: Some(T::selection()), ..h.unwrap_or_default() })),
+            (None, false) => {}
+        }
+    }
+    out
+}
+
+/// The text box's offset nearest a point (its caret's spots, from the box's
+/// last layout: on the pointer's line, the closest across it).
+fn caret_near(st: &TextareaState, p: Point<Pixels>) -> Option<usize> {
+    let v = st.value().to_string();
+    let mut best: Option<(f32, f32, usize)> = None;
+    for (i, _) in v.char_indices().map(|(i, ch)| (i, ch)).chain(std::iter::once((v.len(), ' '))) {
+        let Some(b) = st.range_to_bounds(&(i..i)) else { continue };
+        let (top, bot) = (f32::from(b.origin.y), f32::from(b.origin.y + b.size.height));
+        let dy = if f32::from(p.y) < top { top - f32::from(p.y) } else if f32::from(p.y) > bot { f32::from(p.y) - bot } else { 0. };
+        let dx = (f32::from(b.origin.x) - f32::from(p.x)).abs();
+        if best.is_none_or(|(by, bx, _)| dy < by || (dy == by && dx < bx)) { best = Some((dy, dx, i)); }
+    }
+    best.map(|b| b.2)
 }
