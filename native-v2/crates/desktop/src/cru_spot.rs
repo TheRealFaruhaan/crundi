@@ -137,6 +137,14 @@ fn follow(seq: u64) {
 
 impl Render for CruSpot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Above every dialog (F212): the web's z-order, the deferred layer over overlay.rs (1) and ask.rs (2).
+        let body = self.body(window, cx);
+        crate::top_layer(window, body)
+    }
+}
+
+impl CruSpot {
+    fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         crundi_core::driver::rendered("cru-spot");
         let root = div().id("cru-spot-layer").absolute().top_0().left_0().size_full();
         let mut root = root;
@@ -175,13 +183,13 @@ impl Render for CruSpot {
                 let vp = window.viewport_size();
                 let (tw, th) = note_size(&r.note, window);
                 let mut top = a.origin.y + a.size.height + T::CRU_NOTE_GAP;
-                if top + th > vp.height - px(8.) { top = (a.origin.y - th - T::CRU_NOTE_GAP).max(px(8.)); }
-                let left = a.origin.x.min(vp.width - tw - px(8.)).max(px(8.));
+                if top + th > vp.height - T::CRU_NOTE_EDGE { top = (a.origin.y - th - T::CRU_NOTE_GAP).max(T::CRU_NOTE_EDGE); }
+                let left = a.origin.x.min(vp.width - tw - T::CRU_NOTE_EDGE).max(T::CRU_NOTE_EDGE);
                 root = root.child(div().absolute().left(left).top(top).max_w(T::CRU_NOTE_MAX_W)
                     .flex().gap(T::SP_8).items_baseline().px(T::SP_12).py(T::SP_8).rounded(T::R_BUBBLE)
-                    .bg(T::bg_card()).border_1().border_color(T::accent()).text_color(T::text()).text_size(T::TEXT_13).line_height(relative(1.4))
+                    .bg(T::bg_card()).border_1().border_color(T::accent()).text_color(T::text()).text_size(T::TEXT_13).line_height(relative(T::LH_CRU_NOTE))
                     .shadow(vec![BoxShadow { color: T::cru_note_shadow(), offset: point(px(0.), T::CRU_NOTE_SHADOW_Y), blur_radius: T::CRU_NOTE_SHADOW_BLUR, spread_radius: px(0.), inset: false }])
-                    .child(div().flex_none().font_weight(FontWeight::SEMIBOLD).text_color(T::accent_hover()).child("Cru"))
+                    .child(div().flex_none().font_weight(T::W_SEMIBOLD).text_color(T::accent_hover()).child("Cru"))
                     .child(div().min_w_0().child(r.note.clone())));
             }
             // Gone on the next press anywhere (from 300 ms on); the press still does what it does.
@@ -195,7 +203,7 @@ impl Render for CruSpot {
                 });
             }).absolute().size_0());
         }
-        root
+        root.into_any_element()
     }
 }
 
@@ -224,14 +232,14 @@ fn band(window: &mut Window, at: Bounds<Pixels>, r: Pixels, from: f32, to: f32, 
 fn note_size(note: &str, window: &mut Window) -> (Pixels, Pixels) {
     let run = |s: &str, bold: bool| {
         let mut f = window.text_style().font();
-        if bold { f.weight = FontWeight::SEMIBOLD; }
+        if bold { f.weight = T::W_SEMIBOLD; }
         TextRun { len: s.len(), font: f, color: T::text(), background_color: None, underline: None, strikethrough: None }
     };
     let w = |s: &str, bold: bool| window.text_system().shape_line(s.to_string().into(), T::TEXT_13, &[run(s, bold)], None).width;
-    let head = w("Cru", true) + T::SP_8 + T::SP_12 * 2. + px(2.);
+    let head = w("Cru", true) + T::SP_8 + T::SP_12 * 2. + T::CRU_NOTE_BORDERS;
     let text_w = w(note, false);
     let room = T::CRU_NOTE_MAX_W - head;
     let lines = (f32::from(text_w) / f32::from(room).max(40.)).ceil().max(1.);
     let tw = (head + text_w).min(T::CRU_NOTE_MAX_W);
-    (tw, px(13. * 1.4 * lines) + T::SP_8 * 2. + px(2.))
+    (tw, T::TEXT_13 * (T::LH_CRU_NOTE * lines) + T::SP_8 * 2. + T::CRU_NOTE_BORDERS)
 }

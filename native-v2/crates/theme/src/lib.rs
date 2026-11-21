@@ -796,6 +796,16 @@ impl T {
     pub const CRU_NOTE_GAP: Pixels = px(12.);
     pub const CRU_NOTE_SHADOW_Y: Pixels = px(10.);
     pub const CRU_NOTE_SHADOW_BLUR: Pixels = px(30.);
+    /// #cru-spot-note: kept this far inside the window; its line height; its 1 px edges, both sides.
+    pub const CRU_NOTE_EDGE: Pixels = px(8.);
+    pub const LH_CRU_NOTE: f32 = 1.4;
+    pub const CRU_NOTE_BORDERS: Pixels = px(2.);
+    /// The kid screen's thinking dots (.kid-dots: 14 px dots, 10 px apart, an 18 px row).
+    pub const KID_DOT: Pixels = px(14.);
+    pub const KID_DOTS_GAP: Pixels = px(10.);
+    pub const KID_DOTS_H: Pixels = px(18.);
+    /// Cru's reply line under the screen (20 px lines).
+    pub const CRU_REPLY_LH: Pixels = px(20.);
     pub fn cru_note_shadow() -> Hsla { rgba(0x00000073).into() }
     // ── end desktop ──
     // ── chat ──

@@ -185,12 +185,18 @@ pub fn init(cx: &mut App) {
                 let ok = d.update(cx, |d, cx| d.focus_address(window, cx));
                 return Some(json!({ "ok": ok }));
             }
+            if name == "test-menu" {
+                // The shared context menu at a point (its press-outside, F221).
+                let n = |i: usize| args.get(i).and_then(|v| v.parse::<f32>().ok()).unwrap_or(40.);
+                w::menu_at(cx, point(px(n(0)), px(n(1))), vec![w::MenuEntry::new("left-open", "Left open")], |_, _, _| {});
+                return Some(json!({ "ok": true }));
+            }
             let r = test_ui(name, args);
             // The driver's action runs now, as a click would: its effects too.
             if r.is_some() { pump(window, cx); }
             r
         })
-        .state(|_, _, cx| { let mut p = props(); p["chatFrames"] = hosts::props(); p["cruSpot"] = cru_spot::state(cx); json!({ "areas": { "desktop": p } }) }));
+        .state(|_, _, cx| { let mut p = props(); p["chatFrames"] = hosts::props(); p["cruSpot"] = cru_spot::state(cx); p["menu"] = w::menu_props(cx); json!({ "areas": { "desktop": p } }) }));
     // Browser-only mode (test/drive.mjs): a socket of its own to a server.
     if let Ok(url) = std::env::var("CRUNDI_SERVER") { if !url.is_empty() { host::start(url); } }
 }
@@ -651,4 +657,13 @@ thread_local! { static LOCK_VIEW: RefCell<Option<Entity<pclock::PcLockScreen>>> 
 
 fn pin_key(k: &str) -> &'static str {
     w::pin_pad::KEYS.iter().find(|x| **x == k).copied().unwrap_or("")
+}
+
+/// The layer the Cru panel, the kid screen, the PC lock and Cru's ring draw in: over the
+/// dialogs (overlay.rs priority 1, ask.rs priority 2) and the toasts, as the web's z-order
+/// (.cv-ov 9000, the kid screen 2147483000, the lock 8990 over .input-modal 210) (F212).
+pub(crate) fn top_layer(window: &Window, el: AnyElement) -> AnyElement {
+    let vp = window.viewport_size();
+    deferred(anchored().position(point(px(0.), px(0.))).child(div().w(vp.width).h(vp.height).child(el)))
+        .with_priority(3).into_any_element()
 }

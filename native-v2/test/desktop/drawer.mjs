@@ -201,7 +201,12 @@ export async function run(T, t) {
   // Devices: the popover (opened by a click on its button, as a person
   // does: F104), a phone.
   await T.act('activate', first);
+  // F221: with the shared context menu open, the press elsewhere closes it and goes through
+  // (the web's capturing pointerdown): one click on the device button opens its popover.
+  await T.act('test-menu', '40', '400');
+  await T.until('a context menu open', (p) => !!T.D(p).menu, 5000);
   await openPop(T, t, 'device', 'dev');
+  t.check('…one click closed the menu and opened the popover (the press went through)', !T.D(await T.state()).menu, T.D(await T.state()).menu);
   await T.snap('desktop', 'drawer-devices');
   await closePop(T, t, 'dev');
   await T.act('pop', 'dev');

@@ -137,7 +137,7 @@ fn kid_mic_look(tone: &str, phase: &str, t: f32) -> w::MicLook {
 /// Cru thinking on the kid screen: three indigo dots that bob together
 /// (.cv-reply.think::after, cvkdots: 1 s, .35 → 1 and up 5px).
 fn kid_dots() -> AnyElement {
-    let dots = || div().flex().gap(px(10.)).h(px(18.)).items_center().children((0..3).map(|_| div().size(px(14.)).rounded_full().bg(T::accent())));
+    let dots = || div().flex().gap(T::KID_DOTS_GAP).h(T::KID_DOTS_H).items_center().children((0..3).map(|_| div().size(T::KID_DOT).rounded_full().bg(T::accent())));
     div().id("kid-dots").min_w(T::KID_DOTS_W).child(dots().with_animation("kid-dots", Animation::new(std::time::Duration::from_secs(1)).repeat().with_max_fps(T::ANIM_FPS),
         |d, t| { let k = (1. - (std::f32::consts::TAU * t).cos()) / 2.; d.opacity(0.35 + 0.65 * k).mt(px(-5. * k)) })).into_any_element()
 }
@@ -518,7 +518,7 @@ impl CruScreen {
     /// Cru's latest words under its full view (.cv-ov.full .cv-words): one short line, read, not said.
     fn full_words(c: &Copy) -> Stateful<Div> {
         div().id("cru-words").flex_none().w_full().max_h(T::CRU_FULL_WORDS_H).overflow_hidden().px(T::SP_16).pt(T::SP_4).text_center()
-            .when(!c.reply.is_empty(), |d| d.child(div().mt(T::SP_2).text_size(T::TEXT_14).line_height(px(20.)).text_color(T::text_secondary()).child(c.reply.clone())))
+            .when(!c.reply.is_empty(), |d| d.child(div().mt(T::SP_2).text_size(T::TEXT_14).line_height(T::CRU_REPLY_LH).text_color(T::text_secondary()).child(c.reply.clone())))
     }
 
     fn words(c: &Copy, note: String) -> Stateful<Div> {
@@ -545,6 +545,14 @@ fn queued_line(c: &Copy) -> String { [c.queued.clone(), c.hearing.clone()].into_
 
 impl Render for CruScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Above every dialog (F212): the web's z-order, the deferred layer over overlay.rs (1) and ask.rs (2).
+        let body = self.body(window, cx);
+        crate::top_layer(window, body)
+    }
+}
+
+impl CruScreen {
+    fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         crundi_core::driver::rendered("cru");
         let c = self.copy.clone();
         if !c.open { return div().into_any_element(); }

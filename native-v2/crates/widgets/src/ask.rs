@@ -160,13 +160,14 @@ impl Render for AskLayer {
                     .into_any_element());
                 v
             }).collect();
+            // A press outside closes it and goes on to what it pressed (the web's capturing
+            // pointerdown, src/webapp-html.js:12185; F221): no backdrop, so a tab switches at once.
             root = root.child(deferred(anchored().position(point(px(0.), px(0.))).child(
-                div().id("ask-menu-back").occlude().w(vp.width).h(vp.height)
-                    .on_mouse_down(MouseButton::Left, cx.listener(|l, _, _, cx| { l.menu = None; cx.notify(); }))
-                    .on_mouse_down(MouseButton::Right, cx.listener(|l, _, _, cx| { l.menu = None; cx.notify(); }))
+                div().id("ask-menu-back").w(vp.width).h(vp.height)
                     // Kept inside the window, 6 px in, as the web's openCtxMenu.
-                    .child(anchored().position(m.at).snap_to_window_with_margin(px(6.)).child(div().min_w(T::MENU_MIN_W).p(T::SP_4).flex().flex_col()
+                    .child(anchored().position(m.at).snap_to_window_with_margin(px(6.)).child(div().id("ask-menu-card").occlude().min_w(T::MENU_MIN_W).p(T::SP_4).flex().flex_col()
                         .bg(T::bg_secondary()).border_1().border_color(T::border()).rounded(T::R_FIELD)
+                        .on_mouse_down_out(cx.listener(|l, _, _, cx| if l.menu.take().is_some() { cx.notify(); }))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .children(rows))),
             )).with_priority(2));
