@@ -189,6 +189,24 @@ export async function run(T_, t) {
       await T.act('factories-transcript-send', 'Hello from the graph');
       await T.until('a message from its box, and the reply, show live', (p) => TR(p).stores[0].rows >= rows0 + 2 && TR(p).stores[0].state !== 'working', 30000);
       await sleep(300); await T.snap('planning', 'factories-transcript');
+      // The page's header (#cp-head, F188): the chat's mark (its initials on
+      // the project's colours, or the project's icon), ⋯ with Rename chat,
+      // Stop Claude (only while it works) and Open in Crundi; renaming in the head.
+      const H = (p) => TR(p).stores[0].head;
+      const h0 = H(await T.props());
+      t.check('the header has the chat\'s mark', h0 && (h0.icon || /^[A-Z0-9]{1,2}$/.test(h0.mark)), h0);
+      await T.act('factories-transcript-head', 'menu');
+      const mn = await T.until('⋯ opens the page\'s menu', (p) => p.planningArea?.menu?.items?.length >= 3);
+      const ids = (mn?.planningArea.menu.items || []).map((i) => i.id);
+      t.check('…with Rename chat, Stop Claude and Open in Crundi', ['rename', 'stop', 'open'].every((x) => ids.includes(x)), mn?.planningArea.menu);
+      t.check('…Stop Claude off while Claude is not working', mn?.planningArea.menu.items.find((i) => i.id === 'stop')?.enabled === (H(mn).state === 'working'), mn?.planningArea.menu);
+      await T.ui('menu-pick', 'none');
+      await T.act('factories-transcript-head', 'rename', 'Renamed in the head');
+      await T.until('a rename in the head renames the chat', (p) => H(p).title === 'Renamed in the head', 15000);
+      await T.act('factories-transcript-head', 'rename-escape', 'Not this');
+      await sleep(800);
+      t.check('…Escape keeps the name', H(await T.props()).title === 'Renamed in the head');
+      t.check('no secret requests: no approval cards', (H(await T.props()).asks?.cards || []).length === 0, H(await T.props()).asks);
     }
     await fx('chat-close');
     await T.until('closed, the transcript lets go of the chat', (p) => !TR(p).open && TR(p).views.length === 0);

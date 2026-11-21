@@ -27,6 +27,7 @@ pub mod model;
 mod data;
 mod parts;
 mod view;
+mod cp_head;
 mod edit;
 mod dlg;
 mod valid;
@@ -826,6 +827,13 @@ pub fn test_ui(_: &Stores, name: &str, args: &[String], window: &mut Window, cx:
             if a(2) == "panel" { view::open_transcript_here(&id, &nm, cx); } else { with(cx, |s2| { s2.chat = Some((id.clone(), nm.clone())); s2.chat_name = nm.clone(); s2.chat_open = true; }); }
             bump(cx);
             json!({ "ok": true })
+        }
+        // The transcript's header (#cp-head): factories-transcript-head <menu|rename|rename-escape> <text>.
+        "transcript-head" => {
+            let h = with(cx, |s2| s2.chats.first().map(|c| c.head()));
+            let Some(h) = h else { return Some(json!({ "ok": false, "error": "no transcript" })) };
+            let (what, arg) = (a(0), a(1));
+            json!({ "ok": h.update(cx, |h, cx| h.drive(&what, &arg, window, cx)) })
         }
         // The transcript's message box: type, then send (as Enter does).
         "transcript-send" => {

@@ -230,7 +230,11 @@ export async function run(T, t) {
     for (let i = 1; i <= 8; i++) await T.mouse('move', w7.x + 30 + 6 * i, w7.y, { buttons: ['left'] });
     await T.until('the words dragged across show selected as the press moves', (p) => N(p).tsel?.id === w7.id && N(p).tsel.b > N(p).tsel.a);
     await T.mouse('up', w7.x + 78, w7.y);
-    await T.until('let go, the block has the caret and the words stay selected', (p) => E(p).on && E(p).id === w7.id && E(p).b > E(p).a && !N(p).tsel);
+    const g = await T.until('let go, the block has the caret and the words stay selected', (p) => E(p).on && E(p).id === w7.id && E(p).b > E(p).a && !N(p).tsel);
+    // F187: the web's mouseup runs maybeFormatBar, so the dragged words show the format bar.
+    const fb = await T.until('…and the format bar opens over the dragged words', (p) => N(p).float === 'fmt' && N(p).fmt && !N(p).fmt.link);
+    t.check('the bar sits over the dragged words (its middle, its top)', fb && N(fb).fmt.x > w7.x + 20 && N(fb).fmt.x < w7.x + 100 && Math.abs(N(fb).fmt.y - w7.box.y) < w7.box.h + 8, fb && { fmt: N(fb).fmt, w7, g: g && E(g) });
+    await T.key('Escape');
     // A double-click on a word: the format bar over it, not at the window's corner.
     const w1b = await wordsAt(1);
     await T.mouse('click', w1b.x + 60, w1b.y);

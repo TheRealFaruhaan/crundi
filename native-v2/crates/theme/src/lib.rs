@@ -186,6 +186,9 @@ impl T {
     pub const CONTROL_SM: Pixels = px(28.);
     pub const CONTROL: Pixels = px(34.);
     pub const CONTROL_LG: Pixels = px(36.);
+    /// The Schedule dialog's weekday button (the web's .sm-day, 34x32).
+    pub const DAY_W: Pixels = px(34.);
+    pub const DAY_H: Pixels = Self::SP_32;
     pub const ICON_SM: Pixels = px(12.);
     pub const ICON_MD: Pixels = px(14.);
     pub const ICON_LG: Pixels = px(16.);
