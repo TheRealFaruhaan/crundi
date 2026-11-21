@@ -139,7 +139,12 @@ impl Host {
                 _ if g.stacked => self.stack.clone().cached(fill).into_any_element(),
                 _ => {
                     let cols = self.cols.borrow();
-                    div().id("kanban-board").w_full().flex_1().min_h_0().overflow_x_scroll().track_scroll(&self.hscroll)
+                    // A card held near the board's left or right edge scrolls
+                    // it sideways (the web's wbScrollTick). The board has no
+                    // view of its own: the Msg view's notify is the host's
+                    // re-layout, which draws the new offset (F135).
+                    let edge = w::edge_scroll::<w::RefDrag>(div().id("kanban-board"), w::Scroller::Handle(self.hscroll.clone()), true, false, self.msg.entity_id());
+                    edge.w_full().flex_1().min_h_0().overflow_x_scroll().track_scroll(&self.hscroll)
                         .p(T::SP_12).flex().items_start().gap(T::SP_12)
                         .children(cols.iter().take(n).map(|c| {
                             let h = c.read(cx).needed;

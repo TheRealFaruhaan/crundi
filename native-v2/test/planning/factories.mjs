@@ -125,6 +125,13 @@ export async function run(T_, t) {
   const st = await T.until('the start form: project, factory, the change request, the precheck', (p) => D(p)?.start?.open && !D(p).start.loading && D(p).start.sections.length >= 3
     && D(p).start.info.some((x) => /own worktree/.test(x.text)) && F(p).pointerModal, 20000);
   t.check('it starts from the factory picked', D(st)?.start.factories[D(st).start.factory] === pair.name, D(st)?.start);
+  // A picture pasted in the change request attaches, named as the web names
+  // it (pasted-<time>-<n>.png); its x takes it off again.
+  await T.act('factories-clip-image', 'start|title');
+  await T.key('v', ['control']);
+  await T.until('a pasted picture attaches as pasted-….png', (p) => D(p).start.files.length === 1 && /^pasted-\d+-\d+\.png$/.test(D(p).start.files[0]) && D(p).start.title === '');
+  await fx('st-unattach', '0');
+  await T.until('its x takes it off', (p) => D(p).start.files.length === 0);
   await fx('st-go');
   await T.until('Start without a title asks for one', (p) => D(p).start.titleBad);
   await fe('start', 'title', 'Add a health check');

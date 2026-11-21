@@ -172,7 +172,10 @@
     '.nt-trash-acts button.danger:hover{color:var(--red,#ef4444);border-color:var(--red,#ef4444)}',
     '@media (max-width:700px){.nt-mgr{flex-direction:column}.nt-side{width:auto;max-height:40%;border-right:none;border-bottom:1px solid var(--border,#2a2a3d)}.nt-page{padding:16px 16px 120px 34px}}',
     '@media (prefers-reduced-motion: reduce){.nt-check,.nt-check::after,.nt-gutter{transition:none}}'
-  ].join('');
+  ].join('') +
+    // A nested list item (Tab / Shift+Tab): its marker under its parent's
+    // words, one marker and gap (22 + 6 px) further in per level.
+    [1, 2, 3, 4, 5].map(function (l) { return '.nt-block[data-level="' + l + '"]{padding-left:' + (28 * l) + 'px}'; }).join('');
 
   function ensureStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -344,6 +347,24 @@
   var PH = { p: "Type '/' for blocks", h1: 'Heading 1', h2: 'Heading 2', h3: 'Heading 3', todo: 'To-do', bullet: 'List', number: 'List', quote: 'Quote' };
   var TEXTY = { p: 1, h1: 1, h2: 1, h3: 1, todo: 1, bullet: 1, number: 1, quote: 1 };
   var LISTY = { todo: 1, bullet: 1, number: 1 };
+  // How deep a list item can nest ("level" in a page's blocks, 0 when absent).
+  var LEVEL_MAX = 5;
+  function clampLevel(v) { return Math.min(LEVEL_MAX, Math.max(0, Math.floor(Number(v)) || 0)); }
+  /**
+   * The list's numbers ("1.", "2." …) for numbered items, '' for the rest,
+   * from [{ type, level }]. Each nesting level counts on its own: a deeper
+   * item starts at 1, and a shallower one ends the deeper counts under it.
+   */
+  function listNumbers(items) {
+    var n = [0, 0, 0, 0, 0, 0];
+    return items.map(function (b) {
+      if (!LISTY[b.type]) { n = [0, 0, 0, 0, 0, 0]; return ''; }
+      var l = clampLevel(b.level);
+      for (var d = l + 1; d < n.length; d++) n[d] = 0;
+      if (b.type === 'number') { n[l]++; return n[l] + '.'; }
+      n[l] = 0; return '';
+    });
+  }
 
   // ─── Markdown (what Claude reads when a block is dropped on a chat) ───
   function inlineMd(html) {
@@ -369,20 +390,21 @@
     }
     return walk(box);
   }
-  /** Blocks as Markdown, numbering consecutive numbered items. */
+  /** Blocks as Markdown, numbering consecutive numbered items (each nesting level on its own). */
   function toMarkdown(blocks) {
-    var out = [], n = 0;
-    (blocks || []).forEach(function (b) {
-      if (b.type !== 'number') n = 0;
+    var out = [], nums = listNumbers(blocks || []);
+    (blocks || []).forEach(function (b, bi) {
       var t = b.type === 'code' || b.type === 'table' || b.type === 'divider' ? '' : inlineMd(b.text || '');
       var indentRest = function (s, pad) { return s.replace(/\n/g, '\n' + pad); };
+      // A nested item indents two spaces a level.
+      var ind = LISTY[b.type] ? new Array(clampLevel(b.level) + 1).join('  ') : '';
       switch (b.type) {
         case 'h1': out.push('# ' + t); break;
         case 'h2': out.push('## ' + t); break;
         case 'h3': out.push('### ' + t); break;
-        case 'todo': out.push('- [' + (b.checked ? 'x' : ' ') + '] ' + indentRest(t, '  ')); break;
-        case 'bullet': out.push('- ' + indentRest(t, '  ')); break;
-        case 'number': n++; out.push(n + '. ' + indentRest(t, '   ')); break;
+        case 'todo': out.push(ind + '- [' + (b.checked ? 'x' : ' ') + '] ' + indentRest(t, ind + '  ')); break;
+        case 'bullet': out.push(ind + '- ' + indentRest(t, ind + '  ')); break;
+        case 'number': out.push(ind + nums[bi] + ' ' + indentRest(t, ind + new Array(nums[bi].length + 2).join(' '))); break;
         case 'quote': out.push('> ' + t.replace(/\n/g, '\n> ')); break;
         case 'divider': out.push('---'); break;
         case 'code': out.push('```' + (b.lang || '') + '\n' + (b.text || '') + '\n```'); break;
@@ -464,6 +486,7 @@
       var w = el('div', 'nt-block t-' + b.type + (b.type === 'todo' && b.checked ? ' done' : ''));
       w.dataset.id = b.id || genId();
       w.dataset.type = b.type;
+      if (LISTY[b.type]) setLevel(w, b.level);
       var g = el('div', 'nt-gutter');
       var add = el('button', '', '+'); add.title = 'Add a block below'; add.type = 'button';
       // A span, not a button: the host's drag starts on it (it ignores buttons),
@@ -483,6 +506,7 @@
       if (b.type === 'divider') {
         var hr = el('hr', 'nt-hr'); hr.tabIndex = 0;
         hr.addEventListener('keydown', function (e) {
+          if (blockKey(e, w)) return;
           if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); var p = prevBlock(w) || nextBlock(w); removeBlock(w); if (p) focusBlock(p, 'end'); changed(); }
           else if (e.key === 'Enter') { e.preventDefault(); focusBlock(insertAfter(w, { type: 'p', text: '' }), 'start'); }
           else if (e.key === 'ArrowUp') { var p2 = prevBlock(w); if (p2) { e.preventDefault(); focusBlock(p2, 'end'); } }
@@ -578,6 +602,11 @@
         { key: 'ArrowUp', run: function (v) { var sel = v.state.selection.main; if (!sel.empty || v.state.doc.lineAt(sel.head).number !== 1) return false; var p = prevBlock(w); if (!p) return false; focusBlock(p, 'end'); return true; } },
         { key: 'ArrowDown', run: function (v) { var sel = v.state.selection.main; if (!sel.empty || v.state.doc.lineAt(sel.head).number !== v.state.doc.lines) return false; var n = nextBlock(w); focusBlock(n || insertAfter(w, { type: 'p', text: '' }), 'start'); return true; } },
         { key: 'Backspace', run: function (v) { if (v.state.doc.length) return false; focusBlock(convert(w, 'p'), 'start'); return true; } },
+        // The keys every block takes (before CodeMirror's own line moves).
+        { key: 'Alt-ArrowUp', run: function () { blockAct(w, 'up'); return true; } },
+        { key: 'Alt-ArrowDown', run: function () { blockAct(w, 'down'); return true; } },
+        { key: 'Mod-d', run: function () { blockAct(w, 'dup'); return true; } },
+        { key: 'Shift-Mod-k', run: function () { blockAct(w, 'del'); return true; } },
       ]);
       var view = new CM.EditorView({
         parent: hostEl,
@@ -674,6 +703,7 @@
     }
     function cellKey(e, td) {
       var tbl = td.closest('table');
+      if (blockKey(e, td.closest('.nt-block'))) return;
       if (e.key === 'Tab') {
         e.preventDefault();
         var cells = Array.prototype.slice.call(tbl.querySelectorAll('td'));
@@ -689,11 +719,74 @@
     }
 
     function renumber() {
-      var n = 0;
-      Array.prototype.forEach.call(list.children, function (w) {
-        if (w.dataset.type === 'number') { n++; var m = w.querySelector('.nt-mark'); if (m) m.textContent = n + '.'; }
-        else n = 0;
+      var arr = blocksArr();
+      var nums = listNumbers(arr.map(function (w) { return { type: w.dataset.type, level: levelOf(w) }; }));
+      arr.forEach(function (w, i) {
+        if (w.dataset.type === 'number') { var m = w.querySelector('.nt-mark'); if (m) m.textContent = nums[i]; }
       });
+    }
+    // ─── nesting (list items only; kept as "level" when above 0) ───
+    function levelOf(w) { return LISTY[w.dataset.type] ? clampLevel(w.dataset.level) : 0; }
+    function setLevel(w, l) { l = clampLevel(l); if (l > 0) w.dataset.level = String(l); else delete w.dataset.level; }
+    /** Tab / Shift+Tab: one level deeper (at most one below the list item above it) or one level out. */
+    function nest(w, out) {
+      var lv = levelOf(w), p = prevBlock(w);
+      var most = p && LISTY[p.dataset.type] ? Math.min(LEVEL_MAX, levelOf(p) + 1) : 0;
+      var to = out ? Math.max(0, lv - 1) : (lv < most ? lv + 1 : lv);
+      if (to !== lv) { setLevel(w, to); renumber(); changed(); }
+    }
+
+    // ─── keys every block takes, whatever its kind ───
+    // Alt+Up / Alt+Down moves it, Ctrl+D duplicates it (the caret into the
+    // copy, at the same place), Ctrl+Shift+K deletes it.
+    function blockKeyName(e) {
+      var mod = e.ctrlKey || e.metaKey, k = (e.key || '').toLowerCase();
+      if (e.altKey && !mod && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) return e.key === 'ArrowUp' ? 'up' : 'down';
+      if (mod && !e.altKey && !e.shiftKey && k === 'd') return 'dup';
+      if (mod && !e.altKey && e.shiftKey && k === 'k') return 'del';
+      return '';
+    }
+    function blockKey(e, w) {
+      var name = blockKeyName(e);
+      if (!name) return false;
+      e.preventDefault(); e.stopPropagation();
+      blockAct(w, name);
+      return true;
+    }
+    /** Where the caret is in a block, to put it back after a move or into a copy. */
+    function caretSpot(w) {
+      if (w._cm) return { cm: w._cm.view.state.selection.main.head };
+      var a = document.activeElement;
+      if (!a || !w.contains(a)) return null;
+      return { cell: Array.prototype.indexOf.call(w.querySelectorAll('td'), a), off: a.tagName === 'HR' ? -1 : caretOffset(a) };
+    }
+    function restoreCaret(w, spot) {
+      if (!spot) { focusBlock(w, 'end'); return; }
+      if (w._cm) { var v = w._cm.view; v.focus(); v.dispatch({ selection: { anchor: Math.min(spot.cm || 0, v.state.doc.length) } }); return; }
+      var t = spot.cell >= 0 ? w.querySelectorAll('td')[spot.cell] : editable(w);
+      if (!t) return;
+      if (t.tagName === 'HR') t.focus(); else placeCaret(t, spot.off);
+    }
+    function blockAct(w, name) {
+      closeFloating();
+      if (name === 'del') { var p = prevBlock(w) || nextBlock(w); removeBlock(w); changed(); if (p) focusBlock(p, 'end'); return; }
+      var spot = caretSpot(w);
+      if (name === 'dup') { var c = dupBlocks([w]); if (c.length) restoreCaret(c[0], spot); return; }
+      if (moveBlocks([w], name === 'up') && (!document.activeElement || !w.contains(document.activeElement))) restoreCaret(w, spot);
+    }
+    /** A run of blocks one place up or down: the block past it goes to its other side. */
+    function moveBlocks(run, up) {
+      var first = run[0], last = run[run.length - 1];
+      if (up) { var p = first.previousElementSibling; if (!p) return false; list.insertBefore(p, last.nextSibling); }
+      else { var n = last.nextElementSibling; if (!n) return false; list.insertBefore(n, first); }
+      renumber(); changed();
+      return true;
+    }
+    /** Copies of a run of blocks, after it; the copies. */
+    function dupBlocks(run) {
+      var at = run[run.length - 1], out = [];
+      run.forEach(function (b) { var d = readBlock(b); d.id = genId(); at = insertAfter(at, d); out.push(at); });
+      return out;
     }
 
     function render(blocks) {
@@ -735,6 +828,8 @@
       if (type === 'code') { nb.text = b.type === 'code' ? b.text : plainOf(b.text || ''); nb.lang = b.lang || ''; if (b.wrap) nb.wrap = true; }
       else if (type === 'table') nb.rows = [['', '', ''], ['', '', ''], ['', '', '']];
       else if (type !== 'divider') nb.text = b.type === 'code' ? esc(b.text || '').replace(/\n/g, '<br>') : (b.text || '');
+      // One kind of list item into another stays at its depth.
+      if (LISTY[type] && b.level) nb.level = b.level;
       if (extra) for (var k in extra) nb[k] = extra[k];
       var fresh = blockEl(nb);
       destroyCode(w);
@@ -761,6 +856,7 @@
       }
       b.text = sanitize((w.querySelector('.nt-text') || {}).innerHTML || '');
       if (type === 'todo') b.checked = !!(w.querySelector('.nt-check') || {}).checked;
+      if (levelOf(w) > 0) b.level = levelOf(w);
       return b;
     }
     function serialize() { return Array.prototype.map.call(list.children, readBlock); }
@@ -787,16 +883,21 @@
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'a') { hintSelectAll(); return; }
       if (e.shiftKey && e.key === 'ArrowUp' && onFirstLine(t) && prevBlock(w) && window.getSelection().isCollapsed) { e.preventDefault(); setBlockSel(w, prevBlock(w)); return; }
       if (e.shiftKey && e.key === 'ArrowDown' && onLastLine(t) && nextBlock(w) && window.getSelection().isCollapsed) { e.preventDefault(); setBlockSel(w, nextBlock(w)); return; }
+      if (blockKey(e, w)) return;
       if ((e.ctrlKey || e.metaKey) && fmtKey(e)) return;
+      if (e.key === 'Tab' && LISTY[type] && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); closeFloating(); nest(w, e.shiftKey); return; }
       if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); document.execCommand('insertLineBreak'); return; }
       if (e.key === 'Enter') {
         e.preventDefault();
+        // An empty nested item steps out one level.
+        if (LISTY[type] && levelOf(w) > 0 && !t.textContent.trim()) { setLevel(w, levelOf(w) - 1); renumber(); changed(); return; }
         // An empty list item ends the list.
         if (LISTY[type] && !t.textContent.trim()) { convert(w, 'p'); focusBlock(list.querySelector('[data-id="' + w.dataset.id + '"]'), 'start'); return; }
         var parts = splitAtCaret(t);
         t.innerHTML = parts[0];
         var nextType = LISTY[type] ? type : 'p';
-        var nb = insertAfter(w, { type: nextType, text: parts[1], checked: false });
+        // A list goes on at the same level.
+        var nb = insertAfter(w, { type: nextType, text: parts[1], checked: false, level: levelOf(w) });
         focusBlock(nb, 'start');
         return;
       }
@@ -826,6 +927,7 @@
     }
 
     function codeKey(e, w, pre) {
+      if (blockKey(e, w)) return;
       if (e.key === 'Tab') { e.preventDefault(); document.execCommand('insertText', false, '  '); return; }
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.execCommand('insertText', false, '\n'); return; }
       // Leaving a code block: Shift+Enter at the end, or arrows past its edges.
@@ -1263,6 +1365,17 @@
     root.addEventListener('keydown', function (e) {
       if (e.target !== root || !selectedBlocks().length) return;
       var arr = blocksArr();
+      var bk = blockKeyName(e);
+      if (bk) {
+        e.preventDefault();
+        var run = selectedBlocks();
+        if (bk === 'del') deleteSelected();
+        // The selection moves as one, and stays selected.
+        else if (bk === 'up' || bk === 'down') moveBlocks(run, bk === 'up');
+        // The copies, after the selection, are selected.
+        else { var cp = dupBlocks(run); if (cp.length) { setBlockSel(cp[0], cp[cp.length - 1]); } }
+        return;
+      }
       if (e.key === 'Escape') { e.preventDefault(); var f = selFocus; clearBlockSel(); focusBlock(f, 'end'); }
       else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); deleteSelected(); }
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') { e.preventDefault(); copySelection(); }

@@ -811,6 +811,14 @@ pub fn test_ui(_: &Stores, name: &str, args: &[String], window: &mut Window, cx:
         "slash-pick" => { let k = parts::pwith(cx, |p| p.slash.as_ref().map(|m| m.key.clone())).unwrap_or_default(); let nm = a(0); json!({ "ok": parts::slash_pick(&k, (!nm.is_empty()).then_some(nm.as_str()), window, cx) }) }
         // The replay bar's slider: set it to an event (its last: live).
         "slider" => { act("v-at", &a(0), "", cx); json!({ "ok": true }) }
+        // A picture on the clipboard (a 1x1 PNG), for a paste into the change
+        // request; the field named (start|title, say) gets the keys.
+        "clip-image" => {
+            if !a(0).is_empty() { parts::focus_key(&a(0), window, cx); }
+            const PNG: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1f, 0x15, 0xc4, 0x89, 0, 0, 0, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0, 0x05, 0, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+            cx.write_to_clipboard(ClipboardItem::new_image(&Image::from_bytes(ImageFormat::Png, PNG.to_vec())));
+            json!({ "ok": true })
+        }
         // GPUI: the confirm and the prompt (the widgets' ask) answered here
         // until the driver's dialog-answer reaches them (shared/requests.md).
         "dialog" => { let ok = a(0) == "true"; let v = a(1); json!({ "ok": w::ask_answer(ok, (!v.is_empty()).then_some(v), window, cx) }) }

@@ -140,6 +140,8 @@ pub mod prefs {
 // ─── Text fields, one per key ───
 
 type OnText = Rc<dyn Fn(String, &mut App)>;
+/// A paste the field's caller takes first (true: taken; false: the box's own).
+pub type OnPaste = Rc<dyn Fn(&ClipboardItem, &mut Window, &mut App) -> bool>;
 
 enum Box_ { Line(Entity<w::InputState>), Area(Entity<w::TextareaState>) }
 
@@ -159,7 +161,18 @@ pub struct P {
     pub slash: Option<Slash>,
     /// The skills each skill field offers (name, description).
     skills: HashMap<String, Rc<Vec<(String, String)>>>,
+    /// Pastes taken first in the fields whose key starts with a prefix
+    /// (the change request's files: on_paste).
+    paste: Vec<(String, OnPaste)>,
 }
+
+/// A paste in any field whose key starts with `prefix` goes to `f` first.
+pub fn on_paste(p: &mut P, prefix: &str, f: impl Fn(&ClipboardItem, &mut Window, &mut App) -> bool + 'static) {
+    p.paste.retain(|(k, _)| k != prefix);
+    p.paste.push((prefix.to_string(), Rc::new(f)));
+}
+
+fn paste_for(p: &P, key: &str) -> Option<OnPaste> { p.paste.iter().find(|(k, _)| key.starts_with(k.as_str())).map(|(_, f)| f.clone()) }
 
 /// The '/' menu: under which field, where the "/query" starts (a byte
 /// offset of its query), the skills it offers and the one the keys are on.
@@ -203,7 +216,8 @@ pub fn line(p: &mut P, key: &str, value: &str, placeholder: &str, mono: bool, ma
         }
     };
     sync(p, key, value, window, cx);
-    let i = w::input(&e);
+    let mut i = w::input(&e);
+    if let Some(f) = paste_for(p, key) { i = i.on_paste(move |it, w, cx| f(it, w, cx)); }
     let d = div().w_full().when(mono, |d| d.font_family(T::MONO));
     d.child(i).into_any_element()
 }
@@ -230,7 +244,9 @@ pub fn area(p: &mut P, key: &str, value: &str, placeholder: &str, rows: usize, m
         }
     };
     sync(p, key, value, window, cx);
-    div().w_full().when(mono, |d| d.font_family(T::MONO)).child(w::textarea(&e)).into_any_element()
+    let mut t = w::textarea(&e);
+    if let Some(f) = paste_for(p, key) { t = t.on_paste(move |it, w, cx| f(it, w, cx)); }
+    div().w_full().when(mono, |d| d.font_family(T::MONO)).child(t).into_any_element()
 }
 
 /// A text box where /skill-name can be written (fields.jsx SkillText):
@@ -380,6 +396,12 @@ fn sync(p: &mut P, key: &str, value: &str, window: &mut Window, cx: &mut App) {
 /// Focus the field `key` (a dialog's first box).
 pub fn focus(p: &mut P, key: &str, window: &mut Window, cx: &mut App) {
     let e = p.fields.get(key).map(|x| match &x.b { Box_::Line(e) => Box_::Line(e.clone()), Box_::Area(e) => Box_::Area(e.clone()) });
+    match e { Some(Box_::Line(e)) => e.update(cx, |s, cx| s.focus(window, cx)), Some(Box_::Area(e)) => e.update(cx, |s, cx| s.focus(window, cx)), None => {} }
+}
+
+/// Give the field `key` the keys, from outside a render (the driver).
+pub fn focus_key(key: &str, window: &mut Window, cx: &mut App) {
+    let e = pwith(cx, |p| p.fields.get(key).map(|x| match &x.b { Box_::Line(e) => Box_::Line(e.clone()), Box_::Area(e) => Box_::Area(e.clone()) }));
     match e { Some(Box_::Line(e)) => e.update(cx, |s, cx| s.focus(window, cx)), Some(Box_::Area(e)) => e.update(cx, |s, cx| s.focus(window, cx)), None => {} }
 }
 

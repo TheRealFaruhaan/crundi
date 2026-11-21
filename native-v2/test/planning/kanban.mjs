@@ -161,6 +161,26 @@ export async function run(T_, t) {
   await T.mouse('up', done.x + done.w / 2, done.y + 40);
   await T.until('the card moved to Done', (p) => cardBy(p, 'Second card')?.status === 'done' && !K(p).drag);
 
+  // F135: a card held near the wide board's right or left edge scrolls it
+  // sideways (the web's wbScrollTick). A narrower window makes the four
+  // columns wider than the board (not yet stacked).
+  await T.d.send({ cmd: 'resize', w: 1060, h: 860 });
+  const nb = await T.until('the board overflows sideways', (p) => { const cs = K(p)?.boxes?.cols ?? []; const d0 = cs.find((b) => b.status === 'done'); const b0 = cs.find((b) => b.status === 'backlog'); return d0 && b0 && cs.length === 4 && d0.x + d0.w > 1060 - 4 && b0.x > 0; });
+  const bc = K(nb).boxes.cards.find((b) => b.status === 'backlog' && b.id !== second.id) ?? K(nb).boxes.cards.find((b) => b.status === 'todo');
+  const back0 = K(nb).boxes.cols.find((b) => b.status === 'backlog').x;
+  const ex = bc.x + bc.w / 2, ey = bc.y + 10;
+  await T.mouse('move', ex, ey);
+  await T.mouse('down', ex, ey);
+  for (let i = 1; i <= 6; i++) { await T.mouse('move', ex + (1060 - 20 - ex) * i / 6, ey); await t.sleep(30); }
+  const right = await T.until('held at the right edge, the board scrolls right', (p) => K(p).drag && K(p).boxes.cols.find((b) => b.status === 'backlog').x < back0 - 60);
+  t.check('…and the card is still held', !!K(right).drag, K(right).drag);
+  for (let i = 1; i <= 6; i++) { await T.mouse('move', 1060 - 20 - (1060 - 20 - (back0 - 10)) * i / 6, ey); await t.sleep(30); }
+  await T.until('held at the left edge, it scrolls back', (p) => K(p).drag && Math.abs(K(p).boxes.cols.find((b) => b.status === 'backlog').x - back0) < 2);
+  await T.mouse('move', ex, ey);
+  await T.mouse('up', ex, ey);
+  await T.until('dropped where it was', (p) => !K(p).drag);
+  await T.d.send({ cmd: 'resize', w: 1400, h: 860 });
+
   // Live: a change from elsewhere shows without a reload.
   await kpost({ action: 'addTask', title: 'From the server', status: 'todo' });
   await T.until('a server-side change arrives live', (p) => cardBy(p, 'From the server')?.status === 'todo');
