@@ -246,6 +246,21 @@ export async function run(T_, t) {
         await T.act('factories-transcript-head', 'ask-reject', 'rqb');
         const a3 = await T.until('Reject empties the box', (p) => A(p).pin === '', 6000);
         t.check('…the box empty after Reject', A(a3).pin === '', A(a3));
+        // F229: after an approve the next card is armed, whichever comes
+        // first, the server's push or the POST's answer.
+        await T.act('factories-transcript-head', 'ask-set', JSON.stringify([rq('rqd', 'pin', 'Delta'), rq('rqe', 'pin', 'Epsilon')]));
+        await T.until('two requests, the first armed', (p) => A(p).cards?.length === 2 && A(p).cards[0].id === 'rqd' && A(p).cards[0].armed, 6000);
+        await T.act('factories-transcript-head', 'ask-set', JSON.stringify([rq('rqe', 'pin', 'Epsilon')]));
+        await T.until('the push first: the next card armed', (p) => A(p).cards?.[0]?.id === 'rqe' && A(p).cards[0].armed, 6000);
+        await T.act('factories-transcript-head', 'ask-approved', 'rqd');
+        await sleep(300);
+        t.check('…the approve\'s answer after it leaves the next card armed', A(await T.props()).cards?.[0]?.armed === true, A(await T.props()));
+        await T.act('factories-transcript-head', 'ask-set', JSON.stringify([rq('rqd', 'pin', 'Delta'), rq('rqe', 'pin', 'Epsilon')]));
+        await T.until('again two requests, the first armed', (p) => A(p).cards?.length === 2 && A(p).cards.some((c) => c.armed), 6000);
+        await T.act('factories-transcript-head', 'ask-approved', 'rqd');
+        await T.act('factories-transcript-head', 'ask-set', JSON.stringify([rq('rqe', 'pin', 'Epsilon')]));
+        const a5 = await T.until('the answer first, then the push: the next card armed', (p) => A(p).cards?.length === 1 && A(p).cards[0].id === 'rqe' && A(p).cards[0].armed, 6000);
+        t.check('…its box empty, saying PIN', A(a5).pin === '' && A(a5).placeholder === 'PIN', A(a5));
         await T.act('factories-transcript-head', 'ask-set', '[]');
         await T.until('…no requests: no cards', (p) => (A(p).cards || []).length === 0);
       }

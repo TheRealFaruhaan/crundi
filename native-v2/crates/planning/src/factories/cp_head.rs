@@ -217,6 +217,8 @@ impl ChatHead {
             "ask-set" => { let v: Value = serde_json::from_str(arg).unwrap_or(Value::Null); set_asks(&json!({ "requests": v }), cx); true }
             "ask-type" => { let v = arg.to_string(); self.asks.update(cx, |a, cx| a.pin.update(cx, |s, cx| s.set_value(v, window, cx))); true }
             "ask-approve" => { self.asks.update(cx, |a, cx| a.approve(window, cx)); true }
+            // What a successful approve of <id> does when the server answers (F229).
+            "ask-approved" => { self.asks.update(cx, |a, cx| a.approved(arg, window, cx)); true }
             "ask-reject" => { let id = arg.to_string(); self.asks.update(cx, |a, cx| a.reject(&id, window, cx)); true }
             _ => false,
         }
@@ -433,9 +435,10 @@ impl AskCards {
             let upgrade = res.as_ref().ok().and_then(|d| d.get("needsUpgrade")).and_then(|x| x.as_bool()).unwrap_or(false) || r.upgrade;
             match sreq::answer(res.map(|v| (200, v)), allow.is_some()) {
                 Ok(t) => {
-                    let _ = me.update(cx, |this, cx| { this.armed.clear(); this.err.clear(); this.allow.0 = false; cx.notify(); });
-                    // Released: the PIN doesn't stay for the next request (F210).
-                    let _ = wh.update(cx, |_, window, cx| { let _ = me.update(cx, |this, cx| this.pin.update(cx, |s, cx| s.set_value("", window, cx))); });
+                    // Released: the PIN doesn't stay for the next request (F210),
+                    // and the next card is armed, as the web's redraw does (F229).
+                    // A push may already have armed the next card: that one stays.
+                    let _ = wh.update(cx, |_, window, cx| { let _ = me.update(cx, |this, cx| this.approved(&r.id, window, cx)); });
                     crundi_shell::toast(cx, t, w::Toast::Success);
                     load_asks(cx);
                     // An old lock: offer to set a passphrase now, with the one just typed.
@@ -449,6 +452,17 @@ impl AskCards {
                 }
             }
         });
+    }
+
+    /// After an approve: its card lets go of the box (emptied), unless a push
+    /// already armed the next one, and the next card is armed (F229).
+    fn approved(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.armed == id {
+            self.armed.clear(); self.err.clear(); self.allow.0 = false;
+            self.pin.update(cx, |s, cx| s.set_value("", window, cx));
+        }
+        self.sync(window, cx);
+        cx.notify();
     }
 
     fn reject(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
