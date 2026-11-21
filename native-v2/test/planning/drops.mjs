@@ -104,6 +104,10 @@ export async function run(T, t) {
   if (s) {
     // The idea in hand follows the pointer over the window, out of the map
     // (its clone is drawn over every pane, as the web's fixed .drag-clone).
+    // (F176: the map has drawn the idea where its box says, and the pointer
+    // rests there, before the press: else it starts no drag.)
+    await T.settle(400, 4000);
+    s = await T.props();
     const r0 = M(s).nodes.find((x) => x.id === idea.id);
     const tl = leaf(s, key);
     const [gx, gy] = [r0.box.x + Math.min(30, r0.box.w / 2), r0.box.y + r0.box.h / 2];
