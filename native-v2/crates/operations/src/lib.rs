@@ -25,6 +25,7 @@
 //! they are (native-v2/test/operations.mjs).
 
 pub mod compat;
+pub mod rows;
 pub mod ptt;
 pub mod web;
 pub mod services;

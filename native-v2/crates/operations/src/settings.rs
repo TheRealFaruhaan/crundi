@@ -1278,13 +1278,14 @@ fn on_key(k: &'static str, arg: &str, cx: &mut App) {
 /// The page: the groups and their sections as one virtual list (a wheel
 /// frame builds only the sections on screen, as the chat log does); the
 /// state's changes remeasure it (`remeasure` keeps the scroll place).
-pub struct Page { list: ListState, _subs: Vec<Subscription> }
+pub struct Page { list: ListState, rows: crate::rows::Rows, _subs: Vec<Subscription> }
 
 impl Page {
     fn new(st_e: &Entity<St>, sk_e: &Entity<crate::skills::Sk>, cx: &mut Context<Self>) -> Self {
-        let again = |p: &mut Page, cx: &mut Context<Page>| { p.list.remeasure(); cx.notify(); };
+        let again = |p: &mut Page, cx: &mut Context<Page>| { p.rows.changed(cx); p.list.remeasure(); cx.notify(); };
         Page {
             list: ListState::new(ITEMS.len(), ListAlignment::Top, T::SP_48 * 8.),
+            rows: crate::rows::Rows::new(ITEMS.len(), item, cx),
             _subs: vec![cx.observe(st_e, move |p, _, cx| again(p, cx)), cx.observe(sk_e, move |p, _, cx| again(p, cx))],
         }
     }
@@ -1305,7 +1306,8 @@ impl Render for Page {
                 if quiet(cx, |s| std::mem::take(&mut s.reveal_skill)) {
                     if let Some(y) = crate::skills::open_row_y() { self.list.scroll_by(y - self.list.viewport_bounds().origin.y - T::SP_16); }
                 }
-                list(self.list.clone(), cx.processor(|_: &mut Page, i: usize, window, cx| item(i, window, cx)))
+                if self.rows.take_grew() { self.list.remeasure(); }
+                list(self.list.clone(), cx.processor(|p: &mut Page, i: usize, _, _| p.rows.el(i)))
                     .size_full().p(T::SP_16).bg(T::bg()).into_any_element()
             }
             _ => w::page("settings-page").child(w::loading("Loading\u{2026}")).into_any_element(),
