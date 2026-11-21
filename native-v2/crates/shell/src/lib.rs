@@ -70,6 +70,13 @@ impl Global for OpenPath {}
 pub struct Overlays(pub Vec<AnyView>);
 impl Global for Overlays {}
 pub fn register_overlay(cx: &mut App, v: AnyView) { cx.default_global::<Overlays>().0.push(v); }
+/// Layers drawn over the dialogs too (`modal`, `ask`): the web's kid screen,
+/// PC lock and Cru panel sit above any open dialog (z-index 9000 and up
+/// against the dialogs' 210), so a dialog left open never covers them (F212).
+#[derive(Default)]
+pub struct TopOverlays(pub Vec<AnyView>);
+impl Global for TopOverlays {}
+pub fn register_top_overlay(cx: &mut App, v: AnyView) { cx.default_global::<TopOverlays>().0.push(v); }
 
 /// What Cru's mark in the top bar shows (Desktop sets it, `set_cru_mark`):
 /// Cru live (listening, thinking, talking) and its unread reports. An

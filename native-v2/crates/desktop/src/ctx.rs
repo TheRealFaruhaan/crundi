@@ -194,11 +194,20 @@ fn platform_show(_: &mut Window) {}
 #[cfg(target_os = "linux")]
 fn platform_hide(win: &mut Window, _: &mut App) { win.remove_window() }
 
+/// Any open dialog (a view modal, an ask) closed as if dismissed.
+pub fn clear_dialogs(win: &mut Window, cx: &mut App) {
+    if w::modal_open(cx) { w::close_dialog(win, cx); }
+    w::ask_answer(false, None, win, cx);
+}
+
 /// The window locked to the screen (app/main.js kidLockWindow): shown, in
 /// front and full screen while kid mode or the PC lock is on; as it was
 /// when both are off. Brought back to the front if it loses the keys (lib.rs).
 pub fn lock_window(on: bool) {
-    on_app(move |win, _| {
+    on_app(move |win, cx| {
+        // The kid screen and the PC lock draw over any dialog (F212); one left open goes, so its
+        // box can't take the keys under the lock either (the web's kid screen covers it).
+        if on { clear_dialogs(win, cx); }
         let (was, made_full) = LOCKED.with(|l| l.get());
         if on == was { if on && !win.is_fullscreen() { win.toggle_fullscreen(); } return; }
         if on {

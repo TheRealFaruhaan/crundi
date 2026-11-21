@@ -189,7 +189,9 @@ Root (gpui-component)
    │     └─ Launcher     cached   ("pend:" panes) New terminal: Empty Shell, UI Mode, Terminal
    ├─ Drawer             cached   the browser drawer (Desktop)
    ├─ (overlays)         cached   the areas' layers over the window (register_overlay), side by side
-   └─ layers             layout   the ask layer (confirm, prompt, menus), the modal layer
+   ├─ layers             layout   the ask layer (confirm, prompt, menus), the modal layer
+   └─ (top overlays)     cached   over the dialogs (register_top_overlay): the PC lock, Cru's panel
+                                  and kid screen, Cru's ring (the web's z-index 9000 and up, F212)
 ```
 
 - A head redraws only when what it shows changed: the kind's `watch`

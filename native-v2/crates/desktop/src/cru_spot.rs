@@ -43,7 +43,7 @@ impl Global for Handle {}
 /// Made at init, as an overlay over the whole window (over Cru's screen too).
 pub fn init(cx: &mut App) {
     let v = cx.new(|_| CruSpot { ring: None, flash: None, seq: 0 });
-    crundi_shell::register_overlay(cx, v.clone().into());
+    crundi_shell::register_top_overlay(cx, v.clone().into());
     cx.set_global(Handle(v));
 }
 
@@ -141,36 +141,46 @@ impl Render for CruSpot {
         let root = div().id("cru-spot-layer").absolute().top_0().left_0().size_full();
         let mut root = root;
         if let Some(f) = &self.flash {
-            // .jump-flash: 0 0 0 3px accent, 0 0 18px 4px accent-dim, held to 60%, then gone.
-            root = root.child(div().absolute().left(f.at.origin.x).top(f.at.origin.y).w(f.at.size.width).h(f.at.size.height).rounded(T::R_CARD)
-                .with_animation(("cru-flash", f.seq as usize), Animation::new(Duration::from_millis(2200)).with_max_fps(T::ANIM_FPS), |d, t| {
+            // .jump-flash: 0 0 0 3px accent, 0 0 18px 4px accent-dim, held to 60%, then gone. A
+            // box-shadow is drawn outside its box only: here edges around the pane, never over it (F211).
+            let at = f.at;
+            root = root.child(div().absolute().size_0()
+                .with_animation(("cru-flash", f.seq as usize), Animation::new(Duration::from_millis(2200)).with_max_fps(T::ANIM_FPS), move |d, t| {
                     let k = if t <= 0.6 { 1.0 } else { 1.0 - (t - 0.6) / 0.4 };
-                    d.shadow(vec![shadow(T::accent().opacity(k), 0., px(3.) * k), shadow(T::accent_dim().opacity(k), 18., px(4.) * k)])
+                    d.child(canvas(|_, _, _| {}, move |_, _, window, _| {
+                        glow(window, at, T::R_CARD, T::accent().opacity(k), 3. * k, 0.);
+                        glow(window, at, T::R_CARD, T::accent_dim().opacity(k), 4. * k, 18.);
+                    }).absolute().size_0())
                 }));
         }
         if let Some(r) = &self.ring {
-            let pad = px(6.);
             let a = r.at;
-            // #cru-spot: 2px accent-hover edge, 10px corners, a glow that breathes (cruSpot, 1.6 s).
-            root = root.child(div().absolute().left(a.origin.x - pad).top(a.origin.y - pad).w(a.size.width + pad * 2.).h(a.size.height + pad * 2.)
-                .border_2().border_color(T::accent_hover()).rounded(T::R_CARD)
-                .with_animation(("cru-spot", r.seq as usize), Animation::new(Duration::from_millis(1600)).repeat().with_max_fps(T::ANIM_FPS), |d, t| {
+            // #cru-spot: 2px accent-hover edge 6 px out, 10px corners, a glow that breathes outside
+            // it (cruSpot, 1.6 s). Edges only: the target stays as it is (F211). The web's ring is
+            // border-box: its box the target and 6 px, the 2 px edge inside that box, the glow outside.
+            let out = a.dilate(T::CRU_SPOT_PAD);
+            root = root.child(div().absolute().size_0()
+                .with_animation(("cru-spot", r.seq as usize), Animation::new(Duration::from_millis(1600)).repeat().with_max_fps(T::ANIM_FPS), move |d, t| {
                     // 0% and 100%: 3px and 18px 4px; 50%: 7px and 34px 10px (ease-in-out).
                     let k = 0.5 - 0.5 * (t * std::f32::consts::TAU).cos();
-                    d.shadow(vec![shadow(T::accent_dim(), 0., px(3. + 4. * k)), shadow(T::accent_dim(), 18. + 16. * k, px(4. + 6. * k))])
+                    d.child(canvas(|_, _, _| {}, move |_, _, window, _| {
+                        glow(window, out, T::R_CARD, T::accent_dim(), 3. + 4. * k, 0.);
+                        glow(window, out, T::R_CARD, T::accent_dim(), 4. + 6. * k, 18. + 16. * k);
+                        band(window, out.dilate(-T::CRU_SPOT_EDGE), T::R_CARD - T::CRU_SPOT_EDGE, 0., f32::from(T::CRU_SPOT_EDGE), T::accent_hover());
+                    }).absolute().size_0())
                 }));
             if !r.note.is_empty() {
                 // #cru-spot-note: under the target (12 px), above it if it would leave the window; its left
                 // edge with the target's, kept 8 px inside the window.
                 let vp = window.viewport_size();
                 let (tw, th) = note_size(&r.note, window);
-                let mut top = a.origin.y + a.size.height + px(12.);
-                if top + th > vp.height - px(8.) { top = (a.origin.y - th - px(12.)).max(px(8.)); }
+                let mut top = a.origin.y + a.size.height + T::CRU_NOTE_GAP;
+                if top + th > vp.height - px(8.) { top = (a.origin.y - th - T::CRU_NOTE_GAP).max(px(8.)); }
                 let left = a.origin.x.min(vp.width - tw - px(8.)).max(px(8.));
-                root = root.child(div().absolute().left(left).top(top).max_w(px(320.))
+                root = root.child(div().absolute().left(left).top(top).max_w(T::CRU_NOTE_MAX_W)
                     .flex().gap(T::SP_8).items_baseline().px(T::SP_12).py(T::SP_8).rounded(T::R_BUBBLE)
                     .bg(T::bg_card()).border_1().border_color(T::accent()).text_color(T::text()).text_size(T::TEXT_13).line_height(relative(1.4))
-                    .shadow(vec![BoxShadow { color: hsla(0., 0., 0., 0.45), offset: point(px(0.), px(10.)), blur_radius: px(30.), spread_radius: px(0.), inset: false }])
+                    .shadow(vec![BoxShadow { color: T::cru_note_shadow(), offset: point(px(0.), T::CRU_NOTE_SHADOW_Y), blur_radius: T::CRU_NOTE_SHADOW_BLUR, spread_radius: px(0.), inset: false }])
                     .child(div().flex_none().font_weight(FontWeight::SEMIBOLD).text_color(T::accent_hover()).child("Cru"))
                     .child(div().min_w_0().child(r.note.clone())));
             }
@@ -189,8 +199,24 @@ impl Render for CruSpot {
     }
 }
 
-fn shadow(color: Hsla, blur: f32, spread: Pixels) -> BoxShadow {
-    BoxShadow { color, offset: point(px(0.), px(0.)), blur_radius: px(blur), spread_radius: spread, inset: false }
+/// A box-shadow without offset as CSS draws it, outside `at` only: the
+/// spread solid, the blur as four fading bands across it (an edge each,
+/// nothing painted inside `at`).
+fn glow(window: &mut Window, at: Bounds<Pixels>, r: Pixels, color: Hsla, spread: f32, blur: f32) {
+    let solid = (spread - blur / 2.).max(0.);
+    band(window, at, r, 0., solid, color);
+    let to = spread + blur / 2.;
+    const STEPS: usize = 4;
+    for i in 0..STEPS {
+        let (a, b) = (solid + (to - solid) * i as f32 / STEPS as f32, solid + (to - solid) * (i + 1) as f32 / STEPS as f32);
+        band(window, at, r, a, b, color.opacity(1. - (i as f32 + 0.5) / STEPS as f32));
+    }
+}
+
+/// An edge from `from` to `to` px outside `at` (corners `r` grown with it).
+fn band(window: &mut Window, at: Bounds<Pixels>, r: Pixels, from: f32, to: f32, color: Hsla) {
+    if to - from < 0.05 || color.a <= 0. { return; }
+    window.paint_quad(quad(at.dilate(px(to)), Corners::all(r + px(to)), transparent_black(), Edges::all(px(to - from)), color, BorderStyle::Solid));
 }
 
 /// The note bubble's size: "Cru", 8 px, the note at 13 px wrapped in 320 px
@@ -204,8 +230,8 @@ fn note_size(note: &str, window: &mut Window) -> (Pixels, Pixels) {
     let w = |s: &str, bold: bool| window.text_system().shape_line(s.to_string().into(), T::TEXT_13, &[run(s, bold)], None).width;
     let head = w("Cru", true) + T::SP_8 + T::SP_12 * 2. + px(2.);
     let text_w = w(note, false);
-    let room = px(320.) - head;
+    let room = T::CRU_NOTE_MAX_W - head;
     let lines = (f32::from(text_w) / f32::from(room).max(40.)).ceil().max(1.);
-    let tw = (head + text_w).min(px(320.));
+    let tw = (head + text_w).min(T::CRU_NOTE_MAX_W);
     (tw, px(13. * 1.4 * lines) + T::SP_8 * 2. + px(2.))
 }

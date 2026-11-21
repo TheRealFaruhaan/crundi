@@ -3,6 +3,15 @@
 // with v2's checks: Cru closed, an idle window draws nothing; open, its
 // animation is capped; a change of Cru's re-renders Cru's view alone.
 import { writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+
+/** Pixels of a crop WxH+X+Y that differ by more than `fuzz` between two PNGs. */
+function differ(a, b, crop, fuzz) {
+  const cut = (f, s) => { const o = `${f}.${s}.fuzz.png`; execFileSync('convert', [f, '-crop', crop, '+repage', o]); return o; };
+  try { execFileSync('compare', ['-metric', 'AE', '-fuzz', fuzz, cut(a, 'a'), cut(b, 'b'), 'null:'], { stdio: ['ignore', 'ignore', 'pipe'] }); return 0; }
+  catch (e) { return Number(String(e.stderr).trim().split(/\s/)[0]) || -1; }
+}
 
 /** Renders of each counted view since `r0`. */
 const delta = (r0, r1) => Object.fromEntries(Object.keys(r1 || {}).map((k) => [k, (r1[k] || 0) - ((r0 || {})[k] || 0)]).filter(([, v]) => v));
@@ -275,8 +284,28 @@ export async function run(T, t) {
   // note beside them; the next press anywhere takes the ring away.
   {
     await T.ui('toasts-clear');
+    // The Inbox as it is before the ring (F211: the ring is an edge outside its target, the
+    // target's own pixels unchanged).
+    await T.ui('tab', 'inbox');
+    await t.sleep(600);
+    const bare = join(T.OUT, 'cru-spot-bare.png'), rung = join(T.OUT, 'cru-spot-rung.png');
+    await T.d.send({ cmd: 'snapshot', path: bare });
     await T.act('cru-ui-go', JSON.stringify({ id: 'hl1', tab: 'inbox', highlight: 'Mark all read', note: 'This button' }));
     const p = await T.until('show_in_crundi with a highlight: the words found', (p) => C(p).lastAck?.id === 'hl1', 8000);
+    {
+      await t.sleep(400);
+      await T.d.send({ cmd: 'snapshot', path: rung });
+      const a = SP(p)?.ring?.at;
+      if (a) {
+        const crop = `${Math.floor(a.w) - 2}x${Math.floor(a.h) - 2}+${Math.ceil(a.x) + 1}+${Math.ceil(a.y) + 1}`;
+        // (The note's soft shadow below, 0 10px 30px, darkens it by a few percent, as on the web;
+        // a fill, the old accent-dim, moves it far more.)
+        const inside = differ(bare, rung, crop, '8%');
+        // ~6 px out: the 2 px edge; past it, the glow.
+        const edge = T.diff(bare, rung, `${Math.floor(a.w) + 16}x4+${Math.floor(a.x) - 8}+${Math.floor(a.y) - 7}`);
+        t.check('…the ring is drawn around its target, nothing over it (F211)', inside === 0 && edge > 20, { inside, edge, at: a });
+      } else t.check('…the ring is drawn around its target, nothing over it (F211)', false, SP(p));
+    }
     t.check('…answered found', C(p).lastAck.ok === true && C(p).lastAck.found === true, C(p).lastAck);
     t.check('…the ring around them, with the note', /Words/.test(SP(p)?.ring?.target || '') && SP(p).ring.note === 'This button' && SP(p).ring.at.w > 20, SP(p));
     t.check('…the note is not a toast', !/Cru:/.test(p.toast || ''), p.toast);

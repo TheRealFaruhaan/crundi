@@ -64,6 +64,8 @@ pub struct Shell {
     dragging: bool,
     /// The areas' layers over the window (`register_overlay`), read once here.
     overlays: Vec<AnyView>,
+    /// The layers over the dialogs (`register_top_overlay`), read once here.
+    top_overlays: Vec<AnyView>,
     root_focus: FocusHandle,
     /// Cru's push to talk is held (its shortcut, ptt.rs).
     ptt_held: bool,
@@ -131,7 +133,7 @@ impl Shell {
             window.focus(&to, cx);
         }));
         cx.set_global(ShellHandle(cx.entity().downgrade()));
-        Shell { stores, top, side, bar, sign_in, widths, tabs: HashMap::new(), missing: HashMap::new(), drawer: None, modal, ask, dragging: false, press: BarPress::default(), overlays: cx.try_global::<crate::Overlays>().map(|o| o.0.clone()).unwrap_or_default(), root_focus: cx.focus_handle(), ptt_held: false, seen_focus: None, lay, _subs: subs }
+        Shell { stores, top, side, bar, sign_in, widths, tabs: HashMap::new(), missing: HashMap::new(), drawer: None, modal, ask, dragging: false, press: BarPress::default(), overlays: cx.try_global::<crate::Overlays>().map(|o| o.0.clone()).unwrap_or_default(), top_overlays: cx.try_global::<crate::TopOverlays>().map(|o| o.0.clone()).unwrap_or_default(), root_focus: cx.focus_handle(), ptt_held: false, seen_focus: None, lay, _subs: subs }
     }
 
     /// The browser drawer's view (Desktop registers it).
@@ -271,6 +273,7 @@ impl Render for Shell {
             .children(self.overlays.iter().map(|v| v.clone().cached(StyleRefinement::default().absolute().top_0().left_0().size_full())))
             .child(self.modal.clone())
             .child(self.ask.clone())
+            .children(self.top_overlays.iter().map(|v| v.clone().cached(StyleRefinement::default().absolute().top_0().left_0().size_full())))
             .into_any_element()
     }
 }
