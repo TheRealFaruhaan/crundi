@@ -113,6 +113,32 @@ fn refresh(prefix: &str, cx: &mut App) {
     }
 }
 
+/// The tab last on show, as the reload on a switch saw it (the shell's nav
+/// is also notified for the drawer and the sidebar: only a change of tab
+/// reloads).
+struct ShownTab { last: String }
+impl Global for ShownTab {}
+
+/// Reload Git, Files (the folder on show) and Media each time their tab is
+/// shown, as the web's switchTab (loadGitInfo, loadFiles, loadMedia).
+/// Watched from the first workspace tab made; that first show loads in ensure.
+fn watch_tab_switch(stores: &crundi_shell::Stores, cx: &mut App) {
+    if cx.has_global::<ShownTab>() { return; }
+    let last = stores.nav.read(cx).tab.clone();
+    cx.set_global(ShownTab { last });
+    cx.observe(&stores.nav, |nav, cx| {
+        let tab = nav.read(cx).tab.clone();
+        if cx.global::<ShownTab>().last == tab { return; }
+        cx.global_mut::<ShownTab>().last = tab.clone();
+        match tab.as_str() {
+            "git" => if let Some(g) = git::view(cx) { g.update(cx, |g, cx| g.load(cx)); },
+            "files" => if let Some(f) = files::view(cx) { f.update(cx, |f, cx| f.load(None, cx)); },
+            "media" => if let Some(m) = media::view(cx) { m.update(cx, |m, cx| m.load(cx)); },
+            _ => {}
+        }
+    }).detach();
+}
+
 fn git_view(window: &mut Window, cx: &mut App) -> AnyView { git::ensure(window, cx).into() }
 fn files_view(window: &mut Window, cx: &mut App) -> AnyView { files::ensure(window, cx).into() }
 fn media_view(window: &mut Window, cx: &mut App) -> AnyView { media::ensure(window, cx).into() }
@@ -169,9 +195,9 @@ pub fn init(cx: &mut App) {
     // The launcher's Empty Shell, Terminal and its Skip Permissions.
     wb::launcher::set_terminal_launcher(cx, Rc::new(|key, mode, _, cx| terms::launch(key, mode, cx)));
     let mut area = Area::new("workspace")
-        .tab("git", |_, window, cx| { let v = git_view(window, cx); cx.new(|_| Tab(v)).into() })
-        .tab("files", |_, window, cx| { let v = files_view(window, cx); cx.new(|_| Tab(v)).into() })
-        .tab("media", |_, window, cx| { let v = media_view(window, cx); cx.new(|_| Tab(v)).into() })
+        .tab("git", |stores, window, cx| { watch_tab_switch(stores, cx); let v = git_view(window, cx); cx.new(|_| Tab(v)).into() })
+        .tab("files", |stores, window, cx| { watch_tab_switch(stores, cx); let v = files_view(window, cx); cx.new(|_| Tab(v)).into() })
+        .tab("media", |stores, window, cx| { watch_tab_switch(stores, cx); let v = media_view(window, cx); cx.new(|_| Tab(v)).into() })
         .on_batch(|stores, batch, cx| {
             terms::route(batch, cx);
             if batch.iter().any(|e| matches!(e, Event::Connected(true))) { terms::resubscribe(cx); }
