@@ -849,7 +849,7 @@ impl Render for ProjectBar {
             // Hidden with its pages still open: a dot after the label, and the
             // tooltip says so (VD updateToggle, .brd-toggle.brd-running::after).
             bar = bar.child(w::nav_tab(IconName::Globe, "Browser", false)
-                .when(running, |d| d.child(div().flex_none().self_start().mt(px(0.)).ml(px(-1.)).size(px(11.)).rounded(T::R_PILL).bg(T::accent()).border_2().border_color(T::bg_secondary())))
+                .when(running, |d| d.child(w::dot(T::accent()).self_start().ml(px(-1.)).size(px(11.)).border_2().border_color(T::bg_secondary())))
                 .id("browser").flex_none().cursor_pointer()
                 .tooltip(w::tooltip(if running { "Browser: hidden, its pages still open (click to show)" } else { "Browser (desktop app)" }))
                 .on_click(move |_, window, cx| { if !registry::run_action(&s, "browser", window, cx) { s.nav.update(cx, |n, cx| n.set_drawer(true, cx)); } }));

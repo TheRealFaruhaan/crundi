@@ -128,12 +128,17 @@ struct Drag { src: u32, target: u32, x: f32, y: f32, dx: f32, dy: f32 }
 /// other leaf redraws the card alone (F105).
 struct Ghost { title: SharedString, at: (f32, f32), w: f32 }
 impl Render for Ghost {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("drag-card");
         let card = div().w(px(self.w)).h(T::PANE_HEAD).flex().items_center().px(T::SP_10).rounded(T::R_CARD).border_1().border_color(T::accent()).bg(T::bg_tertiary()).opacity(0.92)
             .shadow_lg().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text())
             .child(div().truncate().child(self.title.clone()));
-        div().size_0().child(deferred(anchored().position(point(px(self.at.0), px(self.at.1))).child(card)).with_priority(2))
+        // A window-sized frame at the window's corner, the card placed in it:
+        // near an edge the card keeps the pane's offset and runs off the
+        // window, as the web's copy of the pane does (no flip, F213).
+        let vp = window.viewport_size();
+        let frame = div().relative().w(vp.width).h(vp.height).child(card.absolute().left(px(self.at.0)).top(px(self.at.1)));
+        div().size_0().child(deferred(anchored().position_mode(AnchoredPositionMode::Window).position(point(px(0.), px(0.))).child(frame)).with_priority(2))
     }
 }
 
