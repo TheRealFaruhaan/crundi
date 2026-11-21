@@ -341,6 +341,33 @@ export async function run(T, t) {
     await T.until('…a note with no target: a toast', (p) => C(p).lastAck?.id === 'hl3' && /Cru: The Inbox/.test(p.toast || ''), 8000);
     await T.ui('tab', 'workbench');
   }
+  // A chat (F201): its pane placed and focused, flashed where the workbench lays it; with a
+  // note, Cru's ring around the pane and the note beside it.
+  {
+    await T.ui('toasts-clear');
+    await T.ui('tab', 'workbench');
+    await T.ui('new-chat');
+    const s = await T.until('a stub live chat pane for show_in_crundi', (s) => s.chat && s.panes?.includes(`live:${s.chat}`), 30000);
+    const key = `live:${s.chat}`;
+    await T.ui('tab', 'inbox');
+    await T.act('cru-ui-go', JSON.stringify({ id: 'ch1', tab: 'workbench', chat: s.chat }));
+    const p = await T.until('show_in_crundi with a chat: the Workbench, the chat pane flashed', (p) => p.tab === 'workbench' && C(p).lastAck?.id === 'ch1' && SP(p)?.flash, 8000);
+    const leaf = p.leaves?.find((l) => l.key === key);
+    const f = SP(p)?.flash;
+    const inLeaf = (a) => a && leaf && a.x >= leaf.x - 2 && a.y >= leaf.y - 2 && a.x + a.w <= leaf.x + leaf.w + 2 && a.y + a.h <= leaf.y + leaf.h + 2 && a.w > leaf.w / 2 && a.h > leaf.h / 2;
+    t.check('…answered ok, the pane focused, the flash on its leaf', C(p).lastAck.ok === true && p.focusedPane === key && inLeaf(f), { ack: C(p).lastAck, focused: p.focusedPane, flash: f, leaf });
+    const g = await T.until('…the flash goes after 2.2 s', (p) => !SP(p)?.flash, 5000);
+    t.check('…and nothing rings without a note', !SP(g)?.ring, SP(g));
+    await T.act('cru-ui-go', JSON.stringify({ id: 'ch2', tab: 'workbench', chat: s.chat, note: 'Your chat' }));
+    const r = await T.until('…a chat with a note: Cru\'s ring around its pane, the note beside it', (p) => C(p).lastAck?.id === 'ch2' && SP(p)?.ring?.note === 'Your chat', 8000);
+    t.check('…the ring is the chat pane\'s', /Chat/.test(SP(r).ring.target) && SP(r).ring.target.includes(key) && inLeaf(SP(r).ring.at), { ring: SP(r).ring, leaf: r.leaves?.find((l) => l.key === key) });
+    t.check('…the note is not a toast', !/Cru:/.test(r.toast || ''), r.toast);
+    await T.snap('desktop', 'cru-spot-chat');
+    await t.sleep(400);
+    await T.mouse('click', 4, 4);
+    await T.until('…a press anywhere: the chat\'s ring goes', (p) => !SP(p)?.ring, 4000);
+    await T.ui('pane-close', key);
+  }
   await T.act('cru-keyboard', 'false');
   await T.until('…off needs a Deepgram key here: it says so and stays', (p) => C(p).keyboard && /Deepgram key/.test(C(p).notice));
   await T.key('Escape');
