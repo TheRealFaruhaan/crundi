@@ -44,14 +44,35 @@ pub fn pick_menu_open(
     pick: impl Fn(&str, &mut Window, &mut App) + 'static,
     open: impl Fn(bool, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
+    pick_menu_toned(id, icon, tip, title, None, false, items, pick, open)
+}
+
+/// `pick_menu_open` whose button can be in a tone (`.brd-netbtn.server`,
+/// `.hp`, `.bad`, `.brd-devbtn.on`: the icon and an edge in that colour, the
+/// icon itself unchanged) and off (no tab: `nb.disabled = db.disabled = !t`).
+#[allow(clippy::too_many_arguments)]
+pub fn pick_menu_toned(
+    id: impl Into<ElementId>,
+    icon: IconName,
+    tip: impl Into<SharedString>,
+    title: impl Into<SharedString>,
+    tone: Option<Hsla>,
+    off: bool,
+    items: impl Fn() -> Vec<PickItem> + 'static,
+    pick: impl Fn(&str, &mut Window, &mut App) + 'static,
+    open: impl Fn(bool, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
     use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
+    use gpui_component::Disableable as _;
+    let mut b = icon_button(id, icon, tip).disabled(off);
+    if let Some(c) = tone { b = b.outline().text_color(c).border_color(c); }
     let (items, pick, title): (Rc<dyn Fn() -> Vec<PickItem>>, Rc<dyn Fn(&str, &mut Window, &mut App)>, SharedString) = (Rc::new(items), Rc::new(pick), title.into());
-    icon_button(id, icon, tip).dropdown_menu(move |mut menu, _, _| {
+    b.dropdown_menu(move |mut menu, _, _| {
         menu = menu.min_w(T::MENU_MIN_W).max_h(T::DIALOG_MAX_H).scrollable(true);
         if !title.is_empty() { menu = menu.label(title.clone()); }
         for it in items() {
             match it.kind {
-                "group" => { menu = menu.separator(); if !it.label.is_empty() { menu = menu.label(it.label.clone()); } }
+                "group" => { menu = menu.separator(); if !it.label.is_empty() { menu = menu.label(it.label.to_uppercase()); } }
                 "note" => { menu = menu.item(PopupMenuItem::new(it.label.clone()).disabled(true)); }
                 _ => {
                     let (pick, id) = (pick.clone(), it.id.clone());

@@ -66,6 +66,16 @@ pub fn cru_mark(live: bool) -> AnyElement {
         .into_any_element()
 }
 
+/// The kid screen's mark (.cv-ov.kid .cv-wm .cru-ic: 86 x 52, its short
+/// bars always breathing, every half second). Added by Desktop.
+pub fn cru_mark_kid() -> AnyElement {
+    let h = px(52.);
+    let pic = move |i: usize| img(frame(i)).h(h).w(h * (150.0 / 90.0));
+    div().flex_none()
+        .with_animation("cru-kid", Animation::new(Duration::from_millis(500)).repeat().with_max_fps(T::ANIM_FPS), move |_, t| div().flex_none().child(pic((t * FRAMES as f32) as usize)))
+        .into_any_element()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{breathe, svg_text};

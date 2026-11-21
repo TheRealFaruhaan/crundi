@@ -33,6 +33,9 @@ enum In {
 
 static INBOX: Mutex<Vec<In>> = Mutex::new(Vec::new());
 /// Queued for the main thread, which is woken for it (the pump runs only when woken).
+/// Requests from the server wait (the driver's pump reasons).
+pub fn waiting() -> bool { !INBOX.lock().unwrap().is_empty() }
+
 fn post(m: In) { INBOX.lock().unwrap().push(m); crundi_webview::wake(); }
 
 /// The socket's messages, on the main thread (the area's pump).
@@ -200,10 +203,11 @@ fn guarded(ty: &str, ms: u64, reply: Reply) -> Reply {
     let slot: Rc<RefCell<Option<Reply>>> = Rc::new(RefCell::new(Some(reply)));
     let s2 = slot.clone();
     let ty = ty.to_string();
-    later(Duration::from_millis(ms), move || {
+    let timer = crundi_webview::later_id(Duration::from_millis(ms), move || {
         if let Some(r) = s2.borrow_mut().take() { r(err_v(format!("{ty} timed out after {ms}ms (page may be stalled or showing a dialog)"))); }
     });
-    Box::new(move |v| { if let Some(r) = slot.borrow_mut().take() { r(v); } })
+    // Answered in time: the timeout goes with it (else it wakes the idle pump later, F155).
+    Box::new(move |v| { if let Some(r) = slot.borrow_mut().take() { crundi_webview::cancel(timer); r(v); } })
 }
 
 fn timeout_of(ty: &str, m: &Value) -> u64 {

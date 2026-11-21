@@ -37,7 +37,7 @@ mod shimmer; pub use shimmer::shimmer;
 mod markdown; pub use markdown::markdown;
 pub mod tip; pub use tip::{tip, tooltip};
 mod icon; pub use icon::icon;
-pub mod cru_mark; pub use cru_mark::cru_mark;
+pub mod cru_mark; pub use cru_mark::{cru_mark, cru_mark_kid};
 pub mod brand_mark; pub use brand_mark::{boot_mark, brand_head, brand_mark, brand_mark_with, sign_in_mark, warm_marks};
 pub mod scrollbar; pub use scrollbar::scrollbar;
 pub mod ref_drag; pub use ref_drag::{drag_ref, drag_ref_row, edge_scroll, ref_target, ref_target_drag, ref_text, RefDrag, Scroller};
@@ -72,7 +72,7 @@ pub mod fields; pub use fields::{set_date, set_time, date_input, date_state, dat
 
 mod head_button;
 pub use head_button::{head_button, menu_item, menu_panel, HeadContent, HeadLook};
-pub mod pick_menu; pub use pick_menu::{pick_menu, pick_menu_open, PickItem};
+pub mod pick_menu; pub use pick_menu::{pick_menu, pick_menu_open, pick_menu_toned, PickItem};
 pub mod segmented_icons; pub use segmented_icons::segmented_icons;
 pub mod icon_tag; pub use icon_tag::icon_tag;
 pub mod round_button; pub use round_button::{round_button, round_pill_button, round_solid};
@@ -618,6 +618,21 @@ pub fn list_row(id: impl Into<ElementId>, icon: IconName, title: impl Into<Share
             .child(div().text_size(T::TEXT_13).text_color(T::text()).truncate().child(title.into()))
             .when(!sub.is_empty(), |d| d.child(div().text_size(T::TEXT_11).text_color(T::text_muted()).truncate().child(sub))))
         .when(!meta.is_empty(), |d| d.child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(meta)))
+}
+
+/// `list_row` with no icon, its second line in the monospace face (an
+/// address): the browser drawer's history rows (.brd-hrow: the title, the
+/// address under it, how long ago on the right) and the address bar's
+/// suggestions (the <datalist>'s rows). Added by Desktop.
+pub fn address_row(id: impl Into<ElementId>, title: impl Into<SharedString>, url: impl Into<SharedString>, meta: impl Into<SharedString>) -> Stateful<Div> {
+    let url: SharedString = url.into();
+    let meta: SharedString = meta.into();
+    div().id(id).flex().items_center().gap(T::SP_10).min_h(T::CONTROL).px(T::SP_4).py(T::SP_6).rounded(T::R_CONTROL).cursor_pointer()
+        .hover(|d| d.bg(T::bg_hover()))
+        .child(div().flex().flex_col().flex_1().min_w_0()
+            .child(div().text_size(T::TEXT_13).text_color(T::text()).truncate().child(title.into()))
+            .when(!url.is_empty(), |d| d.child(div().text_size(T::TEXT_11).font_family(T::MONO).text_color(T::text_muted()).truncate().child(url))))
+        .when(!meta.is_empty(), |d| d.child(div().flex_none().text_size(T::TEXT_11).text_color(T::text_muted()).child(meta)))
 }
 
 // ─── Dialogs and toasts ───

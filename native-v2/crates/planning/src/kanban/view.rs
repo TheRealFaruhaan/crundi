@@ -257,18 +257,19 @@ impl Render for Toolbar {
 /// the column's foot ("+ Add task", the blank card; the end's drop line).
 #[derive(Clone, PartialEq)]
 pub(crate) enum Item {
-    Card { status: String, card: Rc<Card>, dragged: bool, clip: bool, line: bool },
+    Card { status: String, card: Rc<Card>, dragged: bool, clip: bool, line: bool, flash: u64 },
     Foot { status: String, adding: bool, line: bool, other: bool },
 }
 
 /// A column's items, from its cards and the drag.
-fn items_of(c: &Col, drag: &Drag, clip: Option<&str>) -> Vec<Item> {
+fn items_of(c: &Col, drag: &Drag, clip: Option<&str>, flash: Option<(&str, u64)>) -> Vec<Item> {
     let dragging = drag.drag.as_ref();
     let here = dragging.is_some() && !c.other && drag.target.as_ref().is_some_and(|t| t.0 == c.status);
     let before = if here { drag.target.as_ref().map(|t| t.2.clone()).unwrap_or_default() } else { String::new() };
     let mut v: Vec<Item> = c.cards.iter().map(|cd| Item::Card {
         status: c.status.clone(), card: Rc::new(cd.clone()),
         dragged: dragging.is_some_and(|d| d.id == cd.id), clip: clip == Some(cd.id.as_str()), line: here && before == cd.id,
+        flash: flash.filter(|f| f.0 == cd.id).map(|f| f.1).unwrap_or(0),
     }).collect();
     v.push(Item::Foot { status: c.status.clone(), adding: c.adding, line: here && before.is_empty(), other: c.other });
     v
@@ -283,11 +284,21 @@ fn drop_line() -> Div { div().flex_none().h(T::SP_2).rounded(T::R_PILL).bg(T::ac
 /// An item's elements (its top gap is the column body's gap or padding).
 fn item_el(it: &Item, card_w: Pixels, inp: &Inputs, live: bool, cx: &App) -> AnyElement {
     match it {
-        Item::Card { status, card, dragged, clip, line } => div().w_full().flex().flex_col().gap(T::SP_8).px(T::SP_8).pt(T::SP_8)
+        Item::Card { status, card, dragged, clip, line, flash } => div().w_full().flex().flex_col().gap(T::SP_8).px(T::SP_8).pt(T::SP_8)
             .when(*line, |d| d.child(drop_line()))
             // At rest: one element, laid out once (card_el.rs); the card under
             // the pointer, or in use, the live controls.
-            .map(|d| if live || card.menu_open || card.adding { d.child(card_el(card, status, *dragged, *clip, card_w, inp, true, cx)) } else {
+            .map(|d| if *flash > 0 {
+                // Shown from elsewhere (Cru's show_in_crundi): .jump-flash, an
+                // accent ring and glow that hold, then fade (2.2 s).
+                let el = if live || card.menu_open || card.adding { card_el(card, status, *dragged, *clip, card_w, inp, true, cx).into_any_element() } else {
+                    super::card_el::CardEl { key: super::card_el::Key { card: (**card).clone(), dragged: *dragged, clip: *clip, width: px(0.) }, cache: inp.cards.clone(), status: status.clone(), boxes: inp.boxes.clone() }.into_any_element()
+                };
+                d.child(div().rounded(T::R_CARD).child(el).with_animation(("kanban-flash", *flash as usize), Animation::new(std::time::Duration::from_millis(2200)).with_max_fps(T::ANIM_FPS), |d, t| {
+                    let a = if t < 0.6 { 1. } else { 1. - (t - 0.6) / 0.4 };
+                    d.shadow(vec![BoxShadow::new(px(0.), px(0.), T::accent().opacity(a)).spread_radius(px(3.)), BoxShadow::new(px(0.), px(0.), T::accent_dim().opacity(a)).blur_radius(px(18.)).spread_radius(px(4.))])
+                }))
+            } else if live || card.menu_open || card.adding { d.child(card_el(card, status, *dragged, *clip, card_w, inp, true, cx)) } else {
                 d.child(super::card_el::CardEl { key: super::card_el::Key { card: (**card).clone(), dragged: *dragged, clip: *clip, width: px(0.) }, cache: inp.cards.clone(), status: status.clone(), boxes: inp.boxes.clone() })
             })
             .into_any_element(),
@@ -501,7 +512,7 @@ impl ColumnView {
         let d = k.drag.read(cx);
         let col = k.cols.get(self.idx).cloned();
         let Some(c) = col.as_ref() else { let had = self.col.take().is_some(); return had };
-        let items = items_of(c, d, k.clip.as_ref().map(|c| c.task.as_str()));
+        let items = items_of(c, d, k.clip.as_ref().map(|c| c.task.as_str()), k.flash.as_ref().map(|f| (f.0.as_str(), f.1)));
         let drop_here = d.drag.is_some() && !c.other && d.target.as_ref().is_some_and(|t| t.0 == c.status);
         let head_changed = self.col.as_ref().is_none_or(|o| o.label != c.label || o.cards.len() != c.cards.len() || o.other != c.other || o.status != c.status);
         let spliced = splice_diff(&self.list, &self.items, &items);
@@ -608,7 +619,7 @@ impl StackView {
             if i > 0 { rows.push(SRow::Gap(T::SP_10)); }
             let drop = d.drag.is_some() && !c.other && d.target.as_ref().is_some_and(|t| t.0 == c.status);
             rows.push(SRow::Head { col: c.clone(), drop });
-            let items = items_of(c, d, clip);
+            let items = items_of(c, d, clip, k.flash.as_ref().map(|f| (f.0.as_str(), f.1)));
             let n = items.len();
             for (j, it) in items.into_iter().enumerate() { rows.push(SRow::It { item: it, drop, other: c.other, last: j + 1 == n }); }
         }

@@ -13,6 +13,9 @@ pub struct Nav {
     /// from, and since when.
     pub fold_from: Option<(Pixels, Instant)>,
     pub drawer_open: bool,
+    /// The project's browser has tabs (Desktop tells it): hidden, the tab
+    /// bar's Browser shows a dot (.brd-toggle.brd-running).
+    pub drawer_running: bool,
     pub drawer_w: Pixels,
     /// Docker on the server (GET /api/docker/status, once a sign-in):
     /// None until it answers; the tab only exists where it is installed.
@@ -20,7 +23,7 @@ pub struct Nav {
 }
 
 impl Default for Nav {
-    fn default() -> Self { Nav { tab: "workbench".into(), folded: false, fold_from: None, drawer_open: false, drawer_w: T::DRAWER_W, docker: None } }
+    fn default() -> Self { Nav { tab: "workbench".into(), folded: false, fold_from: None, drawer_open: false, drawer_running: false, drawer_w: T::DRAWER_W, docker: None } }
 }
 
 /// The tabs that mean something with no project open (the web's
@@ -55,6 +58,10 @@ impl Nav {
 
     pub fn show_tab(&mut self, tab: &str, cx: &mut Context<Self>) {
         if self.tab != tab { self.tab = tab.to_string(); cx.notify(); }
+    }
+
+    pub fn set_drawer_running(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.drawer_running != on { self.drawer_running = on; cx.notify(); }
     }
 
     pub fn set_drawer(&mut self, open: bool, cx: &mut Context<Self>) {

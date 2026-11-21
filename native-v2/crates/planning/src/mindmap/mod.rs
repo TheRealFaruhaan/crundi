@@ -1530,6 +1530,10 @@ fn h_act(a: &str, window: &mut Window, cx: &mut App) {
 
 // ─── Jumping to an idea (the web's flashMindmapNode) ───
 
+/// Is the idea on this project's mind map? None: not loaded yet. Added by
+/// Desktop (Cru's show_in_crundi, F150).
+pub fn has_node(id: &str, cx: &mut App) -> Option<bool> { with(cx, |s| s.loaded.then(|| s.nodes.iter().any(|n| n.id == id))) }
+
 /// Show an idea: unfold what hides it, put the ring on it and flash it;
 /// `open` opens its details too. For the Media "jump to source".
 pub fn flash_node(id: &str, open: bool, window: &mut Window, cx: &mut App) {

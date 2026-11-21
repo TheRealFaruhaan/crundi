@@ -41,6 +41,10 @@ pub fn project() -> String { CTX.with(|c| c.borrow().project.clone()) }
 /// Run with the window at the next pump.
 pub fn on_app(f: impl FnOnce(&mut Window, &mut App) + 'static) { EFFECTS.with(|e| e.borrow_mut().push(Box::new(f))); crundi_webview::wake(); }
 pub fn has_effects() -> bool { EFFECTS.with(|e| !e.borrow().is_empty()) }
+/// The logic said the views' copies moved (not taken yet).
+pub fn is_dirty() -> bool { DIRTY.with(|d| *d.borrow()) }
+/// Work from other threads waits for the main thread.
+pub fn has_main() -> bool { !MAIN.lock().unwrap().is_empty() }
 pub fn take_effects() -> Vec<Effect> { EFFECTS.with(|e| std::mem::take(&mut *e.borrow_mut())) }
 
 /// The drawer's state changed: draw it again.
@@ -202,9 +206,14 @@ pub fn lock_window(on: bool) {
             win.activate_window();
             let full = !win.is_fullscreen();
             if full { win.toggle_fullscreen(); }
+            // Above the others and off the taskbar; the desktop's ways out off.
+            crate::kidlock::window(win, true);
+            crate::kidlock::desktop(true);
             LOCKED.with(|l| l.set((true, full)));
         } else {
             if made_full && win.is_fullscreen() { win.toggle_fullscreen(); }
+            crate::kidlock::window(win, false);
+            crate::kidlock::desktop(false);
             LOCKED.with(|l| l.set((false, false)));
         }
     });

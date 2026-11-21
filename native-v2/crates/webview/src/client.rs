@@ -256,6 +256,15 @@ fn owner(id: u64) -> Option<Owner> { with(|c| c.owners.get(&id).cloned()) }
 
 /// The main thread's part (lib.rs `pump`, every few ms): the host's events
 /// to their views, a host that went, the idle stop.
+/// What waits in the inbox, by kind (the test driver's "why a pump ran").
+pub fn waiting() -> Vec<String> {
+    INBOX.lock().unwrap().iter().map(|m| match m {
+        In::Frame(_, id, _) => format!("frame:{id}"),
+        In::Gone(_) => "gone".to_string(),
+        In::Ev(_, e) => { let d = format!("{e:?}"); let name: String = d.chars().take_while(|c| c.is_alphanumeric()).collect(); match ev_id(e) { Some(id) => format!("{name}:{id}"), None => name } }
+    }).collect()
+}
+
 pub fn pump() {
     let all = std::mem::take(&mut *INBOX.lock().unwrap());
     for m in all {

@@ -41,7 +41,7 @@ pub fn glide_ms(from: Option<(f64, f64)>, to: (f64, f64)) -> f64 {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Step {
     /// The chat's cursor at (x, y), then wait ms.
-    Cursor { x: f64, y: f64, pressed: bool, ms: f64, end: bool },
+    Cursor { x: f64, y: f64, pressed: bool, ms: f64, end: bool, click: bool },
     /// A mouse event: type, x, y, button, buttons, clickCount.
     Ev(&'static str, f64, f64, String, u32, u32),
     Sleep(f64),
@@ -64,13 +64,13 @@ pub fn plan(m: &Value, st: &mut Ptr) -> Result<Vec<Step>, String> {
         let from = st.x.zip(st.y);
         let ms = ms.unwrap_or_else(|| glide_ms(from, (tx, ty))).clamp(0.0, MAX_MS).round();
         if st.down.is_none() {
-            v.push(Step::Cursor { x: tx, y: ty, pressed: false, ms, end: false });
+            v.push(Step::Cursor { x: tx, y: ty, pressed: false, ms, end: false, click: false });
             let (b, bs) = held(st);
             v.push(Step::Ev("mouseMoved", tx, ty, b, bs, 0));
         } else {
             let f = from.unwrap_or((tx, ty));
             let n = (ms / 16.0).round().clamp(2.0, 120.0) as usize;
-            v.push(Step::Cursor { x: tx, y: ty, pressed: true, ms: 0.0, end: false });
+            v.push(Step::Cursor { x: tx, y: ty, pressed: true, ms: 0.0, end: false, click: false });
             for i in 1..=n {
                 let (b, bs) = held(st);
                 v.push(Step::Ev("mouseMoved", f.0 + (tx - f.0) * i as f64 / n as f64, f.1 + (ty - f.1) * i as f64 / n as f64, b, bs, 0));
@@ -82,14 +82,14 @@ pub fn plan(m: &Value, st: &mut Ptr) -> Result<Vec<Step>, String> {
     let press = |v: &mut Vec<Step>, st: &mut Ptr, count: u32| {
         st.down = Some(button.clone());
         let (px, py) = (st.x.unwrap_or(0.0), st.y.unwrap_or(0.0));
-        v.push(Step::Cursor { x: px, y: py, pressed: true, ms: 0.0, end: false });
+        v.push(Step::Cursor { x: px, y: py, pressed: true, ms: 0.0, end: false, click: true });
         v.push(Step::Ev("mousePressed", px, py, button.clone(), bit(&button), count));
     };
     let release = |v: &mut Vec<Step>, st: &mut Ptr, count: u32| {
         let b = st.down.take().unwrap_or_else(|| button.clone());
         let (px, py) = (st.x.unwrap_or(0.0), st.y.unwrap_or(0.0));
         v.push(Step::Ev("mouseReleased", px, py, b, 0, count));
-        v.push(Step::Cursor { x: px, y: py, pressed: false, ms: 0.0, end: false });
+        v.push(Step::Cursor { x: px, y: py, pressed: false, ms: 0.0, end: false, click: false });
     };
     match action {
         "move" => travel(&mut v, st, x.unwrap(), y.unwrap(), dur),
@@ -117,7 +117,7 @@ pub fn plan(m: &Value, st: &mut Ptr) -> Result<Vec<Step>, String> {
             release(&mut v, st, 1);
         }
     }
-    if let (Some(x), Some(y)) = (st.x, st.y) { v.push(Step::Cursor { x, y, pressed: st.down.is_some(), ms: 0.0, end: true }); }
+    if let (Some(x), Some(y)) = (st.x, st.y) { v.push(Step::Cursor { x, y, pressed: st.down.is_some(), ms: 0.0, end: true, click: false }); }
     Ok(v)
 }
 
@@ -131,9 +131,10 @@ fn run(i: usize, drawer: bool, mut steps: std::collections::VecDeque<Step>, done
             browser::cdp(i, "Input.dispatchMouseEvent", p, Box::new(move |_, _| run(i, drawer, steps, done)));
         }
         Step::Sleep(ms) => later(Duration::from_millis(ms.max(0.0) as u64), move || run(i, drawer, steps, done)),
-        Step::Cursor { x, y, ms, end, .. } => {
+        Step::Cursor { x, y, ms, end, click, .. } => {
             if drawer {
-                browser::with(|st| { let p = &mut st.panels[i]; p.cursor_at = Some((x as f32, y as f32, std::time::Instant::now())); p.cursor_ms = ms as f32; });
+                // A press: a ripple where it lands (VD cursorRipple, a.click).
+                browser::with(|st| { let p = &mut st.panels[i]; p.cursor_at = Some((x as f32, y as f32, std::time::Instant::now())); p.cursor_ms = ms as f32; if click { p.ripples += 1; } });
                 browser::sync(i);
                 if end { cursor_fade(i); }
             }

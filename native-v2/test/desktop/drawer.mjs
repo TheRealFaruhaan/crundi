@@ -310,7 +310,7 @@ export async function run(T, t) {
     const d = rendersSince(a, b);
     t.check('idle, the drawer open on a still page: no frames', f.frames === 0, { frames: f, renders: d });
     t.check('…no view re-renders', Object.values(d).every((n) => n === 0), d);
-    t.check('…and the area\'s pump sleeps', T.D(b).pumps - T.D(a).pumps <= 1, { before: T.D(a).pumps, after: T.D(b).pumps });
+    t.check('…and the area\'s pump sleeps', T.D(b).pumps - T.D(a).pumps <= 1, { before: T.D(a).pumps, after: T.D(b).pumps, why: (T.D(b).pumpWhy || []).slice(-Math.max(1, T.D(b).pumps - T.D(a).pumps)) });
   }
   await T.ui('tab', 'workbench');
 }

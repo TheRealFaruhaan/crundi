@@ -81,7 +81,8 @@ pub fn start(config_dir: &std::path::Path) -> bool {
 
 thread_local! {
     static STARTED: RefCell<bool> = const { RefCell::new(false) };
-    static TIMERS: RefCell<Vec<(Instant, Box<dyn FnOnce()>)>> = RefCell::new(Vec::new());
+    static TIMERS: RefCell<Vec<(Instant, u64, Box<dyn FnOnce()>, &'static std::panic::Location<'static>)>> = RefCell::new(Vec::new());
+    static TIMER_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// The browser is there to use (its host may not be running yet: it starts
@@ -89,10 +90,22 @@ thread_local! {
 pub fn started() -> bool { STARTED.with(|s| *s.borrow()) && client::available() }
 
 /// Run `f` on the main thread after `after` (at the pump after it is due).
-pub fn later(after: Duration, f: impl FnOnce() + 'static) {
-    TIMERS.with(|t| t.borrow_mut().push((Instant::now() + after, Box::new(f))));
+#[track_caller]
+pub fn later(after: Duration, f: impl FnOnce() + 'static) { later_id(after, f); }
+
+/// `later`, with an id to `cancel` it by (a timeout that is moot once its
+/// answer came must not wake the pump when it falls due: F155).
+#[track_caller]
+pub fn later_id(after: Duration, f: impl FnOnce() + 'static) -> u64 {
+    let at = std::panic::Location::caller();
+    let id = TIMER_SEQ.with(|s| { s.set(s.get() + 1); s.get() });
+    TIMERS.with(|t| t.borrow_mut().push((Instant::now() + after, id, Box::new(f), at)));
     wake();
+    id
 }
+
+/// A timer from `later_id` that has not run yet goes.
+pub fn cancel(id: u64) { TIMERS.with(|t| t.borrow_mut().retain(|x| x.1 != id)); }
 
 type Waker = Box<dyn Fn() + Send + Sync>;
 static WAKER: std::sync::OnceLock<Waker> = std::sync::OnceLock::new();
@@ -113,6 +126,17 @@ pub fn next_due() -> Option<Instant> {
     [t, client::next_due(), engine::next_due()].into_iter().flatten().min()
 }
 
+/// Why a pump would run now (the test driver's diagnostics): the host's
+/// events waiting, the timers due, the deferred calls.
+pub fn waiting() -> Vec<String> {
+    let now = Instant::now();
+    let mut v = client::waiting();
+    TIMERS.with(|t| for x in t.borrow().iter().filter(|x| x.0 <= now) { v.push(format!("timer:{}:{}", x.3.file().rsplit('/').next().unwrap_or(""), x.3.line())); });
+    if engine::next_due().is_some_and(|t| t <= now) { v.push("engine-due".into()); }
+    if client::next_due().is_some_and(|t| t <= now) { v.push("client-due".into()); }
+    v
+}
+
 /// The pump (main thread, when woken or due): the calls deferred from the
 /// window's handlers, the timers that are due, then the host's events.
 pub fn pump() {
@@ -122,7 +146,7 @@ pub fn pump() {
         let mut t = t.borrow_mut();
         let mut due = vec![];
         let mut i = 0;
-        while i < t.len() { if t[i].0 <= now { due.push(t.remove(i).1); } else { i += 1; } }
+        while i < t.len() { if t[i].0 <= now { due.push(t.remove(i).2); } else { i += 1; } }
         due
     });
     for f in due { f(); }

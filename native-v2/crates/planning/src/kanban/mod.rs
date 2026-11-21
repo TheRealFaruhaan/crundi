@@ -98,6 +98,11 @@ pub struct KStore {
     /// The driver's "kanban-all-live": every card with its live controls
     /// (to check that a card at rest looks the same as a live one).
     pub(crate) all_live: bool,
+    /// A card shown from elsewhere (Cru's show_in_crundi): its id and the
+    /// flash's count (each show flashes again), until the flash is over.
+    pub(crate) flash: Option<(String, u64)>,
+    /// The last load that came back (its load_gen).
+    loaded_gen: u64,
 }
 
 impl KStore {
@@ -106,7 +111,7 @@ impl KStore {
             board: None, project: String::new(), view: "board".into(), state: "loading".into(), error: String::new(),
             menu_open: HashSet::new(), adding_task: None, adding_todo: None, media_task: HashMap::new(), media_todo: HashMap::new(),
             thumbs: HashMap::new(), load_gen: 0, clip: None, task_input: None, todo_input: None, subs: vec![],
-            cols: vec![], trash: Rc::default(), history: Rc::default(), boxes: Rc::default(), drag: cx.new(|_| Drag::default()), all_live: false,
+            cols: vec![], trash: Rc::default(), history: Rc::default(), boxes: Rc::default(), drag: cx.new(|_| Drag::default()), all_live: false, flash: None, loaded_gen: 0,
         }
     }
 
@@ -216,6 +221,9 @@ pub fn on_signed_out(_: &Stores, cx: &mut App) {
     refresh(cx);
 }
 
+/// Load the board now; its load's number (for `show_card`'s `after`).
+pub fn load_now(cx: &mut App) -> u64 { load(cx); store(cx).read(cx).load_gen }
+
 /// The board again, from the server (with its media).
 pub fn load(cx: &mut App) {
     let p = crundi_shell::project(cx);
@@ -230,6 +238,7 @@ pub fn load(cx: &mut App) {
         Ok(json!({ "b": b, "m": m }))
     }, move |r, cx| {
         if with(cx, |k| k.load_gen != lg) || crundi_shell::project(cx) != p { return; }
+        with(cx, |k| k.loaded_gen = lg);
         match r {
             Err(e) => with(cx, |k| { k.board = None; k.error = format!("Failed to load board: {e}"); k.state = "error".into(); }),
             Ok(v) => {
@@ -571,6 +580,23 @@ pub(crate) fn pointer_up(cx: &mut App) {
 // ─── For the test driver ───
 
 /// The driver's actions this screen answers (native-gpui's names).
+/// Show a card from elsewhere (Cru's show_in_crundi, the web's cruUiGo card:
+/// flashKanbanTarget, then its Edit dialog when `open`). None: the board of
+/// this project is not loaded yet (ask again); Some(false): no such card.
+/// Added by Desktop (F150), for the Kanban tab already on show.
+/// `after`: a load from `load_now` that must have come back first (the
+/// web's `await loadKanban()`: a card made a moment ago is on the board).
+pub fn show_card(id: &str, open: bool, after: u64, window: &mut Window, cx: &mut App) -> Option<bool> {
+    let project = crundi_shell::project(cx);
+    let (loaded, has) = { let k = store(cx).read(cx); (k.board.is_some() && k.project == project && k.loaded_gen >= after, k.task(id).is_some()) };
+    if !loaded { return None; }
+    if !has { return Some(false); }
+    let n = store(cx).update(cx, |k, cx| { let n = k.flash.as_ref().map(|f| f.1).unwrap_or(0) + 1; k.flash = Some((id.to_string(), n)); cx.notify(); n });
+    crate::util::after(cx, 2400, move |_, cx| { store(cx).update(cx, |k, cx| if k.flash.as_ref().is_some_and(|f| f.1 == n) { k.flash = None; cx.notify(); }); });
+    if open { act("edit-task", id, "", window, cx); }
+    Some(true)
+}
+
 pub fn test_ui(_: &Stores, name: &str, args: &[String], window: &mut Window, cx: &mut App) -> Option<Value> {
     let a = |i: usize| args.get(i).cloned().unwrap_or_default();
     let ok = json!({ "ok": true });
@@ -602,7 +628,7 @@ pub fn state(_: &Stores, window: &mut Window, cx: &mut App) -> Value {
     let (dt, dd) = (&k.trash.0, &k.trash.1);
     let b = k.boxes.borrow();
     json!({
-        "state": k.state, "error": k.error, "view": k.view, "trash": dt.len(),
+        "state": k.state, "error": k.error, "view": k.view, "trash": dt.len(), "flash": k.flash.as_ref().map(|f| f.0.clone()),
         "columns": k.cols.iter().map(|c| json!({ "status": c.status, "label": c.label, "other": c.other, "adding": c.adding,
             "cards": c.cards.iter().map(|cd| card_json(cd)).collect::<Vec<_>>() })).collect::<Vec<_>>(),
         "deletedTasks": dt.iter().map(|r| json!({ "text": r.text, "task": r.task })).collect::<Vec<_>>(),

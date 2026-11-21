@@ -53,7 +53,7 @@ export async function run(T, t) {
   await t.sleep(2500);
   let s1 = await T.state();
   t.check('idle on the Inbox: no frames', T.frames.since(m).frames === 0, T.frames.since(m));
-  t.check('…and the area\'s pump sleeps', D(s1).pumps === D(s0).pumps, { before: D(s0).pumps, after: D(s1).pumps });
+  t.check('…and the area\'s pump sleeps', D(s1).pumps === D(s0).pumps, { before: D(s0).pumps, after: D(s1).pumps, due: D(s1).due, why: (D(s1).pumpWhy || []).slice(-Math.max(1, D(s1).pumps - D(s0).pumps)), hidden: D(s1).hidden });
 
   // v2: a live event re-renders the inbox's views and nothing else.
   s0 = await T.state();

@@ -614,6 +614,7 @@ impl T {
     pub const CRU_W: Pixels = px(400.);
     pub const CRU_H: Pixels = px(600.);
     pub const CRU_W_SCR: Pixels = px(580.);
+    pub const CRU_W_FULL: Pixels = px(1000.);
     pub const CRU_H_SCR: Pixels = px(760.);
     pub const CRU_ROOM: Pixels = px(70.);
     pub const CRU_FIELD_MIN: Pixels = px(230.);

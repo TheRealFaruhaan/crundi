@@ -75,6 +75,7 @@ static SHOWN: Mutex<Option<(bool, State)>> = Mutex::new(None);
 fn pick(id: &str) { PICKS.lock().unwrap().push(id.to_string()); crundi_webview::wake(); }
 
 /// The tray's picks since the last pump.
+pub fn has_picks() -> bool { !PICKS.lock().unwrap().is_empty() }
 pub fn take_picks() -> Vec<String> { std::mem::take(&mut *PICKS.lock().unwrap()) }
 
 /// Picks put back for the pump with the window (opened again for them).

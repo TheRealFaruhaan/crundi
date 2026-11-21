@@ -1926,6 +1926,7 @@ dependencies = [
  "crundi-chat",
  "crundi-core",
  "crundi-operations",
+ "crundi-planning",
  "crundi-shell",
  "crundi-theme",
  "crundi-webview",

@@ -100,6 +100,9 @@ pub struct St {
     server: String,
     /// Waiting for the new push-to-talk shortcut (the page takes the keys).
     ptt_capturing: bool,
+    /// The line beside Reset (#voice-ptt-status): what to do while
+    /// capturing, "Saved on this device" once set, nothing after Esc.
+    ptt_status: &'static str,
     ptt_focus: Option<FocusHandle>,
     scroll_to: Option<&'static str>,
     /// The driver asked to bring the open skill into view (its row's place as last laid out).
@@ -144,6 +147,7 @@ impl Default for St {
             page: None,
             server: String::new(),
             ptt_capturing: false,
+            ptt_status: "",
             ptt_focus: None,
             scroll_to: None,
             reveal_skill: false,
@@ -1434,7 +1438,7 @@ const TELEGRAM: &[u8] = include_bytes!("../assets/settings-icons/telegram.svg");
 /// Change: the next key pressed with its modifiers becomes the shortcut (the
 /// page has the focus and takes the keys until then; Esc cancels).
 fn ptt_begin(window: &mut Window, cx: &mut App) {
-    upd(cx, |s| s.ptt_capturing = true);
+    upd(cx, |s| { s.ptt_capturing = true; s.ptt_status = "Press the keys you want (Esc to cancel)"; });
     if let Some(f) = get(cx, |s| s.ptt_focus.clone()) { window.focus(&f, cx); }
 }
 
@@ -1442,8 +1446,8 @@ fn ptt_key(e: &KeyDownEvent, _: &mut Window, cx: &mut App) {
     if !get(cx, |s| s.ptt_capturing) { return; }
     match crate::ptt::capture(&e.keystroke) {
         crate::ptt::Capture::Wait => {}
-        crate::ptt::Capture::Cancel => upd(cx, |s| s.ptt_capturing = false),
-        crate::ptt::Capture::Set(p) => { crate::ptt::set(Some(&p)); upd(cx, |s| s.ptt_capturing = false); }
+        crate::ptt::Capture::Cancel => upd(cx, |s| { s.ptt_capturing = false; s.ptt_status = ""; }),
+        crate::ptt::Capture::Set(p) => { crate::ptt::set(Some(&p)); upd(cx, |s| { s.ptt_capturing = false; s.ptt_status = "Saved on this device"; }); }
     }
     cx.stop_propagation();
 }
@@ -1568,14 +1572,15 @@ fn voice_body(window: &mut Window, cx: &mut App) -> AnyElement {
     let dk = c::line::<St>(window, cx, "vs-dkey", keep, true, None);
     let xk = c::line::<St>(window, cx, "vs-xkey", keep, true, None);
     // On this device (the web's, kept per device): the push-to-talk shortcut.
-    let capturing = st(cx).ptt_capturing;
+    // (The web's: the key shown as it is, Change and Reset, and the status line beside them.)
+    let status = st(cx).ptt_status;
     let device = col(T::SP_8).child(sub_head("On this device"))
         .child(row().flex_wrap()
             .child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).child("Push to talk"))
-            .child(w::kbd(if capturing { "Press the new shortcut\u{2026}".to_string() } else { crate::ptt::label(&crate::ptt::get()) }).id("vs-ptt-key"))
-            .child(w::button("vs-ptt-change", if capturing { "Waiting\u{2026}" } else { "Change" }).on_click(|_, window, cx| ptt_begin(window, cx)))
-            .child(w::button("vs-ptt-reset", "Reset").on_click(|_, _, cx| { crate::ptt::set(None); upd(cx, |s| s.ptt_capturing = false); })))
-        .when(capturing, |d| d.child(hint("Press the keys together (with Ctrl, Alt or Super, or a function key). Esc cancels.")))
+            .child(w::kbd(crate::ptt::label(&crate::ptt::get())).id("vs-ptt-key"))
+            .child(w::button("vs-ptt-change", "Change").on_click(|_, window, cx| ptt_begin(window, cx)))
+            .child(w::button("vs-ptt-reset", "Reset").on_click(|_, _, cx| { crate::ptt::set(None); upd(cx, |s| { s.ptt_capturing = false; s.ptt_status = ""; }); }))
+            .when(!status.is_empty(), |d| d.child(div().id("vs-ptt-status").text_size(T::TEXT_12).text_color(T::text_muted()).child(status))))
         .children(crate::compat::settings_parts(window, cx, "voice-device"));
     let s = st(cx);
     let v = &s.voice;

@@ -24,7 +24,17 @@ const SERVICES_EVERY: Duration = Duration::from_secs(15);
 /// A file for Cru's next turn (the web's S.att): uploading, uploaded (its
 /// id and kind), or failed (why).
 #[derive(Clone, Default, Debug, PartialEq)]
-pub struct Att { pub name: String, pub id: String, pub kind: String, pub up: bool, pub bad: String, pub r#ref: String }
+pub struct Att { pub name: String, pub id: String, pub kind: String, pub up: bool, pub bad: String, pub r#ref: String,
+    /// A picture's thumbnail on its chip (previewOf: png, jpeg, webp, gif).
+    pub thumb: Option<std::sync::Arc<gpui::Image>> }
+
+/// A picture's own bytes as an image for its chip (previewOf's types only).
+fn thumb_of(bytes: &[u8]) -> Option<std::sync::Arc<gpui::Image>> {
+    use gpui::ImageFormat as F;
+    let f = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) { F::Png } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) { F::Jpeg }
+        else if bytes.starts_with(b"GIF8") { F::Gif } else if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" { F::Webp } else { return None };
+    Some(std::sync::Arc::new(gpui::Image::from_bytes(f, bytes.to_vec())))
+}
 
 #[derive(Default)]
 pub struct Cru {
@@ -50,6 +60,11 @@ pub struct Cru {
     pub say_id: u64,
     pub last_voice: Option<Instant>,
     pub level: f32,
+    /// show_in_crundi's last answer to the server (the driver reads it).
+    pub last_ack: Value,
+    /// The microphone's loudest moment of late, and when (recentMicPeak).
+    pub peak: f32,
+    pub peak_at: Option<Instant>,
     pub epoch: u64,
     pub unread: i64,
     pub menu: bool,
@@ -288,6 +303,13 @@ fn on_listen(epoch: u64, ev: voiceio::Ev) {
             with(|c| { if c.phase == "waking" { c.phase = "listen".into(); } c.last_voice = Some(Instant::now()); });
             tone_out(false);
         }
+        // A video playing: what the microphone hears is the video; only "Hey
+        // Cru" alone, said loudly over it, gets Cru back (the video pauses).
+        voiceio::Ev::Msg(voice::Msg::Interim(_)) if crate::cru_screen::video_playing() => return,
+        voiceio::Ev::Msg(voice::Msg::Utterance(t)) if crate::cru_screen::video_playing() => {
+            if is_calling(&t) && with(|c| c.peak_at.is_some_and(|a| a.elapsed() < Duration::from_millis(2500)) && c.peak >= 0.55) { crate::cru_screen::talk_over_video(); }
+            return;
+        }
         voiceio::Ev::Msg(voice::Msg::Interim(t)) => with(|c| { c.interim = t; c.last_voice = Some(Instant::now()); }),
         voiceio::Ev::Msg(voice::Msg::Utterance(t)) => {
             with(|c| c.interim.clear());
@@ -299,11 +321,35 @@ fn on_listen(epoch: u64, ev: voiceio::Ev) {
         voiceio::Ev::Msg(_) => {}
         // The level moves only the field and the mic, which are animating while it is heard
         // (cru_ui takes it each frame): no redraw of its own.
-        voiceio::Ev::Level(l) => { with(|c| { c.level = l; if l > 0.08 { c.last_voice = Some(Instant::now()); } }); return; }
+        voiceio::Ev::Level(l) => { with(|c| {
+            c.level = l;
+            if l > 0.08 { c.last_voice = Some(Instant::now()); }
+            if l >= c.peak || c.peak_at.is_none_or(|a| a.elapsed() > Duration::from_millis(2500)) { c.peak = l; c.peak_at = Some(Instant::now()); }
+        }); return; }
         voiceio::Ev::Closed => with(|c| { c.listen = None; if c.phase != "ended" { c.phase = "offline".into(); } }),
         voiceio::Ev::NoMic => with(|c| { c.listen = None; c.keyboard = true; c.phase = "listen".into(); c.notice = "The microphone is not allowed here, so it is keyboard mode. Allow the microphone for this site to talk.".into(); }),
     }
     render();
+}
+
+/// "Hey Cru" (or the name) alone (isCalling).
+pub fn is_calling(t: &str) -> bool {
+    let lower = t.to_lowercase();
+    let mut w: Vec<&str> = lower.split(|ch: char| !(ch.is_alphanumeric() || ch == '\'')).filter(|x| !x.is_empty()).collect();
+    while w.first().is_some_and(|x| matches!(*x, "hey" | "hi" | "hello" | "ok" | "okay" | "oi" | "yo")) { w.remove(0); }
+    !w.is_empty() && w.len() <= 2 && w.iter().all(|x| matches!(*x, "cru" | "crew" | "kru" | "krew" | "crue" | "crews"))
+}
+
+/// A video started playing: the microphone's socket pauses, and what was
+/// being heard goes (videoMessage 'mute').
+pub fn video_mute() {
+    with(|c| { if let Some(l) = &c.listen { l.send(voiceio::Ctl::Pause); } c.heard.clear(); c.interim.clear(); });
+}
+
+/// The video stopped (or "Talk to Cru"): listening again ('resume').
+pub fn video_resume() {
+    let had = with(|c| { let had = c.listen.is_some(); if let Some(l) = &c.listen { l.send(voiceio::Ctl::Resume); } if had { c.phase = "listen".into(); c.heard.clear(); c.last_voice = Some(Instant::now()); } had });
+    if had { tone_out(false); }
 }
 
 fn speaker() -> std::sync::mpsc::Sender<voiceio::Out> {
@@ -588,6 +634,16 @@ pub fn menu_pick(id: &str) {
 
 /// Keyboard mode on or off (the web's keyboard(on, chosen)): off needs a
 /// usable voice; on lets the microphone go and listens to the keys.
+/// The kid screen's keyboard button: typing to Cru, no microphone (and the
+/// mute let go quietly), or back to the voice; not remembered for the
+/// grown-ups' screen (kidMute(false, true), keyboard(!S.kb, false)).
+pub fn kid_keyboard(on: bool) {
+    crate::cru_kid::with(|k| k.muted = false);
+    with(|c| { c.keyboard = on; c.listen = None; if c.unavailable.is_empty() { c.phase = "listen".into(); } c.interim.clear(); });
+    if !on && with(|c| c.open && c.unavailable.is_empty()) { listen(); }
+    render();
+}
+
 pub fn set_keyboard(on: bool) {
     if !on && !with(|c| c.voice_usable) {
         with(|c| c.notice = if kit::truthy(&c.settings["deepgramLimitReached"]) { "Voice is off: this month's Deepgram limit is reached.".into() } else { "Voice needs a Deepgram key: add one in Settings, Voice assistant.".into() });
@@ -641,13 +697,16 @@ fn upload(name: String, read: Read) {
     render();
     let n2 = name.clone();
     kit::bg(move |api| {
-        let bytes = read()?;
-        if bytes.len() > 50 * 1024 * 1024 { return Err("Too large (50 MB at most)".to_string()); }
+        let bytes = read().map_err(|e| (e, None))?;
+        if bytes.len() > 50 * 1024 * 1024 { return Err(("Too large (50 MB at most)".to_string(), None)); }
+        let thumb = thumb_of(&bytes);
         let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        api.post("/api/voice/attach", &json!({ "name": n2, "type": "", "data": data, "from": "web" })).map_err(|e| e.to_string())
+        api.post("/api/voice/attach", &json!({ "name": n2, "type": "", "data": data, "from": "web" })).map(|v| (v, thumb.clone())).map_err(|e| (e.to_string(), thumb))
     }, move |r| {
+        let (r, thumb) = match r { Ok((v, t)) => (Ok(v), t), Err((e, t)) => (Err(e), t) };
         with(|c| if let Some(a) = c.att.get_mut(i).filter(|a| a.name == name) {
             a.up = false;
+            a.thumb = thumb;
             match r {
                 Ok(v) if kit::truthy(v.get("ok").unwrap_or(&Value::Null)) => { a.id = kit::s(&v, "id"); a.kind = kit::s(&v, "kind"); let n = kit::s(&v, "name"); if !n.is_empty() { a.name = n; } }
                 Ok(v) => a.bad = Some(kit::s(&v, "error")).filter(|e| !e.is_empty()).unwrap_or_else(|| "Could not attach".into()),
@@ -782,7 +841,7 @@ pub fn props() -> Value {
     with(|c| json!({
         "open": c.open, "phase": c.phase, "heard": c.heard, "interim": c.interim, "reply": c.reply, "notice": c.notice, "keyboard": c.keyboard, "turns": c.turns.len(),
         "unavailable": c.unavailable, "listening": c.listen.is_some(), "chatView": c.chat_view, "menu": c.menu, "confirm": c.confirm, "voiceOff": c.voice_off,
-        "how": c.how, "ptt": c.ptt, "tone": tone(&c.phase, un), "word": status_word(&c.phase, un), "legend": leg, "attachments": c.att.len(), "refs": c.att.iter().filter(|a| !a.r#ref.is_empty()).map(|a| a.r#ref.clone()).collect::<Vec<_>>(), "page": page_id(), "ui": c.ui, "pending": c.pending, "queued": queued(c), "hearing": hearing(c), "canCancel": can_cancel(c),
+        "how": c.how, "ptt": c.ptt, "tone": tone(&c.phase, un), "word": status_word(&c.phase, un), "legend": leg, "attachments": c.att.len(), "refs": c.att.iter().filter(|a| !a.r#ref.is_empty()).map(|a| a.r#ref.clone()).collect::<Vec<_>>(), "page": page_id(), "ui": c.ui, "lastAck": c.last_ack, "pending": c.pending, "queued": queued(c), "hearing": hearing(c), "canCancel": can_cancel(c),
     }))
 }
 
@@ -827,14 +886,17 @@ pub fn ui_where() -> String {
 }
 
 /// One move from Cru (the `cru-ui` event, for this window only): the
-/// project, the tab, the chat; then the note. Answers the server
-/// (/api/voice/ui/ack). A card, an idea, a file, a panel or words to ring
-/// need the areas' own hooks, which v2 has not got yet: Cru is told so.
+/// project, the tab, the chat, then a card (flashed, its Edit dialog when
+/// asked to open it), an idea (flashed, its details when asked), a file (its
+/// window) or a panel (selected in Panels); then the note. Answers the
+/// server (/api/voice/ui/ack). Words to ring (a highlight) have no finder
+/// here yet (the web's cruFindText): answered found: false.
 pub fn ui_go(d: &Value) {
     if kit::s(d, "page") != page_id() { return; }
     let id = kit::s(d, "id");
     let ack = move |mut r: Value| {
         r["id"] = json!(id.clone());
+        with(|c| c.last_ack = r.clone());
         // Where the window is once the move has landed (the next pump).
         kit::on_app(move |_, _| { r["where"] = json!(ui_where()); let body = r.clone(); kit::call(move |api| api.post("/api/voice/ui/ack", &body), |_| {}); });
     };
@@ -856,22 +918,69 @@ pub fn ui_go(d: &Value) {
         kit::on_app(move |_, cx| if let Some(wb) = crundi_workbench::workbench(cx) { wb.update(cx, |w, cx| { w.place(&key, cx); w.focus_key(&key, cx); }); });
     }
     let note = kit::s(d, "note");
-    let unreachable = ["card", "node", "file", "widget"].iter().find(|k| !kit::s(d, k).is_empty());
-    if let Some(k) = unreachable {
+    let open = kit::truthy(d.get("open").unwrap_or(&Value::Null));
+    let highlight = kit::s(d, "highlight");
+    // What is left once the card, the idea, the file and the panel are shown:
+    // the note (a toast: the PC app has no ring to put it beside, F150), and a
+    // highlight answered not found.
+    let finish = move |ack: Box<dyn FnOnce(Value)>, note: String, highlight: String| {
         if !note.is_empty() { kit::toast(&format!("Cru: {note}")); }
-        return ack(json!({ "ok": false, "error": format!("This PC app cannot open a {} for Cru yet: say where it is instead", match *k { "node" => "mindmap idea", "widget" => "panel", "card" => "kanban card", _ => "file" }) }));
+        if !highlight.is_empty() { return ack(json!({ "ok": true, "found": false })); }
+        ack(json!({ "ok": true }))
+    };
+    let ack: Box<dyn FnOnce(Value)> = Box::new(ack);
+    let (card, node, file, widget) = (kit::s(d, "card"), kit::s(d, "node"), kit::s(d, "file"), kit::s(d, "widget"));
+    if !widget.is_empty() { kit::on_app(move |_, cx| crundi_operations::panels::show(&widget, cx)); }
+    if !file.is_empty() {
+        let project = if project.is_empty() { c.project.clone() } else { project.clone() };
+        if project.is_empty() { return ack(json!({ "ok": false, "error": "No project is open on the page" })); }
+        kit::on_app(move |_, cx| crundi_workspace::wins::open_file(&project, &file, cx));
     }
-    if !kit::s(d, "highlight").is_empty() {
-        if !note.is_empty() { kit::toast(&format!("Cru: {note}")); }
-        return ack(json!({ "ok": true, "found": false }));
+    if !card.is_empty() {
+        if c.tab != "kanban" && tab != "kanban" { kit::show_tab("kanban"); }
+        // The board loaded again first (loadKanban), then the card looked for.
+        let after = std::rc::Rc::new(std::cell::Cell::new(None::<u64>));
+        return poll(2500, move |w, cx| {
+            let want = match after.get() { Some(g) => g, None => { let g = crundi_planning::kanban::load_now(cx); after.set(Some(g)); g } };
+            crundi_planning::kanban::show_card(&card, open, want, w, cx)
+        }, move |r| match r {
+            Some(true) => finish(ack, note, highlight),
+            _ => ack(json!({ "ok": false, "error": "No such card on this project's board" })),
+        });
     }
-    if !note.is_empty() { kit::toast(&format!("Cru: {note}")); }
-    ack(json!({ "ok": true }));
+    if !node.is_empty() {
+        if c.tab != "mindmap" && tab != "mindmap" { kit::show_tab("mindmap"); }
+        return poll(2500, move |_, cx| crundi_planning::mindmap::has_node(&node, cx).map(|has| (has, node.clone())), move |r| match r {
+            Some((true, node)) => { kit::on_app(move |w, cx| crundi_planning::mindmap::flash_node(&node, open, w, cx)); finish(ack, note, highlight) }
+            _ => ack(json!({ "ok": false, "error": "No such idea on this project's mindmap" })),
+        });
+    }
+    finish(ack, note, highlight)
+}
+
+/// `f` with the window until it gives something, every 150 ms for up to
+/// `ms` (a tab's content loads after the switch: cruWaitFor); then `done`.
+fn poll<R: 'static>(ms: u64, f: impl Fn(&mut gpui::Window, &mut gpui::App) -> Option<R> + 'static, done: impl FnOnce(Option<R>) + 'static) {
+    let end = Instant::now() + Duration::from_millis(ms);
+    fn step<R: 'static>(end: Instant, f: std::rc::Rc<dyn Fn(&mut gpui::Window, &mut gpui::App) -> Option<R>>, done: Box<dyn FnOnce(Option<R>)>) {
+        kit::on_app(move |w, cx| {
+            if let Some(r) = f(w, cx) { return done(Some(r)); }
+            if Instant::now() >= end { return done(None); }
+            later(Duration::from_millis(150), move || step(end, f, done));
+        });
+    }
+    step(end, std::rc::Rc::new(f), Box::new(done));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calling_over_a_video() {
+        assert!(is_calling("Hey Cru") && is_calling("cru crew") && is_calling("OK, Krew!"));
+        assert!(!is_calling("hey") && !is_calling("hey cru what is that") && !is_calling("crew cru cru"));
+    }
 
     #[test]
     fn words() {

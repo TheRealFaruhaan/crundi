@@ -209,6 +209,13 @@ pub fn post(key: &str, m: &serde_json::Value) {
     send(key, |id| Cmd::Js { id, code });
 }
 
+/// Run a script in the frame's page (a watcher the host puts in a page it
+/// did not make: a video's player).
+pub fn run_js(key: &str, code: &str) {
+    let code = code.to_string();
+    send(key, |id| Cmd::Js { id, code });
+}
+
 /// The page's messages since the last call.
 pub fn take_messages(key: &str) -> Vec<serde_json::Value> { with(|s| s.frames.get_mut(key).map(|f| std::mem::take(&mut f.messages)).unwrap_or_default()) }
 

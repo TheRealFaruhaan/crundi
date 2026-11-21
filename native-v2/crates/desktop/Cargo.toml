@@ -21,6 +21,8 @@ crundi-webview.workspace = true
 crundi-workbench.workspace = true
 crundi-chat.workspace = true
 crundi-workspace.workspace = true
+# Cru's show_in_crundi: a card and an idea shown (kanban::show_card, mindmap::flash_node).
+crundi-planning.workspace = true
 # The browser lent to Operations' Panels and What's new (crundi_operations::web::set_host).
 crundi-operations.workspace = true
 futures.workspace = true
