@@ -222,6 +222,14 @@ impl PcLockScreen {
 
 impl Render for PcLockScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Above every dialog (F212): the web's z-order, the deferred layer over overlay.rs (1) and ask.rs (2).
+        let body = self.body(window, cx);
+        crate::top_layer(window, body)
+    }
+}
+
+impl PcLockScreen {
+    fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let l = &self.copy;
         // The clock's size: clamp(48px, min(11vw, 14vh), 140px).
         let vp = window.viewport_size();

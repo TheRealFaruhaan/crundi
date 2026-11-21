@@ -15,12 +15,19 @@ export async function run(T, t) {
   t.check('the tray: "Lock (visible)" and "Lock (full)" after Open', JSON.stringify(menu(p).slice(4, 7).map((m) => m.label)) === JSON.stringify(['Open', 'Lock (visible)', 'Lock (full)'])
     && item(p, 'lock-visible').enabled && item(p, 'lock-full').enabled, menu(p));
 
-  // The full lock, from the tray (a dialog left open first: the lock closes it, F212).
+  // The full lock, from the tray, a dialog left open first: the lock draws over it and leaves it
+  // as it was (the web's lock, 8990 over .input-modal 210; F212, F218).
   await T.act('test-ask');
   await T.until('a dialog left open', (p) => !!p.dialog, 5000);
   await T.act('tray-pick', 'lock-full');
   p = await T.until('the tray\'s Lock (full): the opaque lock screen, the window locked', (p) => L(p).on && L(p).mode === 'full' && D(p).windowLocked, 15000);
-  t.check('…the dialog left open is closed (the lock is over every dialog)', !p.dialog, p.dialog);
+  t.check('…the dialog left open stays, under the lock (not cancelled)', !!p.dialog && p.dialog.title === 'Left open', p.dialog);
+  await t.sleep(400);
+  // A press where the dialog's scrim is (which would dismiss it) lands on the lock instead.
+  await T.mouse('click', 12, 200);
+  await t.sleep(400);
+  p = await T.state();
+  t.check('…a press over the dialog\'s scrim is the lock\'s: the dialog is still open', !!p.dialog && L(p).on, p.dialog);
   t.check('…the tray says "Locked"; the locks and Quit are off', item(p, 'kid').label === 'Locked' && !item(p, 'kid').enabled && !item(p, 'lock-visible').enabled && !item(p, 'lock-full').enabled && !item(p, 'quit').enabled, menu(p));
   await t.sleep(400);
   await T.snap('desktop', 'pc-lock-full');
@@ -32,6 +39,9 @@ export async function run(T, t) {
   await T.snap('desktop', 'pc-lock-wrong');
   await T.act('lock-pin', '2468');
   p = await T.until('the right PIN unlocks it, and the window is let go', (p) => !L(p).on && !D(p).windowLocked, 10000);
+  t.check('…and the dialog is there as it was', !!p.dialog && p.dialog.title === 'Left open', p.dialog);
+  await T.ui('dialog-answer', 'false');
+  await T.until('…answered', (p) => !p.dialog, 5000);
   t.check('…the tray\'s items again', item(p, 'kid').label === 'Kid mode' && item(p, 'lock-full').enabled && item(p, 'quit').enabled, menu(p));
 
   // The visible lock, from Ctrl+Shift+L; ended from the phone (the server's event alone).

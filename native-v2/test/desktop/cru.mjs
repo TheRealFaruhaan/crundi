@@ -83,6 +83,25 @@ export async function run(T, t) {
     const r = delta(s0.renders, s1.renders);
     t.check(`…capped: ${f.frames} frames in 2 s, Cru rendered ${r.cru || 0} times`, f.frames > 10 && (r.cru || 0) <= 2 * 24 + 4, { f, r });
   }
+  {
+    // F212: the panel draws over any dialog (the web's .cv-ov 9000 over .input-modal 210): a press
+    // on the panel with a dialog open is the panel's, not the dialog's scrim (which would dismiss it).
+    await T.act('test-ask');
+    p = await T.until('a dialog opened under Cru\'s panel', (p) => !!p.dialog && C(p).open, 5000);
+    const u = U(p);
+    await t.sleep(300);
+    await T.mouse('click', u.viewportW - u.right - u.w / 2, u.top + 40);
+    await t.sleep(400);
+    p = await T.state();
+    t.check('…a press on the panel goes to the panel: the dialog under it stays, Cru stays open', !!p.dialog && C(p).open, { dialog: p.dialog, open: C(p).open });
+    await T.ui('dialog-answer', 'false');
+    await T.until('…the dialog answered', (p) => !p.dialog && C(p).open, 5000);
+    // (The dialog had the keys: Cru closed and opened again takes them back, as it opened first.)
+    await T.act('cru');
+    await T.until('…Cru closed', (p) => !C(p).open, 5000);
+    await T.act('cru');
+    await T.until('…and open again', (p) => C(p).open && U(p).w > 0, 5000);
+  }
   await t.sleep(600);
   await snap('cru-chat-empty');
 
