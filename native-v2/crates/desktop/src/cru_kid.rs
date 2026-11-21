@@ -47,7 +47,7 @@ pub fn state(st: &Value) {
         with(|k| { k.on = true; k.pin_at = None; k.pin.clear(); k.pin_err.clear(); });
         // The window locked to the kid screen (app/main.js kidLockWindow).
         kit::lock_window(true);
-        kit::clear_dialogs_later();
+        // An open dialog stays under the kid screen, as the web's (F231); its keys are held (F228).
         if cru::with(|c| c.open) { cru::close(); }
         cru::open(false);
     }
