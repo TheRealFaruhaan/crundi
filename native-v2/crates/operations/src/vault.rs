@@ -611,6 +611,12 @@ fn lock_field(l: &Line, lock: &str, big: bool) -> Div {
     div().w_full().child(i)
 }
 
+/// A multi-line field with the inputs' text size and padding (the web's
+/// `.secrets-add textarea`: 0.85rem, 8px 10px, like its inputs).
+fn field_area(state: &Entity<w::TextareaState>) -> w::Textarea {
+    w::textarea(state).text_size(T::INPUT_TEXT).px(T::INPUT_PAD_X).py(T::SP_8)
+}
+
 fn error_line(text: &str) -> Option<Div> {
     (!text.is_empty()).then(|| div().text_size(T::TEXT_12).text_color(T::red()).child(text.to_string()))
 }
@@ -639,8 +645,8 @@ impl Vault {
         div().flex().flex_col().gap(T::SP_8).p(T::SP_16).rounded(T::R_CARD).bg(T::bg_secondary()).border_1().border_color(T::border())
             .child(sec_title("ADD A SECRET"))
             .child(w::input(&i.add_name))
-            .child(w::textarea(&i.add_desc))
-            .child(w::textarea(&i.add_value))
+            .child(field_area(&i.add_desc))
+            .child(field_area(&i.add_value))
             .child(w::input(&i.add_pin))
             .child(w::input(&i.add_pin2))
             .child(div().text_size(T::TEXT_12).text_color(if warn { T::yellow() } else { T::text_muted() }).child(rule))
@@ -670,7 +676,7 @@ impl Vault {
             }
             actions = actions
                 .child(w::button(("vault-edit", n), "Edit").on_click(move |_, _, cx| edit(&c, cx)))
-                .child(w::button(("vault-delete", n), "Delete").on_click(move |_, window, cx| delete(&e, window, cx)));
+                .child(w::danger(("vault-delete", n), "Delete").on_click(move |_, window, cx| delete(&e, window, cx)));
             d = d.child(div().id(("vault-row", n)).flex().items_center().gap(T::SP_10).px(T::SP_12).py(T::SP_10)
                 .rounded(T::R_CONTROL).bg(T::bg_card()).border_1().border_color(T::border()).hover(|d| d.bg(T::bg_hover()))
                 .child(div().flex().flex_col().flex_1().min_w_0().gap(T::SP_2)
@@ -708,9 +714,9 @@ impl Vault {
                 .child(lock_head("Edit secret"))
                 .child(sec_label("NAME AND DESCRIPTION"))
                 .child(w::input(&i.ed_name))
-                .child(w::textarea(&i.ed_desc))
+                .child(field_area(&i.ed_desc))
                 .child(sec_label("NEW VALUE"))
-                .child(div().font_family(T::MONO).child(w::textarea(&i.ed_value)))
+                .child(div().font_family(T::MONO).child(field_area(&i.ed_value)))
                 .child(sec_label("NEW PASSPHRASE"))
                 .child(w::check("vault-ed-relock", if pass { "Change the passphrase" } else { "Replace the 6-digit PIN with a passphrase" }, relock, |on, _, cx| ed_relock(*on, cx)))
                 .when(relock, |d| d.child(lock_field(&i.ed_new, "passphrase", false)).child(lock_field(&i.ed_new2, "passphrase", false)).child(hint(h, warn)))
