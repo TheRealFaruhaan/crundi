@@ -79,6 +79,9 @@ pub struct InfoView {
     poll: Option<Task<()>>,
     focus: FocusHandle,
     dlg_scroll: ScrollHandle,
+    /// The page's sections as cached rows (F62), and whether what they show changed.
+    rows: Option<crate::rows::Rows>,
+    stale: bool,
 }
 
 struct Handle(Entity<InfoView>);
@@ -90,7 +93,7 @@ fn fresh(cx: &mut Context<InfoView>) -> InfoView {
         facts: None, online: true, sys: None, maint: vec![], maint_state: "loading".into(), maint_busy: String::new(), armed: String::new(), arm_gen: 0,
         collab_state: "loading".into(), sb_ok: false, sb_problems: vec![], sb_fix: false, people: vec![], picked: HashSet::new(),
         inv_name: String::new(), inv_tg: String::new(), inv_amount: "7".into(), inv_unit: 0, inv_limit: String::new(), inputs: None,
-        tunnel: None, cred: None, git: None, copied: String::new(), poll: None, focus: cx.focus_handle(), dlg_scroll: ScrollHandle::new(),
+        tunnel: None, cred: None, git: None, copied: String::new(), poll: None, focus: cx.focus_handle(), dlg_scroll: ScrollHandle::new(), rows: None, stale: false,
     }
 }
 
@@ -116,7 +119,7 @@ fn hush<R>(cx: &mut App, f: impl FnOnce(&mut InfoView) -> R) -> R { let e = ent(
 
 fn with<R>(cx: &mut App, f: impl FnOnce(&mut InfoView, &mut Context<InfoView>) -> R) -> R {
     let e = ent(cx);
-    e.update(cx, |v, cx| { let r = f(v, cx); v.relist(); cx.notify(); r })
+    e.update(cx, |v, cx| { let r = f(v, cx); v.relist(); v.stale = true; cx.notify(); r })
 }
 
 /// A toast from a server's answer (no window at hand: the window's).
@@ -284,6 +287,7 @@ impl InfoView {
                 if !matches!(ev, w::InputEvent::Change) { return; }
                 let v = inp.read(cx).value().to_string();
                 match k { 0 => this.inv_name = v, 1 => this.inv_tg = v, 2 => this.inv_amount = v, _ => this.inv_limit = v }
+                this.stale = true;
                 cx.notify();
             })
         };
@@ -687,7 +691,7 @@ impl InfoView {
                 .child(label("Access lasts"))
                 .child(div().flex().items_center().gap(T::SP_6)
                     .child(div().w(T::SP_48 + T::SP_32).child(w::input(&i.amount)))
-                    .child(w::dropdown("inv-unit", &["days", "hours"], self.inv_unit, false, move |u, _, cx| { let _ = me.update(cx, |s, cx| { s.inv_unit = u; cx.notify(); }); })))
+                    .child(w::dropdown("inv-unit", &["days", "hours"], self.inv_unit, false, move |u, _, cx| { let _ = me.update(cx, |s, cx| { s.inv_unit = u; s.stale = true; cx.notify(); }); })))
                 .child(hint(self.expiry()))
                 .child(label("Token limit (optional)")).child(w::input(&i.limit))
                 .child(hint("Counted across all their projects. Their chat stops the moment it is reached, and you can change it later."))
@@ -815,7 +819,18 @@ impl Render for InfoView {
         if self.page_kinds.is_empty() { self.relist(); }
         // The page as a virtual list of its sections: a wheel frame builds
         // only the sections on screen.
-        let page = list(self.page_list.clone(), cx.processor(|v: &mut InfoView, i: usize, _, cx| v.item(i, cx)))
+        // Each section is a cached view (crate::rows), replayed moved while
+        // the wheel only scrolls it; a change builds them all again.
+        let n = self.page_kinds.len();
+        if self.rows.as_ref().is_none_or(|r| r.len() != n) {
+            let me = cx.entity().downgrade();
+            self.rows = Some(crate::rows::Rows::new(n, move |i, _, cx| me.update(cx, |v, cx| v.item(i, cx)).unwrap_or_else(|_| div().into_any_element()), cx));
+            self.stale = false;
+        } else if std::mem::take(&mut self.stale) {
+            if let Some(r) = &self.rows { r.changed(cx); }
+        }
+        if self.rows.as_ref().is_some_and(|r| r.take_grew()) { self.page_list.remeasure(); }
+        let page = list(self.page_list.clone(), cx.processor(|v: &mut InfoView, i: usize, _, _| v.rows.as_ref().map(|r| r.el(i)).unwrap_or_else(|| div().into_any_element())))
             .size_full().p(T::SP_16).bg(T::bg());
         let dlg = self.dialogs(window, cx);
         div().size_full().flex().flex_col().min_h_0().child(page).children(dlg)
@@ -846,6 +861,7 @@ pub fn test_ui(name: &str, args: &[String], window: &mut Window, cx: &mut App) -
                     _ => return false,
                 }
                 if let Some(Some(i)) = inp { i.update(cx, |st, cx| st.set_value(val.clone(), window, cx)); }
+                s.stale = true;
                 cx.notify();
                 true
             });
