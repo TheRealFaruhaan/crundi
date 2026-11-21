@@ -1,0 +1,30 @@
+{
+  "steps": [
+    {
+      "id": "notes-nesting",
+      "tag": "Notes",
+      "title": "Lists inside lists",
+      "body": "Bullets, numbered lists and to-dos now nest. Tab moves an item under the one above it, Shift+Tab brings it back out, and each level numbers itself. Copying or dragging the list keeps it nested in the Markdown.",
+      "keys": [
+        { "keys": ["Tab"], "text": "on a list item: one level deeper" },
+        { "keys": ["Shift", "Tab"], "text": "one level out" },
+        { "keys": ["Enter"], "text": "on an empty nested item: one level out" }
+      ],
+      "art": "notes-nesting.html",
+      "artTitle": "Notes"
+    },
+    {
+      "id": "notes-block-keys",
+      "tag": "Notes",
+      "title": "Move blocks from the keyboard",
+      "body": "With the caret in any block, or several blocks selected, move them up and down, duplicate them or delete them without reaching for the mouse.",
+      "keys": [
+        { "keys": ["Alt", "↑ / ↓"], "text": "move the block, or the selection" },
+        { "keys": ["Ctrl", "D"], "text": "duplicate it" },
+        { "keys": ["Ctrl", "Shift", "K"], "text": "delete it" }
+      ],
+      "art": "notes-block-keys.html",
+      "artTitle": "Notes"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+<div class="wna a-ntkeys">
+  <div class="pg">
+    <div class="b b1">Ideas for the launch</div>
+    <div class="b b2">Draft the announcement</div>
+    <div class="b b3">Record a short demo</div>
+    <div class="b b4">Record a short demo</div>
+  </div>
+  <div class="key k1">Alt + ↑</div>
+  <div class="key k2">Ctrl + D</div>
+  <div class="key k3">Ctrl + Shift + K</div>
+  <style>
+    .a-ntkeys{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-ntkeys .pg{position:absolute;left:110px;top:70px;width:330px;height:250px;border:1px solid var(--border);border-radius:12px;background:var(--bg-primary)}
+    .a-ntkeys .b{position:absolute;left:24px;right:24px;height:34px;padding:0 10px;display:flex;align-items:center;border-radius:6px;font-size:14px}
+    .a-ntkeys .b1{top:24px;animation:antk-1 10s ease infinite}
+    .a-ntkeys .b2{top:68px;animation:antk-2 10s ease infinite}
+    .a-ntkeys .b3{top:112px;background:var(--accent-dim);animation:antk-3 10s ease infinite}
+    .a-ntkeys .b4{top:156px;opacity:0;animation:antk-4 10s ease infinite}
+    @keyframes antk-1{0%,100%{top:24px}}
+    @keyframes antk-2{0%,14%{top:68px}20%,40%{top:112px}46%,66%{top:156px}72%,94%{top:112px}100%{top:68px}}
+    @keyframes antk-3{0%,14%{top:112px}20%,94%{top:68px}100%{top:112px}}
+    @keyframes antk-4{0%,40%{top:68px;opacity:0}46%,66%{top:112px;opacity:1}72%,100%{top:112px;opacity:0}}
+    .a-ntkeys .b2{z-index:1}
+    .a-ntkeys .key{position:absolute;left:470px;height:34px;padding:0 12px;display:flex;align-items:center;border:1px solid var(--border);border-bottom-width:3px;border-radius:8px;background:var(--bg-card);font-size:13px;font-weight:600;color:var(--text-secondary)}
+    .a-ntkeys .k1{top:100px;animation:antk-k1 10s ease infinite}
+    .a-ntkeys .k2{top:150px;animation:antk-k2 10s ease infinite}
+    .a-ntkeys .k3{top:200px;animation:antk-k3 10s ease infinite}
+    @keyframes antk-k1{0%,10%,22%,100%{background:var(--bg-card);color:var(--text-secondary)}13%,18%{background:var(--accent-dim);color:var(--accent-hover)}}
+    @keyframes antk-k2{0%,36%,48%,100%{background:var(--bg-card);color:var(--text-secondary)}39%,44%{background:var(--accent-dim);color:var(--accent-hover)}}
+    @keyframes antk-k3{0%,62%,74%,100%{background:var(--bg-card);color:var(--text-secondary)}65%,70%{background:var(--accent-dim);color:var(--accent-hover)}}
+  </style>
+</div>

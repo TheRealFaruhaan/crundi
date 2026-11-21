@@ -299,15 +299,41 @@ fn start2(anyway: bool, pins: Option<Value>, cx: &mut App) {
 fn close_start(cx: &mut App) { with(cx, |d| { d.st.open = false; d.st.gn += 1; }); }
 
 fn attach(cx: &mut App) {
-    crundi_shell::run(cx, || crundi_core::driver::take_pick().map(|p| vec![p]).or_else(|| rfd::FileDialog::new().pick_files()).unwrap_or_default(), |paths, cx| {
-        for p in paths {
-            if with(cx, |d| d.st.files.len() >= MAX_ATTACH) { parts::toast_error(cx, &format!("Up to {MAX_ATTACH} attachments.")); break; }
-            let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-            if size > MAX_BYTES { parts::toast_error(cx, &format!("{} is over 25 MB.", p.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default())); continue; }
-            with(cx, |d| d.st.files.push(p));
+    crundi_shell::run(cx, || crundi_core::driver::take_pick().map(|p| vec![p]).or_else(|| rfd::FileDialog::new().pick_files()).unwrap_or_default(), add_files);
+}
+
+/// Files for the change request (Attach, a drop, a paste): the web's addFiles.
+fn add_files(paths: Vec<PathBuf>, cx: &mut App) {
+    for p in paths {
+        if with(cx, |d| d.st.files.len() >= MAX_ATTACH) { parts::toast_error(cx, &format!("Up to {MAX_ATTACH} attachments.")); break; }
+        let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+        if size > MAX_BYTES { parts::toast_error(cx, &format!("{} is over 25 MB.", p.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default())); continue; }
+        with(cx, |d| d.st.files.push(p));
+    }
+    super::bump(cx);
+}
+
+/// A paste in the change request: copied files, or a picture (saved as
+/// pasted-<time>-<n>.png, as the web names it), become attachments; text is
+/// the box's own paste.
+fn paste_files(item: &ClipboardItem, cx: &mut App) -> bool {
+    let mut paths: Vec<PathBuf> = vec![];
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    for (i, e) in item.entries().iter().enumerate() {
+        match e {
+            ClipboardEntry::ExternalPaths(p) => paths.extend(p.paths().iter().cloned()),
+            ClipboardEntry::Image(img) => {
+                let dir = std::env::temp_dir().join("crundi-factory-paste");
+                let ext = match img.format { ImageFormat::Png => "png".to_string(), f => format!("{f:?}").to_lowercase() };
+                let f = dir.join(format!("pasted-{stamp}-{i}.{ext}"));
+                if std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&f, &img.bytes)).is_ok() { paths.push(f); }
+            }
+            _ => {}
         }
-        super::bump(cx);
-    });
+    }
+    if paths.is_empty() { return false; }
+    add_files(paths, cx);
+    true
 }
 
 // ─── The PIN prompt ───
@@ -742,6 +768,8 @@ fn start_dialog(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyEl
     } else {
         body.push(pair(stack, field("Project", "", "", sel("st-project", "start", "project", projects, pi)), field("Factory", "", "", w::dropdown_off("st-factory", factories.into_iter().map(SharedString::from).collect(), &off, fi, false, true, |i, _, cx| set("start", "factory", &i.to_string(), cx)))).into_any_element());
         // .fx-cr: the change request.
+        // A paste in any of its fields: files and pictures attach.
+        parts::on_paste(&mut fx.p, "start|", |item, _, cx| paste_files(item, cx));
         let title_box = parts::line(&mut fx.p, "start|title", &title, "One line: what should change", false, false, parts::Commit::Change, window, cx, |v, cx| set("start", "title", &v, cx));
         if focus { parts::focus(&mut fx.p, "start|title", window, cx); }
         let mut cr = div().flex().flex_col().gap(T::SP_10).p(T::SP_12).rounded(T::R_CARD).border_1().border_color(T::border()).bg(T::bg())
@@ -764,7 +792,11 @@ fn start_dialog(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyEl
                 .child(w::icon_button(("st-unattach", i), IconName::X, "Remove").on_click(move |_, _, cx| fact("st-unattach", &is, "", cx))));
         }
         att = att.child(btn("st-attach", "Attach", Some(IconName::Paperclip), "", true, false).on_click(|_, _, cx| fact("st-attach", "", "", cx)));
-        cr = cr.child(div().flex().flex_col().gap(T::SP_6).child(att).child(div().text_size(T::TEXT_11).text_color(T::text_secondary()).child("Screenshots, mockups, specs, logs. Attach picks them from this PC.")));
+        cr = cr.child(div().flex().flex_col().gap(T::SP_6).child(att).child(div().text_size(T::TEXT_11).text_color(T::text_secondary()).child("Screenshots, mockups, specs, logs. Drop or paste them here too.")))
+            // Files dropped on the change request attach (.fx-cr.drop: the
+            // accent border while they are over it).
+            .drag_over::<ExternalPaths>(|st, _, _, _| st.border_color(T::accent()).bg(T::bg_hover()))
+            .on_drop(|p: &ExternalPaths, _, cx| { add_files(p.paths().to_vec(), cx); cx.stop_propagation(); });
         body.push(cr.into_any_element());
         body.push(field("When the work is done", "", "", sel("st-merge", "start", "merge", vec!["As the factory says".into(), "Show me first, I decide".into(), "Merge automatically (with Undo)".into()], mi)).into_any_element());
         for (i, (k, t, id)) in info.iter().enumerate() {

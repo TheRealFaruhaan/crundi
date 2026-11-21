@@ -36,7 +36,10 @@ export async function run(T, t) {
   const leaf = (p, k) => p.leaves?.find((l) => l.key === k);
 
   // Drag from (x, y) onto the terminal's screen; the text it should get.
-  const dropOnTerm = async (what, x, y, want) => {
+  // ready: what must hold with the pointer at rest on (x, y) before the
+  // press (F136: a Notes block's grip shows only while its block is hovered;
+  // a press before the grip is drawn there presses the margin instead).
+  const dropOnTerm = async (what, x, y, want, ready = null) => {
     await T.ui('toasts-clear');
     const p = await T.props();
     const tl = leaf(p, key);
@@ -44,6 +47,7 @@ export async function run(T, t) {
     // The pointer comes to rest on it first (a hovered idea is the one that drags).
     await T.mouse('move', x, y);
     await sleep(250);
+    if (ready) { if (!(await T.until(`${what}: ready to drag`, ready))) return; await sleep(120); }
     await T.mouse('drag', x, y, { toX: tl.x + tl.w / 2, toY: tl.y + tl.h / 3, steps: 14 });
     const got = await T.until(`${what} dropped on the terminal is typed there, "Sent to terminal"`, (q) => q.toast === 'Sent to terminal' && screen(q).includes(want), 10000);
     if (!got) { const z = await T.props(); console.log('   drag from', x, y, 'to', tl, 'toast', z.toast, 'screen', TS(z)?.screen.slice(-4)); }
@@ -118,7 +122,9 @@ export async function run(T, t) {
     const sh = await T.until('the pointer on the block shows its grip', (p) => at(p).plus.some((x) => x.id === bid));
     const pl = sh && at(sh).plus.find((x) => x.id === bid);
     // The grip sits right of the "+" (each 20 px).
-    if (pl) await dropOnTerm('a Notes block', pl.x + 21, pl.y, 'A **dropped** line');
+    // With the pointer on the grip, the block is still the hovered one (its
+    // "+" and grip shown), and a frame has drawn them there.
+    if (pl) await dropOnTerm('a Notes block', pl.x + 21, pl.y, 'A **dropped** line', (p) => at(p).plus.some((x) => x.id === bid));
   }
 
   // ── Edge auto-scroll: a block held near the page's bottom edge scrolls it ──
