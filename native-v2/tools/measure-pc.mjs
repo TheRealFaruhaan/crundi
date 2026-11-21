@@ -529,7 +529,9 @@ try {
       { const end = Date.now() + 9000; let i = 0; while (Date.now() < end) { const [x, y] = pts2[Math.floor(i / 40) % pts2.length]; await d.send({ cmd: 'mouse', kind: 'wheel', x, y, dy: (i % 40) < 20 ? -60 : 60 }); i++; await sleep(7); } }
       stats('cr-drawer-scroll', m);
       s = await state(); report['cr-drawer-scroll'].renders = drew(r0, s); report['cr-drawer-scroll'].streaming = s.chatState;
-      for (let i = 0; i < 900; i++) { s = await state(); if (s.chatState !== 'working') break; await sleep(200); }
+      // As idle-end: the turn over ('idle', not just no longer 'working'; F144:
+      // the turn's end redrew the log, the workbench and the drawer inside the window).
+      for (let i = 0; i < 900; i++) { s = await state(); if (s.chatState === 'idle') break; await sleep(200); }
       await sleep(2000);
       r0 = (await state()).renders || {};
       m = fm.mark(); await sleep(4000); stats('idle-drawer', m);

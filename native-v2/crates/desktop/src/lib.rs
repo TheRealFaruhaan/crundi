@@ -118,6 +118,8 @@ pub fn init(cx: &mut App) {
     drawer::init();
     homepool::init();
     wake::init();
+    // Settings › Voice assistant › On this device: "Hey Cru" on this PC (F129).
+    crundi_operations::register_settings_part(cx, "voice-device", wake::settings_part);
     tray::start(false);
     // Cru's screen: a layer over the window (the shell reads its overlays when it makes the Shell,
     // before the window's views are made); its typing box comes with the window (init_window).
@@ -159,6 +161,8 @@ pub fn init(cx: &mut App) {
                 Event::Connected(true) => { drawer::render(); hpdrawer::refresh(); inbox::load(); cru::load_unread(); tray::set_online(true); }
                 Event::Connected(false) => tray::set_online(false),
                 Event::Ws(t, v) if t == "voice-report" => cru::report(v),
+                // Cru moving this window (show_in_crundi): only the page the owner talked from acts.
+                Event::Server(t, v) if t == "cru-ui" => cru::ui_go(v),
                 Event::Server(t, v) | Event::Ws(t, v) if t == "voice-kid" => cru_kid::state(v),
                 // The PC lock: the event stream's state, the desktop socket's { lock }.
                 Event::Server(t, v) if t == "pc-lock" => pclock::apply(v),
@@ -514,6 +518,10 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "cru-state" => { cru::test_state(&a(0)); ok() }
         "cru-mic" => { cru::mic(); ok() }
         "cru-attach" => { cru::attach(); ok() }
+        // A reference dropped on Cru (a card, a row…), a chip taken off, and a show_in_crundi move for this window.
+        "cru-ref" => { cru::add_ref(&a(0)); ok() }
+        "cru-unattach" => { cru::unattach(a(0).parse().unwrap_or(0)); ok() }
+        "cru-ui-go" => { if let Ok(mut v) = serde_json::from_str::<Value>(&a(0)) { v["page"] = json!(cru::page_id()); cru::ui_go(&v); } ok() }
         "cru-history" => { cru::history(None); ok() }
         // The drawer's homepool panel: a network's check, the fallback, the key on, Save / Make, Remove.
         "hp-net" => { hpdrawer::toggle_net(&a(0)); ok() }

@@ -268,6 +268,24 @@ are the owner's PC, release build; "—" not yet.
   shares the pane's scroll), `head_info` public, a chat kept subscribed
   outside the open project (a bubble from another project).
 
+- Round of 21 Nov: Cru takes files dropped anywhere on it, pictures and files
+  pasted into its typing box, and Crundi's own items dropped on it (as the
+  web's references, sent with the next turn; none in kid mode). Cru's
+  replies keep their media: cards are drawn with the live screen's blocks;
+  pictures, players, files and frames show the web's own fallback line ("This
+  needs a newer page to show.") until the chat area lends its media drawing
+  (request below). show_in_crundi: the window has its page id (sent with
+  each turn) and acts on the `cru-ui` event for it: project, tab, chat, note,
+  answered on /api/voice/ui/ack; a card, an idea, a file, a panel or words
+  to ring need the areas' hooks (Cru is told it cannot yet). The kid screen
+  has the liquid mic and shared buttons; the PC lock's clock follows the
+  locale (en-US: "02:19 AM", "Saturday, November 21") and the PIN box has
+  the web's height; Settings › Voice assistant › On this device is
+  registered (F129).
+- Requests: the chat area's media drawing for a list of items outside a log
+  (the web's CrundiWidgets.replyMedia, session `cru-voice`); hooks to show
+  a kanban card, a mindmap idea, a file and a panel, and to ring a control
+  by its words (cruFindText / cruSpotlight), for show_in_crundi.
 ## Open questions for the Manager
 
 - The slice's Cru mark is drawn but static (no hover screen, no live

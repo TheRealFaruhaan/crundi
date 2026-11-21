@@ -83,7 +83,9 @@ fn log(s: String) {
 }
 
 /// The status changed: the views take their copies again (no window refresh: rule 2).
-fn redraw() { kit::dirty(); }
+/// A change to listening or training: the area's views, and Settings ›
+/// Voice assistant › On this device (Operations' page draws this part).
+fn redraw() { kit::dirty(); kit::on_app(|_, cx| crundi_operations::settings_part_changed(cx)); }
 
 /// At start: the setting and the profile.
 pub fn init() {
@@ -454,6 +456,7 @@ pub fn test_conditions(battery: Option<bool>, locked: Option<bool>) {
 // ─── Settings › Voice assistant › On this device ───
 
 pub fn settings_part(_window: &mut Window, _cx: &mut App) -> AnyElement {
+    crundi_core::driver::rendered("voice-device");
     let st = status();
     let (trained, training, busy, recording, msg, bad, level) = with(|s| (s.profile.is_some(), s.training.active, s.training.busy, s.training.rec.is_some(), s.training.msg.clone(), s.training.bad, s.training.level));
     let enabled = st["enabled"].as_bool().unwrap_or(false);
@@ -488,8 +491,7 @@ pub fn settings_part(_window: &mut Window, _cx: &mut App) -> AnyElement {
     d.child(div().text_size(T::TEXT_14).text_color(T::text()).child(format!("Say “Hey Cru” — {} of {}", i + 1, enroll::SAMPLES_NEEDED)))
         .child(div().flex().items_center().gap(T::SP_8).flex_wrap()
             .child(if recording { w::primary("voice-wake-rec", "Stop").icon(IconName::Square) } else { w::primary("voice-wake-rec", "Record") }.on_click(|_, _, _| record()))
-            .child(div().w(T::WAKE_METER_W).h(T::SP_6).rounded(T::R_PILL).bg(T::bg_tertiary()).overflow_hidden()
-                .child(div().h_full().bg(T::accent()).w(relative(if recording { level } else { 0.0 }))))
+            .child(div().w(T::WAKE_METER_W).child(w::meter(if recording { level } else { 0.0 }, T::accent(), T::SP_6)))
             .child(w::button("voice-wake-cancel", "Cancel").on_click(|_, _, _| train_stop())))
         .child(say(if recording { "Listening…".into() } else { msg }, !recording && bad))
         .into_any_element()

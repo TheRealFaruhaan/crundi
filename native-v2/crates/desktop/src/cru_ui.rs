@@ -46,7 +46,7 @@ type UsageShare = Option<(Option<f64>, Option<f64>)>;
 
 /// One message of the chat view: mine or Cru's, its text, its detail, its time as shown.
 #[derive(Clone, PartialEq)]
-struct Turn { mine: bool, text: String, show: String, when: String }
+struct Turn { mine: bool, text: String, show: String, when: String, media: Vec<Value> }
 
 /// The kid screen's own state.
 #[derive(Clone, PartialEq, Default)]
@@ -77,7 +77,7 @@ impl Copy {
     fn take(usage: UsageShare) -> Copy {
         if !cru::with(|c| c.open) { return Copy::default(); }
         let kid = cru_kid::on().then(|| cru_kid::with(|k| Kid { paused: k.paused, muted: k.muted, pin: k.pin_at.is_some(), pin_len: k.pin.len(), pin_err: k.pin_err.clone() }));
-        let turns = cru::turns().into_iter().map(|(mine, text, show, at)| Turn { mine, text, show, when: cru::when(at) }).collect();
+        let turns = cru::turns().into_iter().map(|(mine, text, show, at, media)| Turn { mine, text, show, when: cru::when(at), media }).collect();
         let (screen, target, folded) = cru_screen::with(|s| (s.screen.clone(), !s.target.is_empty(), s.folded));
         let mut c = cru::with(|c| Copy {
             open: true, kid,
@@ -122,10 +122,6 @@ fn mic_look(tone: &str, phase: &str, t: f32) -> w::MicLook {
     w::MicLook { layers: [(a, T::cru_deep_blue()), (b, T::cru_deep_indigo()), (c, T::cru_deep_violet())], glow: a, dim }
 }
 
-/// The kid screen's mic colour by the phase.
-fn tint(p: &str) -> Hsla {
-    match p { "listen" => T::sky(), "think" => T::accent_hover(), "speak" => T::green(), "waking" => T::accent(), "offline" => T::amber(), "problem" => T::red(), _ => T::text_muted() }
-}
 
 /// A legend item's or an arc's colour: wk, 5h, Claude, Deepgram.
 fn usage_color(k: &str) -> Hsla {
@@ -266,8 +262,8 @@ impl CruScreen {
         Some(div().flex().flex_col().when(grow, |d| d.flex_1().min_h_0()).when(!kid && !full, |d| d.child(head)).when(!folded, |d| d.child(body)))
     }
 
-    fn kid_view(&self, cx: &mut Context<Self>) -> AnyElement {
-        let c = &self.copy;
+    fn kid_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let c = self.copy.clone();
         let (phase, reply, heard) = (c.phase.clone(), c.reply.clone(), if c.interim.is_empty() { c.heard.clone() } else { c.interim.clone() });
         let Kid { paused, muted, pin, pin_len, pin_err } = c.kid.clone().unwrap_or_default();
         let screen = self.screen_panel(false, true, false);
@@ -287,12 +283,24 @@ impl CruScreen {
                 .when(phase == "think" && !reply.is_empty(), |d| d.child(div().text_size(T::TEXT_16).text_color(T::kid_wait()).child("Wait for me!")))
                 .child(if phase == "think" && reply.is_empty() { "…".to_string() } else { reply }));
         }
-        let mic = div().id("kid-mic").size(T::KID_MIC).rounded_full().bg(tint(&phase)).flex().items_center().justify_center()
-            .text_color(T::white()).text_size(T::KID_MIC_ICON).cursor_pointer().shadow_lg().when(muted, |d| d.opacity(T::INBOX_TINT))
-            .child(if phase == "speak" { IconName::Square } else { IconName::Mic }).on_click(|_, _, _| cru::mic());
-        let mute = div().id("kid-mute").size(T::KID_BTN).rounded_full().bg(if muted { T::red_dim() } else { T::white() }).flex().items_center().justify_center()
-            .text_color(if muted { T::red() } else { T::kid_button() }).text_size(T::ICON_XL).cursor_pointer().shadow_md()
-            .child(if muted { IconName::MicOff } else { IconName::Volume2 }).on_click(|_, _, _| cru_kid::mute());
+        // The liquid mic, as the grown-ups' (.cv-ov.kid .cv-mic: clamp(110px, 15vmin, 170px)).
+        let t = self.start.elapsed().as_secs_f32();
+        let ms = t as f64 * 1000.;
+        let level = if phase == "listen" && !muted { self.level } else { 0. };
+        self.liquid.step(ms, level, phase == "listen" && !muted);
+        let un = !c.unavailable.is_empty();
+        let vp = window.viewport_size();
+        let vmin = f32::from(vp.width.min(vp.height)) / 100.;
+        let mic_box = px((vmin * 15.).clamp(110., f32::from(T::KID_MIC_MAX)));
+        let mic = w::liquid_mic("kid-mic", &self.liquid, mic_look(cru::tone(&phase, un), if un { "ended" } else { &phase }, t), t, ms, mic_box, if phase == "speak" { "Stop talking" } else { "Talk" })
+            .on_click(|_, _, _| cru::mic());
+        // Mute (.cv-mute): white with the indigo icon, a pale red while muted; a flat shadow under it.
+        let flat = BoxShadow { color: T::kid_btn_shadow(), offset: point(px(0.), T::SP_4 + px(1.)), blur_radius: px(0.), spread_radius: px(0.), inset: false };
+        let mute = w::round_solid("kid-mute", if muted { IconName::MicOff } else { IconName::Mic }, T::KID_BTN, T::ICON_XL,
+            if muted { T::kid_mute_on() } else { T::white() }, if muted { T::kid_mute_on_fg() } else { T::kid_button() }, Some(flat))
+            .tooltip(w::tooltip(if muted { "Turn the microphone back on" } else { "Mute the microphone" }))
+            .on_click(|_, _, _| cru_kid::mute());
+        self.next_frame(window, cx);
         let bottom = div().relative().flex().items_center().justify_center().py(T::SP_20).child(mic)
             .child(div().absolute().right(T::SP_24).child(mute));
         let mut root = div().id("kid-screen").absolute().inset_0().flex().flex_col()
@@ -328,7 +336,6 @@ impl CruScreen {
                     .child(w::pin_pad("kid-pin-key", look, |k, _, _| cru_kid::pin_key(k)))
                     .child(div().min_h(T::PCL_ERR_H).text_size(T::TEXT_13).text_color(T::red()).child(pin_err))));
         }
-        let _ = cx;
         root.into_any_element()
     }
 }
@@ -381,8 +388,7 @@ impl CruScreen {
         if count != self.turns { self.turns = count; self.scroll.scroll_to_bottom(); }
         let mut list = div().flex().flex_col().justify_end().gap(T::SP_8).min_h_full().w_full();
         if more {
-            list = list.child(div().flex().justify_center().child(div().id("cru-older").px(T::SP_10).py(T::SP_4).rounded(T::R_PILL).bg(T::bg_tertiary())
-                .text_size(T::TEXT_12).text_color(T::text_secondary()).cursor_pointer().child("Earlier messages").on_click(|_, _, _| cru::older())));
+            list = list.child(div().flex().justify_center().mb(T::SP_6).child(w::quiet_pill("cru-older", "Earlier messages").on_click(|_, _, _| cru::older())));
         }
         let me = |id: (&'static str, usize), text: String, time: Option<String>, live: bool| {
             div().flex().justify_end().child(div().id(id).max_w(relative(T::CRU_BUBBLE_SHARE)).px(T::SP_12).py(T::SP_8)
@@ -392,20 +398,25 @@ impl CruScreen {
                 .when_some(time, |d, t| d.child(div().mt(T::SP_2).text_size(T::TEXT_10).text_color(T::text_muted()).child(t))))
         };
         let mut any = false;
-        for (n, Turn { mine, text, show, when }) in turns.into_iter().enumerate() {
+        for (n, Turn { mine, text, show, when, media }) in turns.into_iter().enumerate() {
             any = true;
             if mine { list = list.child(me(("cru-me", n), text, Some(when), false).w_full()); continue; }
             let on = phase == "speak" && !text.is_empty() && text.trim() == saying.trim();
             let t2 = text.clone();
+            let has_words = !text.is_empty() || !show.is_empty();
             let bubble = div().id(("cru-reply", n)).max_w(relative(T::CRU_BUBBLE_SHARE)).px(T::SP_12).py(T::SP_8)
                 .rounded(T::CRU_BUBBLE_R).rounded_bl(T::CRU_BUBBLE_TAIL).bg(T::bg_secondary()).border_1().border_color(T::border())
                 .text_size(T::TEXT_14).line_height(T::TEXT_14 * T::LH_COMPOSER)
                 .when(!text.is_empty(), |d| d.child(text.clone()))
                 .when(!show.is_empty(), |d| d.child(div().mt(T::SP_6).pt(T::SP_6).border_t_1().border_color(T::border()).text_size(T::TEXT_13).text_color(T::text_secondary()).child(show)))
-                .child(div().mt(T::SP_2).text_size(T::TEXT_10).text_color(T::text_muted()).child(when));
-            list = list.child(div().flex().w_full().items_end().gap(T::SP_6).child(bubble)
+                .child(div().mt(T::SP_2).text_size(T::TEXT_10).text_color(T::text_muted()).child(when.clone()));
+            if has_words { list = list.child(div().flex().w_full().items_end().gap(T::SP_6).child(bubble)
                 .when(!t2.is_empty(), |d| d.child(w::icon_toggle(("cru-say", n), IconName::Speech, if on { "Cru is saying this: tap to stop" } else { "Say it aloud" }, on)
-                    .on_click(move |_, _, _| if cru::with(|c| c.phase == "speak" && c.saying.trim() == t2.trim()) { cru::mic(); } else if cru::with(|c| c.phase == "listen" && c.interim.is_empty()) { cru::say(&t2, false); }))));
+                    .on_click(move |_, _, _| if cru::with(|c| c.phase == "speak" && c.saying.trim() == t2.trim()) { cru::mic(); } else if cru::with(|c| c.phase == "listen" && c.interim.is_empty()) { cru::say(&t2, false); })))); }
+            // What the reply showed, under its words (.cv-mm): Cru's cards drawn
+            // with the live screen's blocks; the rest needs the chat's media
+            // drawing (replyMedia), which this page has not got yet.
+            if !media.is_empty() { list = list.child(reply_media(n, &media, (!has_words).then_some(when))); }
         }
         if phase == "think" {
             any = true;
@@ -467,7 +478,7 @@ impl Render for CruScreen {
         crundi_core::driver::rendered("cru");
         let c = self.copy.clone();
         if !c.open { return div().into_any_element(); }
-        if c.kid.is_some() { return self.kid_view(cx); }
+        if c.kid.is_some() { return self.kid_view(window, cx); }
         // Cru's full view (.cv-ov.full): over the whole content area on a wide enough window; the
         // top row (with "Normal view"), Cru's screen without its head, its latest words as a short
         // line, and the bottom bar. The field, the chat and the words being heard make way.
@@ -558,7 +569,7 @@ impl Render for CruScreen {
                     cru::utter(&t, true);
                     this.focus_box(window, cx);
                 }));
-            let boxed = self.input.as_ref().map(|i| { let fh = i.read(cx).focus_handle(cx); w::text_box(&fh, w::message_box(i, 1.), window, cx) });
+            let boxed = self.input.as_ref().map(|i| { let fh = i.read(cx).focus_handle(cx); w::text_box(&fh, w::message_box(i, 1.).on_paste(paste_files), window, cx) });
             div().relative().flex().w_full().items_center().gap(T::SP_12).px(T::SP_12).pt(T::SP_4).pb(T::SP_12)
                 .child(w::layer(att_btn)).child(w::layer(kb_btn)).child(div().flex_1().min_w_0().children(boxed)).child(w::layer(send)).child(w::layer(word_el))
                 .into_any_element()
@@ -598,7 +609,49 @@ impl Render for CruScreen {
             .on_mouse_down(MouseButton::Left, |_, _, cx| { cru::panel_pressed(); if cru::with(|c| c.menu) { cru::with(|c| c.menu = false); cru::render(); } cx.stop_propagation(); })
             .on_hover(|on, _, _| cru::panel_hover(*on))
             .bg(T::bg()).text_color(T::text()).overflow_hidden()
+            // Files dropped anywhere on Cru, and Crundi's own items (a card, a
+            // row, an idea) as references; the dashed outline while over it.
+            .drag_over::<ExternalPaths>(|s, _, _, _| s.border_3().border_dashed().border_color(T::accent()))
+            .on_drop(|p: &ExternalPaths, _, cx| { cru::attach_paths(p.paths().to_vec()); cx.stop_propagation(); })
+            .drag_over::<w::RefDrag>(|s, _, _, _| s.border_3().border_dashed().border_color(T::accent()))
+            .on_drop(|d: &w::RefDrag, _, cx| { cru::add_ref(&d.text); cx.stop_propagation(); })
             .child(col)
             .into_any_element()
     }
+}
+
+/// The typing box's paste: copied files and pictures attach (a picture as
+/// image.png); anything else is the ordinary paste.
+fn paste_files(item: &ClipboardItem, _: &mut Window, _: &mut App) -> bool {
+    let mut took = false;
+    for e in item.entries() {
+        match e {
+            ClipboardEntry::ExternalPaths(p) => { cru::attach_paths(p.paths().to_vec()); took = true; }
+            ClipboardEntry::Image(img) => {
+                let name = match img.format { ImageFormat::Png => "image.png".to_string(), f => format!("image.{}", format!("{f:?}").to_lowercase()) };
+                cru::attach_bytes(name, img.bytes.clone());
+                took = true;
+            }
+            _ => {}
+        }
+    }
+    took
+}
+
+/// A reply's media (replyMediaHtml): its cards, a line for the rest, and
+/// the time when the reply had no words.
+fn reply_media(n: usize, media: &[Value], time: Option<String>) -> Stateful<Div> {
+    let mut d = div().id(("cru-mm", n)).flex().flex_col().gap(T::SP_8).max_w_full().min_w_0();
+    for c in media.iter().filter(|x| x["kind"] == "card") {
+        let title = c.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        let blocks = c.get("blocks").and_then(|b| b.as_array()).cloned().unwrap_or_default();
+        d = d.child(div().flex().flex_col().gap(T::SP_10).max_w(T::CRU_CARD_MAX_W).min_w_0().px(T::SP_14).py(T::SP_12)
+            .rounded(T::CRU_CARD_R).bg(T::bg_card()).border_1().border_color(T::border()).text_size(T::TEXT_14).line_height(T::SP_20)
+            .when(!title.is_empty(), |d| d.child(div().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(T::text_secondary()).child(title)))
+            .child(cru_blocks::blocks(&blocks, false)));
+    }
+    if media.iter().any(|x| x["kind"] != "card") {
+        d = d.child(div().max_w_full().min_w_0().text_size(T::TEXT_13).text_color(T::text_muted()).child("This needs a newer page to show."));
+    }
+    d.when_some(time, |d, t| d.child(div().text_size(T::TEXT_10).text_color(T::text_muted()).child(t)))
 }
