@@ -129,9 +129,9 @@ pub fn init(cx: &mut App) {
     // before the window's views are made); its typing box comes with the window (init_window).
     // The PC lock's screen under Cru's ("Hey Cru" works while locked).
     let lock_view = cx.new(pclock::PcLockScreen::new);
-    crundi_shell::register_overlay(cx, lock_view.clone().into());
+    crundi_shell::register_top_overlay(cx, lock_view.clone().into());
     let cru_view = cx.new(cru_ui::CruScreen::new);
-    crundi_shell::register_overlay(cx, cru_view.clone().into());
+    crundi_shell::register_top_overlay(cx, cru_view.clone().into());
     cx.set_global(CruView(cru_view, lock_view));
     // Cru's ring and the chat's flash (show_in_crundi), over everything.
     cru_spot::init(cx);
@@ -583,6 +583,9 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "cru-fold" => { cru_screen::fold(); ok() }
         // A message as Cru's page posts it.
         "cru-frame-message" => { if let Ok(v) = serde_json::from_str::<Value>(&a(0)) { cru_screen::message(&v); } ok() }
+        // A confirm left open (as a dialog over the window would be), for the kid screen and the
+        // lock to close (F212).
+        "test-ask" => { ctx::on_app(|win, cx| w::ask_confirm(win, cx, w::Ask { title: "Left open".into(), message: "A dialog".into(), ..Default::default() }, |_, _, _| {})); ok() }
         "kid-start" => { cru_kid::start(&Some(a(0)).filter(|x| !x.is_empty()).unwrap_or_else(|| "tray".into())); ok() }
         "kid-device" => { cru_kid::test_mark(a(0) != "false"); ok() }
         "kid-state" => { if let Ok(v) = serde_json::from_str::<Value>(&a(0)) { cru_kid::state(&v); } ok() }

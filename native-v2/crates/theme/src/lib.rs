@@ -742,6 +742,12 @@ impl T {
     pub const KID_PIN_KEY_H: Pixels = px(56.);
     pub const KID_PIN_IN_W: Pixels = px(220.);
     pub const KID_PIN_IN_TEXT: Pixels = px(26.);
+    /// The "…" while Cru thinks (min width), the kid buttons' icon, the typing row's top,
+    /// the buttons' flat drop (0 5px 0).
+    pub const KID_DOTS_W: Pixels = px(90.);
+    pub const KID_BTN_ICON: Pixels = px(28.);
+    pub const KID_TYPE_TOP: Pixels = px(6.);
+    pub const KID_BTN_DROP: Pixels = px(5.);
     pub fn kid_pin_scrim() -> Hsla { rgba(0x0a0a0ff0).into() }
     pub fn kid_pin_key() -> Hsla { rgb(0x1a1a28).into() }
     /// The PC lock (src/webapp-html.js #pc-lock): the badge, the clock, the
@@ -781,6 +787,16 @@ impl T {
     /// .pcl-in's edge (white at .3).
     pub fn pcl_in_edge() -> Hsla { rgba(0xffffff4d).into() }
     pub fn pcl_err() -> Hsla { rgb(0xfca5a5).into() }
+    /// Cru's ring (#cru-spot): 6 px out from its target, a 2 px edge; its note
+    /// (#cru-spot-note) at most 320 wide, 12 px from the target, its shadow
+    /// 0 10px 30px rgba(0,0,0,.45).
+    pub const CRU_SPOT_PAD: Pixels = px(6.);
+    pub const CRU_SPOT_EDGE: Pixels = px(2.);
+    pub const CRU_NOTE_MAX_W: Pixels = px(320.);
+    pub const CRU_NOTE_GAP: Pixels = px(12.);
+    pub const CRU_NOTE_SHADOW_Y: Pixels = px(10.);
+    pub const CRU_NOTE_SHADOW_BLUR: Pixels = px(30.);
+    pub fn cru_note_shadow() -> Hsla { rgba(0x00000073).into() }
     // ── end desktop ──
     // ── chat ──
     /// The chat log (claude-chat.js's CSS): "Go to the newest message" (38

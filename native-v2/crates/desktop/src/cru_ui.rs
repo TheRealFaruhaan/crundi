@@ -138,7 +138,7 @@ fn kid_mic_look(tone: &str, phase: &str, t: f32) -> w::MicLook {
 /// (.cv-reply.think::after, cvkdots: 1 s, .35 → 1 and up 5px).
 fn kid_dots() -> AnyElement {
     let dots = || div().flex().gap(px(10.)).h(px(18.)).items_center().children((0..3).map(|_| div().size(px(14.)).rounded_full().bg(T::accent())));
-    div().id("kid-dots").min_w(px(90.)).child(dots().with_animation("kid-dots", Animation::new(std::time::Duration::from_secs(1)).repeat().with_max_fps(T::ANIM_FPS),
+    div().id("kid-dots").min_w(T::KID_DOTS_W).child(dots().with_animation("kid-dots", Animation::new(std::time::Duration::from_secs(1)).repeat().with_max_fps(T::ANIM_FPS),
         |d, t| { let k = (1. - (std::f32::consts::TAU * t).cos()) / 2.; d.opacity(0.35 + 0.65 * k).mt(px(-5. * k)) })).into_any_element()
 }
 
@@ -336,7 +336,7 @@ impl CruScreen {
         let mic = w::liquid_mic("kid-mic", &self.liquid, kid_mic_look(cru::tone(&phase, un), if un { "ended" } else { &phase }, t), t, ms, mic_box, if phase == "speak" { "Stop talking" } else { "Talk" })
             .on_click(|_, _, _| cru::mic());
         // Mute (.cv-mute): white with the indigo icon, a pale red while muted; a flat shadow under it.
-        let flat = BoxShadow { color: T::kid_btn_shadow(), offset: point(px(0.), T::SP_4 + px(1.)), blur_radius: px(0.), spread_radius: px(0.), inset: false };
+        let flat = BoxShadow { color: T::kid_btn_shadow(), offset: point(px(0.), T::KID_BTN_DROP), blur_radius: px(0.), spread_radius: px(0.), inset: false };
         let mute = w::round_solid("kid-mute", if muted { IconName::MicOff } else { IconName::Mic }, T::KID_BTN, T::ICON_XL,
             if muted { T::kid_mute_on() } else { T::white() }, if muted { T::kid_mute_on_fg() } else { T::kid_button() }, Some(flat.clone()))
             .tooltip(w::tooltip(if muted { "Turn the microphone back on" } else { "Mute the microphone" }))
@@ -344,7 +344,7 @@ impl CruScreen {
         self.next_frame(window, cx);
         // The keyboard button (.cv-ov.kid .cv-kbb): white with the indigo icon, indigo while on.
         let kb = c.keyboard;
-        let kbb = w::round_solid("kid-kb", IconName::Keyboard, T::KID_BTN, px(28.), if kb { T::kid_button() } else { T::white() }, if kb { T::white() } else { T::kid_button() }, Some(flat))
+        let kbb = w::round_solid("kid-kb", IconName::Keyboard, T::KID_BTN, T::KID_BTN_ICON, if kb { T::kid_button() } else { T::white() }, if kb { T::white() } else { T::kid_button() }, Some(flat))
             .tooltip(w::tooltip(if kb { "Back to voice" } else { "Keyboard mode: type to Cru, no microphone" }))
             .on_click(cx.listener(move |this, _, window, cx| { cru::kid_keyboard(!kb); if !kb { this.focus_box(window, cx); } else { window.focus(&this.focus, cx); } }));
         let bottom = if kb {
@@ -362,7 +362,7 @@ impl CruScreen {
                 w::text_box(&fh, w::message_box(i, 1.).bg(T::white()).border_3().border_color(T::kid_type_border()).rounded(T::KID_TYPE_R).px(T::KID_TYPE_PAD_X).py(T::KID_TYPE_PAD_Y)
                     .text_color(T::kid_text()).text_size(T::KID_TYPE_TEXT).font_weight(T::W_BOLD).font_family(T::KID_FONT).on_paste(paste_files), window, cx)
             });
-            div().flex().items_center().gap(T::SP_12).px(T::SP_24).pt(px(6.)).pb(T::SP_20).child(kbb).child(div().flex_1().min_w_0().children(boxed)).child(send)
+            div().flex().items_center().gap(T::SP_12).px(T::SP_24).pt(T::KID_TYPE_TOP).pb(T::SP_20).child(kbb).child(div().flex_1().min_w_0().children(boxed)).child(send)
         } else {
             div().relative().flex().items_center().justify_center().py(T::SP_20).child(mic)
                 .child(div().absolute().left(T::SP_24).child(kbb))

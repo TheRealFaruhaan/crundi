@@ -10,8 +10,12 @@ export async function run(T, t) {
   await T.api.http('POST', '/api/voice/kid/pin', { pin: '2468' });
   // On the Inbox (the workbench's empty launcher pane animates by design).
   await T.ui('tab', 'inbox');
+  // A dialog left open (as Cru's open:true card move leaves one): the kid screen closes it (F212).
+  await T.act('test-ask');
+  await T.until('a dialog left open', (p) => !!p.dialog, 5000);
   await T.act('kid-start', 'tray');
-  await T.until('the kid screen opens over everything', (p) => K(p).on && D(p).cru.open, 15000);
+  const k0 = await T.until('the kid screen opens over everything', (p) => K(p).on && D(p).cru.open, 15000);
+  t.check('…the dialog left open is closed', !k0.dialog, k0.dialog);
   await t.sleep(500);
   await T.snap('desktop', 'cru-kid');
   // Its keyboard button (F194): typing; back to the voice needs a Deepgram key, which this

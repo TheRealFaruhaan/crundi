@@ -15,9 +15,12 @@ export async function run(T, t) {
   t.check('the tray: "Lock (visible)" and "Lock (full)" after Open', JSON.stringify(menu(p).slice(4, 7).map((m) => m.label)) === JSON.stringify(['Open', 'Lock (visible)', 'Lock (full)'])
     && item(p, 'lock-visible').enabled && item(p, 'lock-full').enabled, menu(p));
 
-  // The full lock, from the tray.
+  // The full lock, from the tray (a dialog left open first: the lock closes it, F212).
+  await T.act('test-ask');
+  await T.until('a dialog left open', (p) => !!p.dialog, 5000);
   await T.act('tray-pick', 'lock-full');
   p = await T.until('the tray\'s Lock (full): the opaque lock screen, the window locked', (p) => L(p).on && L(p).mode === 'full' && D(p).windowLocked, 15000);
+  t.check('…the dialog left open is closed (the lock is over every dialog)', !p.dialog, p.dialog);
   t.check('…the tray says "Locked"; the locks and Quit are off', item(p, 'kid').label === 'Locked' && !item(p, 'kid').enabled && !item(p, 'lock-visible').enabled && !item(p, 'lock-full').enabled && !item(p, 'quit').enabled, menu(p));
   await t.sleep(400);
   await T.snap('desktop', 'pc-lock-full');
