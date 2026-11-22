@@ -16,9 +16,14 @@
 //!   screen (`TermScreen`), the cursor over it (`TermCursor`: its blink
 //!   redraws only itself) and the input bar (`TermInput`: typing in the box
 //!   never redraws the screen; output never redraws the box).
-//! - The screen is one element (`grid`): the rows as runs of one style,
-//!   derived once per change (not per frame), each painted as a shaped line
-//!   at its column (the text system keeps shaped lines between frames).
+//! - The screen's rows are runs of one style, derived and shaped once per
+//!   change of a line (not per frame). While the shell prints, each line is
+//!   a cached view of its own (`TermLine`, F205): a line that only moved up
+//!   is replayed where it now is (GPUI patch (b); the row height is a whole
+//!   number of device pixels), so a frame renders only the lines written.
+//!   A still screen, or one partly out of its clip (where a moved view
+//!   cannot be replayed), is one element (`grid`) painting every row.
+//! - A find mark over each line on show, for Cru's highlight (F202).
 
 use crate::vt;
 use crundi_core::attach as rules;
@@ -296,11 +301,31 @@ fn shape_char(c: char, bold: bool, italic: bool, fsize: Pixels, cw: f32, lh: Pix
 /// (from the characters' shapes, at the text size and cell width it was
 /// made for) and its underlines (column, width in cells, colour, offset
 /// from the row's top).
-struct RowPaint { bgs: Vec<(usize, usize, Hsla)>, glyphs: Vec<PGlyph>, unders: Vec<(usize, usize, Hsla, Pixels)> }
+struct RowPaint { bgs: Vec<(usize, usize, Hsla)>, glyphs: Vec<PGlyph>, unders: Vec<(usize, usize, Hsla, Pixels)>, text: SharedString }
 
 impl RowPaint {
+    fn is_blank(&self) -> bool { self.bgs.is_empty() && self.glyphs.is_empty() && self.unders.is_empty() }
+
+    /// The row's backgrounds, from its top left `o`.
+    fn paint_bgs(&self, o: Point<Pixels>, cw: f32, lh: Pixels, window: &mut Window) {
+        for &(col, cells, b) in &self.bgs { window.paint_quad(fill(Bounds { origin: point(o.x + px(col as f32 * cw), o.y), size: size(px(cells as f32 * cw), lh) }, b)); }
+    }
+
+    /// The row's glyphs and underlines, from its top left `o`.
+    fn paint_text(&self, o: Point<Pixels>, cw: f32, fsize: Pixels, window: &mut Window) {
+        for g in &self.glyphs {
+            let at = o + g.at;
+            let _ = if g.emoji { window.paint_emoji(at, g.font, g.id, fsize) } else { window.paint_glyph(at, g.font, g.id, fsize, g.color) };
+        }
+        for &(col, cells, c, uy) in &self.unders {
+            window.paint_underline(point(o.x + px(col as f32 * cw), o.y + uy), px(cells as f32 * cw), &UnderlineStyle { thickness: px(1.), color: Some(c), wavy: false });
+        }
+    }
+
     fn new(row: &[vt::Cell], named: &[Hsla], fsize: Pixels, cw: f32, lh: Pixels, chars: &mut HashMap<CharKey, Rc<CharShape>>, window: &Window) -> RowPaint {
-        let mut p = RowPaint { bgs: vec![], glyphs: vec![], unders: vec![] };
+        // Its words, for Cru's highlight (a find mark over the line, F202).
+        let text: String = row.iter().filter(|c| !c.cont).map(|c| c.ch).collect();
+        let mut p = RowPaint { bgs: vec![], glyphs: vec![], unders: vec![], text: text.trim().to_string().into() };
         let mut shape = |c: char, b: bool, i: bool| chars.entry((c, b, i)).or_insert_with(|| Rc::new(shape_char(c, b, i, fsize, cw, lh, window))).clone();
         for run in paint_runs(row, named) {
             if let Some(b) = run.bg { p.bgs.push((run.col, run.cells, b)); }
@@ -331,7 +356,7 @@ struct RowCache { rows: HashMap<u64, Rc<RowPaint>>, chars: HashMap<CharKey, Rc<C
 impl RowCache {
     /// The visible lines' rows, each from the cache or derived now; lines
     /// no longer on show are let go.
-    fn visible(&mut self, lines: &[&vt::Line], fsize: Pixels, cell: (f32, f32), window: &Window) -> Vec<Rc<RowPaint>> {
+    fn visible(&mut self, lines: &[&vt::Line], fsize: Pixels, cell: (f32, f32), window: &Window) -> Vec<(u64, Rc<RowPaint>)> {
         let key = (fsize, cell.0.to_bits());
         if self.for_size != key { self.rows.clear(); self.chars.clear(); self.for_size = key; }
         let named = named();
@@ -344,7 +369,7 @@ impl RowCache {
                 None => { self.derived += 1; Rc::new(RowPaint::new(l, &named, fsize, cell.0, lh, &mut self.chars, window)) }
             };
             next.insert(id, r.clone());
-            r
+            (id, r)
         }).collect();
         self.rows = next;
         out
@@ -447,20 +472,69 @@ pub static SCREEN_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 pub static SCREEN_PAINTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 fn add_us(t: std::time::Instant) { SCREEN_US.fetch_add(t.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed); }
 
+/// One line of the screen, as painted (a cached leaf, F205): a line's id
+/// changes with its content, so its view never changes; when the terminal
+/// scrolls, the lines that moved are replayed where they now are (GPUI patch
+/// (b): a whole number of device pixels, the row height being one), and only
+/// the lines written or come into view render and paint.
+pub struct TermLine { row: Rc<RowPaint>, fsize: Pixels, cw: f32, lh: Pixels }
+
+impl Render for TermLine {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        crundi_core::driver::rendered("term-line");
+        let (row, fsize, cw, lh) = (self.row.clone(), self.fsize, self.cw, self.lh);
+        let text = row.text.clone();
+        div().relative().size_full().child(canvas(|_, _, _| {}, move |bounds, _, window, _| {
+            // Out of sight (the pane scrolled out of the grid): nothing to paint.
+            if !bounds.intersects(&window.content_mask().bounds) { return; }
+            let t0 = std::time::Instant::now();
+            window.paint_layer(bounds, |window| {
+                row.paint_bgs(bounds.origin, cw, lh, window);
+                row.paint_text(bounds.origin, cw, fsize, window);
+            });
+            add_us(t0);
+        }).size_full()).child(w::find::mark(text))
+    }
+}
+
 pub struct TermScreen {
     state: Entity<TermState>,
     pub focus: FocusHandle,
     /// Each visible line's row as painted, kept by line id (RowCache), and
-    /// the rows on show with what they were taken for (the terminal's
-    /// generation, the scroll and the text size; the selection does not
-    /// count: drawn over).
+    /// the rows on show (by line id, a blank one without a view) with what
+    /// they were taken for (the terminal's generation, the scroll, the text
+    /// size and the cell; the selection does not count: its rows are drawn
+    /// by the screen itself, under the others).
     cache: RowCache,
-    shown: Rc<Vec<Rc<RowPaint>>>,
-    drawn: Option<(u64, usize, Pixels)>,
-    /// A cell's size, for the text size it was measured at.
+    shown: Rc<Vec<(Rc<RowPaint>, Option<Entity<TermLine>>)>>,
+    lines: HashMap<u64, Entity<TermLine>>,
+    drawn: Option<(u64, usize, Pixels, u32)>,
+    /// A cell's size, for the text size and scale it was measured at.
     cell: (f32, f32),
-    cell_for: Pixels,
+    cell_for: (Pixels, u32),
     origin: Rc<StdCell<Point<Pixels>>>,
+    /// The screen was not wholly inside its clip when last laid out (its
+    /// pane partly or wholly out of the grid's view): its lines, moved,
+    /// cannot be replayed (GPUI patch (b) replays only what is wholly in
+    /// its clip), so the screen paints them all itself, as one element.
+    clipped: Rc<StdCell<bool>>,
+    /// Nothing of it was in its clip (its pane out of the grid's view): its
+    /// words get no find marks (each mark is made again as a line's words
+    /// change, a cost on every frame of a printing terminal no one sees).
+    hidden: Rc<StdCell<bool>>,
+    /// The shell is printing (changes come within 250 ms of each other):
+    /// only then are the lines views of their own. A still screen is one
+    /// element: a cached view nested in a pane costs a little on every frame
+    /// the Workbench replays that pane, 50 lines' worth for nothing (F205).
+    printing: bool,
+    last_change: Option<std::time::Instant>,
+    quiet: Option<Task<()>>,
+    /// Whether `shown` holds the lines' views.
+    made_views: bool,
+    /// The find marks over the rows the screen paints itself, and what they
+    /// were made for.
+    own_marks: Rc<Vec<(SharedString, Bounds<Pixels>)>>,
+    marks_for: Option<(Option<(u64, usize, Pixels, u32)>, bool, bool, Vec<(usize, usize, usize)>)>,
     pressing: bool,
     sel: Sel,
     _sub: Subscription,
@@ -468,8 +542,24 @@ pub struct TermScreen {
 
 impl TermScreen {
     fn new(state: Entity<TermState>, cx: &mut Context<Self>) -> Self {
-        let _sub = cx.observe(&state, |_, _, cx| cx.notify());
-        TermScreen { state, focus: cx.focus_handle(), cache: RowCache::default(), shown: Rc::new(vec![]), drawn: None, cell: (8., 16.), cell_for: px(0.), origin: Rc::new(StdCell::new(point(px(0.), px(0.)))), pressing: false, sel: Sel::default(), _sub }
+        let _sub = cx.observe(&state, |this: &mut Self, _, cx| {
+            let now = std::time::Instant::now();
+            if this.last_change.is_some_and(|t| now - t < Duration::from_millis(250)) { this.printing = true; }
+            this.last_change = Some(now);
+            // Quiet for 400 ms: the screen is one element again.
+            if this.printing && this.quiet.is_none() {
+                this.quiet = Some(cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| loop {
+                    cx.background_executor().timer(Duration::from_millis(400)).await;
+                    let done = this.update(cx, |t, cx| {
+                        if t.last_change.is_some_and(|l| l.elapsed() < Duration::from_millis(400)) { return false; }
+                        t.printing = false; t.quiet = None; cx.notify(); true
+                    });
+                    if done.unwrap_or(true) { return; }
+                }));
+            }
+            cx.notify();
+        });
+        TermScreen { state, focus: cx.focus_handle(), cache: RowCache::default(), shown: Rc::new(vec![]), lines: HashMap::new(), drawn: None, cell: (8., 16.), cell_for: (px(0.), 0), origin: Rc::new(StdCell::new(point(px(0.), px(0.)))), clipped: Rc::new(StdCell::new(false)), hidden: Rc::new(StdCell::new(false)), printing: false, last_change: None, quiet: None, made_views: false, own_marks: Rc::new(vec![]), marks_for: None, pressing: false, sel: Sel::default(), _sub }
     }
 
     fn cell_at(&self, p: Point<Pixels>) -> (usize, usize) {
@@ -482,43 +572,100 @@ impl TermScreen {
     }
 }
 
+/// A selection's rows and, for each, its first and last cell (in order).
+fn sel_rows(sel: Sel, cols: usize) -> Vec<(usize, usize, usize)> {
+    if !sel.on { return vec![]; }
+    let ((c0, r0), (c1, r1)) = if (sel.r1, sel.c1) < (sel.r0, sel.c0) { ((sel.c1, sel.r1), (sel.c0, sel.r0)) } else { ((sel.c0, sel.r0), (sel.c1, sel.r1)) };
+    (r0..=r1).filter_map(|r| {
+        let from = if r == r0 { c0 } else { 0 };
+        let to = if r == r1 { c1 } else { cols.saturating_sub(1) };
+        (to >= from).then_some((r, from, to))
+    }).collect()
+}
+
 impl Render for TermScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("term-screen");
         let t0 = std::time::Instant::now();
         let st = self.state.read(cx);
         let fsize = T::TEXT_13 * scale(st.zoom);
+        let sf = window.scale_factor();
         // The cell: the mono face's advance at this size, measured on a
         // shaped line of cells (a glyph's advance alone may be off by the
-        // renderer's rounding over a long run); once per text size.
-        if self.cell_for != fsize {
+        // renderer's rounding over a long run), and the row a whole number
+        // of device pixels (as xterm.js floors its cell height), so a line
+        // that scrolls moves by whole pixels; once per text size and scale.
+        if self.cell_for != (fsize, sf.to_bits()) {
             const PROBE: &str = "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM";
             let run = TextRun { len: PROBE.len(), font: font(T::MONO), color: T::text(), background_color: None, underline: None, strikethrough: None };
             let line = window.text_system().shape_line(PROBE.into(), fsize, &[run], None);
-            self.cell = (f32::from(line.width) / PROBE.len() as f32, f32::from(fsize) * T::WS_TERM_LH);
-            self.cell_for = fsize;
+            let ch = (f32::from(fsize) * T::WS_TERM_LH * sf).floor().max(1.) / sf;
+            self.cell = (f32::from(line.width) / PROBE.len() as f32, ch);
+            self.cell_for = (fsize, sf.to_bits());
             st.cell.set(self.cell);
         }
         // The rows on show, taken again only when the terminal changed; of
-        // those only the lines that changed or came into view are derived
-        // and shaped (the rest are the cache's).
-        let key = (st.term.generation, st.back, fsize);
-        if self.drawn != Some(key) {
+        // those only the lines that changed or came into view are derived,
+        // shaped and given a view (the rest are the cache's).
+        let key = (st.term.generation, st.back, fsize, self.cell.1.to_bits());
+        let per_line = self.printing && !self.clipped.get();
+        if self.drawn != Some(key) || self.made_views != per_line {
             let lines = st.term.view(st.back);
-            self.shown = Rc::new(self.cache.visible(&lines, fsize, self.cell, window));
+            let rows = self.cache.visible(&lines, fsize, self.cell, window);
+            let (cw, lh) = (self.cell.0, px(self.cell.1));
+            let mut keep: HashMap<u64, Entity<TermLine>> = HashMap::with_capacity(rows.len());
+            let mut shown = Vec::with_capacity(rows.len());
+            for (id, row) in rows {
+                // A blank row draws nothing; a line twice on show (a copy
+                // keeps its id) is drawn by the screen the second time.
+                let view = (per_line && !row.is_blank() && !keep.contains_key(&id)).then(|| {
+                    let v = self.lines.remove(&id).filter(|v| { let l = v.read(cx); l.fsize == fsize && l.cw == cw && l.lh == lh })
+                        .unwrap_or_else(|| { let row = row.clone(); cx.new(|_| TermLine { row, fsize, cw, lh }) });
+                    keep.insert(id, v.clone());
+                    v
+                });
+                shown.push((row, view));
+            }
+            self.lines = keep;
+            self.shown = Rc::new(shown);
             self.drawn = Some(key);
+            self.made_views = per_line;
         }
+        let st = self.state.read(cx);
         let (cw, ch) = self.cell;
         let (back, cols) = (st.back, st.term.cols);
         let id = st.id.clone();
-        let rows = self.shown.clone();
-        let sel = self.sel;
+        let sel = sel_rows(self.sel, cols);
         let origin = self.origin.clone();
         let state = self.state.downgrade();
         let pad = T::SP_4;
+        // What the screen paints itself: the rows under the selection (their
+        // backgrounds, the selection, then their text) and a line twice on
+        // show; every row while the screen is clipped.
+        let all = !per_line;
+        let own: Vec<(usize, Rc<RowPaint>, Option<(usize, usize)>)> = self.shown.iter().enumerate().filter_map(|(r, (row, view))| {
+            let s = sel.iter().find(|x| x.0 == r).map(|x| (x.1, x.2));
+            (s.is_some() || ((all || view.is_none()) && !row.is_blank())).then(|| (r, row.clone(), s))
+        }).collect();
+        let (clipped, hidden) = (self.clipped.clone(), self.hidden.clone());
+        // Their words' find marks, one element for them all, made again only
+        // when what the screen paints itself changed (none while out of sight).
+        let mk = (self.drawn, all, self.hidden.get(), sel.clone());
+        if self.marks_for.as_ref() != Some(&mk) {
+            let items: Vec<(SharedString, Bounds<Pixels>)> = if self.hidden.get() { vec![] } else {
+                own.iter().filter(|(_, row, _)| !row.text.is_empty())
+                    .map(|(r, row, _)| (row.text.clone(), Bounds::new(point(pad, pad + px(*r as f32 * ch)), size(px(cols as f32 * cw), px(ch))))).collect()
+            };
+            self.own_marks = Rc::new(items);
+            self.marks_for = Some(mk);
+        }
+        let own_marks = w::find::marks(self.own_marks.clone());
         let grid = canvas(
-            move |bounds, _, cx| {
+            move |bounds, window, cx| {
                 origin.set(bounds.origin);
+                let m = window.content_mask().bounds;
+                hidden.set(!bounds.intersects(&m));
+                clipped.set(!(bounds.left() >= m.left() && bounds.top() >= m.top() && bounds.right() <= m.right() && bounds.bottom() <= m.bottom()));
                 let (bw, bh) = (f32::from(bounds.size.width) - 2. * f32::from(pad), f32::from(bounds.size.height) - 2. * f32::from(pad));
                 let (c, r) = ((bw / cw.max(1.)).floor().max(2.) as usize, (bh / ch.max(1.)).floor().max(1.) as usize);
                 // (After the frame: the server and the emulator follow the pane.)
@@ -526,48 +673,35 @@ impl Render for TermScreen {
                 cx.defer(move |cx| { let _ = state.update(cx, |t, cx| t.size(c, r, cx)); });
             },
             move |bounds, _, window, _| {
+                if own.is_empty() || !bounds.intersects(&window.content_mask().bounds) { return; }
                 let t0 = std::time::Instant::now();
                 SCREEN_PAINTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let o = bounds.origin + point(pad, pad);
                 let lh = px(ch);
-                // One paint layer for the whole screen (as the chat's log):
-                // its quads and glyphs take the layer's order, so the screen
-                // costs one insert into the scene's bounds tree, not one per
-                // glyph. Each row paints what it shaped when its line last
-                // changed: backgrounds and the selection (quads, under the
-                // text), then its glyphs and underlines.
                 window.paint_layer(bounds, |window| {
-                    for (r, row) in rows.iter().enumerate() {
-                        let y = o.y + px(r as f32 * ch);
-                        for &(col, cells, b) in &row.bgs { window.paint_quad(fill(Bounds { origin: point(o.x + px(col as f32 * cw), y), size: size(px(cells as f32 * cw), lh) }, b)); }
-                    }
-                    // The selection: whole cells, row by row.
-                    if sel.on {
-                        let ((c0, r0), (c1, r1)) = if (sel.r1, sel.c1) < (sel.r0, sel.c0) { ((sel.c1, sel.r1), (sel.c0, sel.r0)) } else { ((sel.c0, sel.r0), (sel.c1, sel.r1)) };
-                        for r in r0..=r1 {
-                            let from = if r == r0 { c0 } else { 0 };
-                            let to = if r == r1 { c1 } else { cols.saturating_sub(1) };
-                            if to < from { continue; }
-                            window.paint_quad(fill(Bounds { origin: point(o.x + px(from as f32 * cw), o.y + px(r as f32 * ch)), size: size(px((to - from + 1) as f32 * cw), lh) }, T::ws_term_sel()));
-                        }
-                    }
-                    for (r, row) in rows.iter().enumerate() {
-                        let top = point(o.x, o.y + px(r as f32 * ch));
-                        for g in &row.glyphs {
-                            let at = top + g.at;
-                            let _ = if g.emoji { window.paint_emoji(at, g.font, g.id, fsize) } else { window.paint_glyph(at, g.font, g.id, fsize, g.color) };
-                        }
-                        for &(col, cells, c, uy) in &row.unders {
-                            window.paint_underline(point(top.x + px(col as f32 * cw), top.y + uy), px(cells as f32 * cw), &UnderlineStyle { thickness: px(1.), color: Some(c), wavy: false });
-                        }
+                    for (r, row, s) in &own {
+                        let top = point(o.x, o.y + px(*r as f32 * ch));
+                        row.paint_bgs(top, cw, lh, window);
+                        // The selection: whole cells.
+                        if let Some((from, to)) = *s { window.paint_quad(fill(Bounds { origin: point(o.x + px(from as f32 * cw), top.y), size: size(px((to - from + 1) as f32 * cw), lh) }, T::ws_term_sel())); }
+                        row.paint_text(top, cw, fsize, window);
                     }
                 });
                 add_us(t0);
             },
         ).absolute().top_0().left_0().size_full();
+        // The other lines, each its own cached view at its row.
+        let width = px(cols as f32 * cw);
+        let line_views: Vec<AnyElement> = self.shown.iter().enumerate().filter_map(|(r, (_, view))| {
+            let v = view.as_ref()?;
+            if all || sel.iter().any(|x| x.0 == r) { return None; }
+            Some(v.clone().cached(StyleRefinement::default().absolute().top(pad + px(r as f32 * ch)).left(pad).w(width).h(px(ch))).into_any_element())
+        }).collect();
         add_us(t0);
         div().id(SharedString::from(format!("term-{id}"))).track_focus(&self.focus).relative().size_full().overflow_hidden().bg(T::bg()).cursor_text()
             .child(grid)
+            .children(line_views)
+            .child(own_marks)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
                 let m = &e.keystroke.modifiers;
                 let Some(text) = key_text(&e.keystroke.key, e.keystroke.key_char.as_deref(), m.control) else { return };

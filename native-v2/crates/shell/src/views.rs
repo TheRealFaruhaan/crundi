@@ -207,7 +207,10 @@ impl Render for Shell {
             window.on_next_frame(move |_, cx| cx.notify(me));
         }
         let root = div().key_context("CrundiWindow").relative().flex().flex_col().size_full().bg(T::bg()).text_color(T::text()).text_size(T::TEXT_13).font(crundi_theme::ui_font())
-            .child(div().absolute().size_0().track_focus(&self.root_focus));
+            .child(div().absolute().size_0().track_focus(&self.root_focus))
+            // Every move of the pointer, for the tips: one pressed stays away
+            // until the pointer has left its element (w::tip, F213).
+            .child(canvas(|_, _, _| {}, |_, _, window, _| window.on_mouse_event(|_: &MouseMoveEvent, phase, _, _| if phase == DispatchPhase::Capture { w::tip::pointer_moved(); })).absolute().size_0());
         let l = self.lay.clone();
         if !l.signed_in || l.server_over {
             return root.child(self.sign_in.clone().cached(StyleRefinement::default().size_full()))
@@ -753,11 +756,11 @@ impl Render for Sidebar {
             .child(head)
             .child(list)
             .child(div().flex().flex_col().gap(T::SP_8).py(T::SP_10).px(if folded { T::SP_6 } else { T::SP_8 }).border_t_1().border_color(T::border_subtle())
-                .child(w::dashed_button("add-project", if folded { "+" } else { "+ Add project" }).tooltip(w::tooltip("Add project")).on_click(move |_, window, cx| { registry::run_action(&s1, "add-project", window, cx); }))
-                .when(ib.supported, |d| d.child(w::outline_button("inbox", IconName::Mail, if folded { "" } else { "Inbox" })
+                .child(w::tip(w::dashed_button("add-project", if folded { "+" } else { "+ Add project" }), "Add project").on_click(move |_, window, cx| { registry::run_action(&s1, "add-project", window, cx); }))
+                .when(ib.supported, |d| d.child(w::tip(w::outline_button("inbox", IconName::Mail, if folded { "" } else { "Inbox" })
                     // The web's .has-unread: brighter, an accent edge, the count's badge; its title.
-                    .when(ib.unread > 0, |b| b.border_color(T::accent()).text_color(T::text()).child(w::count_badge(if ib.unread > 99 { "99+".to_string() } else { ib.unread.to_string() })))
-                    .tooltip(w::tooltip(if ib.unread > 0 { format!("Inbox: {} unread", ib.unread) } else { "Inbox".to_string() }))
+                    .when(ib.unread > 0, |b| b.border_color(T::accent()).text_color(T::text()).child(w::count_badge(if ib.unread > 99 { "99+".to_string() } else { ib.unread.to_string() }))),
+                    if ib.unread > 0 { format!("Inbox: {} unread", ib.unread) } else { "Inbox".to_string() })
                     .on_click(move |_, _, cx| s2.nav.update(cx, |n, cx| n.show_tab("inbox", cx)))))))
     }
 }
@@ -821,8 +824,8 @@ impl Render for ProjectBar {
             let badge: Vec<AnyElement> = badge.into_iter().map(|b| div().relative().child(b).child(crate::spots::spot(cx, "project-bar", format!("tab-badge:{id}"))).into_any_element()).collect();
             let tspot = crate::spots::spot(cx, "project-bar", format!("tab:{id}"));
             let (tid, nav) = (id.to_string(), self.stores.nav.clone());
-            tabs = tabs.child(w::nav_tab(icon.clone(), *label, on_tab == tid).relative().children(badge).child(tspot).id(("tab", i)).flex_none().cursor_pointer()
-                .tooltip(w::tooltip(tab_title(id, label)))
+            tabs = tabs.child(w::tip(w::nav_tab(icon.clone(), *label, on_tab == tid).relative().children(badge).child(tspot).id(("tab", i)).flex_none().cursor_pointer(),
+                tab_title(id, label))
                 .on_click(move |_, _, cx| nav.update(cx, |n, cx| n.show_tab(&tid, cx))));
             if i == 0 {
                 let s = self.stores.clone();
@@ -848,10 +851,10 @@ impl Render for ProjectBar {
             let s = self.stores.clone();
             // Hidden with its pages still open: a dot after the label, and the
             // tooltip says so (VD updateToggle, .brd-toggle.brd-running::after).
-            bar = bar.child(w::nav_tab(IconName::Globe, "Browser", false)
-                .when(running, |d| d.child(w::dot(T::accent()).self_start().ml(px(-1.)).size(px(11.)).border_2().border_color(T::bg_secondary())))
-                .id("browser").flex_none().cursor_pointer()
-                .tooltip(w::tooltip(if running { "Browser: hidden, its pages still open (click to show)" } else { "Browser (desktop app)" }))
+            bar = bar.child(w::tip(w::nav_tab(IconName::Globe, "Browser", false)
+                .when(running, |d| d.child(w::dot(T::accent()).self_start().ml(T::WS_BRD_DOT_GAP - T::WS_BRD_DOT_RING).size(T::WS_BRD_DOT + T::WS_BRD_DOT_RING * 2.).border_2().border_color(T::bg_secondary())))
+                .id("browser").flex_none().cursor_pointer(),
+                if running { "Browser: hidden, its pages still open (click to show)" } else { "Browser (desktop app)" })
                 .on_click(move |_, window, cx| { if !registry::run_action(&s, "browser", window, cx) { s.nav.update(cx, |n, cx| n.set_drawer(true, cx)); } }));
         }
         // One paint layer (w::layer): the bar is replayed every frame.

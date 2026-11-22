@@ -344,6 +344,12 @@ impl T {
             _ => 0x6b7280,
         }).into()
     }
+    /// The Browser button's running dot (.brd-running::after): 7 px, a 2 px
+    /// ring of the bar's colour round it (drawn as its border: the box is
+    /// 11), 1 px after the label (the ring's 2 px reach back over it).
+    pub const WS_BRD_DOT: Pixels = px(7.);
+    pub const WS_BRD_DOT_RING: Pixels = px(2.);
+    pub const WS_BRD_DOT_GAP: Pixels = px(1.);
     // ── end workspace ──
     // ── planning ──
     /// secrets (2.12): the dialog's pick list stops here and scrolls.

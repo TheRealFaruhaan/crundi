@@ -35,14 +35,14 @@ pub fn head_button(id: impl Into<ElementId>, content: HeadContent, look: HeadLoo
         HeadContent::Text(t) => div().text_size(if t.as_ref() == "×" { T::TEXT_14 } else { T::TEXT_11 }).child(t),
         HeadContent::IconText(i, t) => div().flex().items_center().gap(T::SP_4).child(div().text_size(T::ICON_SM).child(i)).child(div().text_size(T::TEXT_11).child(t)),
     };
-    div()
+    // The tip stays away after a press until the pointer leaves (w::tip, F213).
+    let el = div()
         .id(id).flex().flex_none().items_center().justify_center().w(w).h(h)
         .rounded(T::R_CONTROL).border_1().border_color(edge).bg(fill).text_color(ink)
         .cursor_pointer()
         .when(look == HeadLook::Close, |d| d.hover(|s| s.border_color(T::red()).text_color(T::red())))
-        .when(look == HeadLook::Rest, |d| d.hover(|s| s.border_color(T::accent()).text_color(T::text())))
-        .tooltip(crate::tooltip(tip.clone()))
-        .child(body)
+        .when(look == HeadLook::Rest, |d| d.hover(|s| s.border_color(T::accent()).text_color(T::text())));
+    crate::tip(el, tip).child(body)
 }
 
 /// One row of a menu (the "+" menu, a narrow header's "…" menu): its icon,

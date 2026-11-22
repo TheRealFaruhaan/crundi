@@ -100,7 +100,11 @@ impl Render for PaneBody {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("pane-body");
         let b = self.body.clone();
-        b(cx)
+        // The body clips itself (not the pane's box around it): a clip that
+        // moves with the pane (the grid scrolled sideways) would change the
+        // cached views' clip, and they would draw again instead of being
+        // replayed where they now are (GPUI patch (b), F213).
+        div().size_full().overflow_hidden().child(b(cx))
     }
 }
 
@@ -181,6 +185,9 @@ pub struct Workbench {
     /// The mosaic laid out (F99): once per change of the mosaic, the
     /// project or the area, not on every frame the Workbench renders.
     laid: Option<Rc<Laid>>,
+    /// The window's scale (as last drawn): the edge ramp moves the grid by
+    /// whole device pixels.
+    sf: f32,
 }
 
 /// The mosaic's rectangles for a project and an area (the grid's width,
@@ -192,7 +199,7 @@ impl Workbench {
         cx.set_global(Handle(cx.entity().downgrade()));
         let project = stores.projects.read(cx).open.clone();
         Workbench { stores, project, layouts: HashMap::new(), panes: HashMap::new(), area: (0., 0.), focused: 0, armed: 0, arm_gen: 0, full: None, gutter: None, scroll: ScrollHandle::new(), frames: HashMap::new(), seeded: None, pend: 0, protect: HashMap::new(), chip_leaf: None,
-            origin: Rc::new(Cell::new((0., 0.))), press: None, drag: None, moved: false, ghost: None, edge: None, laid: None }
+            origin: Rc::new(Cell::new((0., 0.))), press: None, drag: None, moved: false, ghost: None, edge: None, laid: None, sf: 1. }
     }
 
     /// The open project's mosaic (loaded from the saved layouts the first
@@ -514,6 +521,12 @@ impl Workbench {
                     let (band, moved) = w::edge_step(&sc, this.grid_bounds(), point(px(d.x), px(d.y)), true, false);
                     if !band { return false; }
                     if moved {
+                        // By whole device pixels (the ramp's step is not):
+                        // the panes' bodies are then replayed moved, not
+                        // drawn again on every tick (GPUI patch (b), F213).
+                        let (o, m, sf) = (this.scroll.offset(), this.scroll.max_offset(), this.sf.max(1.));
+                        let x = ((f32::from(o.x) * sf).round() / sf).clamp(-f32::from(m.x), 0.);
+                        if px(x) != o.x { this.scroll.set_offset(point(px(x), o.y)); }
                         // The grid moved under a still pointer: the lit leaf
                         // is the one now there; the grid redraws scrolled.
                         this.retarget(cx);
@@ -623,11 +636,14 @@ impl Workbench {
         let hh = if f.narrow { T::PANE_HEAD_NARROW } else { T::PANE_HEAD };
         // A wheel inside a pane stays in it (the workbench's sideways scroll
         // would otherwise move with a log: native-gpui's 19 Nov fix).
-        let body = div().relative().flex_1().min_h_0().w_full().overflow_hidden()
+        let body = div().relative().flex_1().min_h_0().w_full()
             .on_scroll(|_, _, cx| cx.stop_propagation())
             // The kind's body (elements around its cached views), hosted cached.
             .child(body.cached(StyleRefinement::default().size_full()));
-        w::panel_box()
+        // The panel's box without its clip: the head and the body clip
+        // themselves (see PaneBody), so the box moving with the grid's
+        // scroll leaves their cached views' clip as it was (F213).
+        w::panel_box().map(|mut d| { d.style().overflow.x = Some(Overflow::Visible); d.style().overflow.y = Some(Overflow::Visible); d })
             .child(head.cached(StyleRefinement::default().w_full().h(hh).flex_none()))
             .child(body)
             .when(f.focused && !f.full, |d| d.border_color(T::accent()))
@@ -687,6 +703,7 @@ pub fn add_pane(kind: &str, window: &mut Window, cx: &mut App) {
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("workbench");
+        self.sf = window.scale_factor();
         if !self.project.is_empty() { self.ensure_launcher(); }
         let laid = self.laid();
         let (gw, ah) = (laid.gw, self.area.1);

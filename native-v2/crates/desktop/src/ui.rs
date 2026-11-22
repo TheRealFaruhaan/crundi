@@ -220,9 +220,10 @@ impl Render for TabsBar {
             let lead = (!t.badge.is_empty()).then(|| w::tag(t.badge, if t.bad { "error" } else if t.badge == "HP" { "ok" } else { "accent" }).into_any_element());
             let tab = w::tab_with(lead, t.title.clone(), t.active, t.sleeping)
                 .child(w::icon_button(("tab-x", n), IconName::X, "Close tab").on_click(move |_, _, _| { let id = id2.clone(); browser::defer(move || drawer::close_tab(&id)); }));
-            row = row.child(div().id(("tab", n)).min_w_0().cursor_pointer().rounded_t(T::R_CONTROL)
+            // The tip stays away after a press until the pointer leaves (w::tip, F213).
+            row = row.child(w::tip(div().id(("tab", n)).min_w_0().cursor_pointer().rounded_t(T::R_CONTROL)
                 .when(!t.active, |d| d.hover(|s| s.bg(T::bg_tertiary())))
-                .child(tab).tooltip(w::tooltip(t.tip.clone()))
+                .child(tab), t.tip.clone())
                 .on_click(move |_, _, _| { let id = id.clone(); browser::defer(move || drawer::activate(&id)); })
                 // A middle click closes it (the tabs' auxclick).
                 .on_mouse_up(MouseButton::Middle, move |_, _, _| { let id = id3.clone(); browser::defer(move || drawer::close_tab(&id)); }));

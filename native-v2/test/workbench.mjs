@@ -143,6 +143,25 @@ await T.mouse('click', moreX, cl.y + 13);
 await T.until('open again', (s) => s.headProps?.[chat]?.menu, 3000);
 await T.mouse('click', cl.x + 40, cl.y + 300);
 await T.until('a press outside closes them', (s) => !s.headProps?.[chat]?.menu, 3000);
+// A head button's tooltip after a click (F213): it stays away while the
+// pointer rests there, and comes back once the pointer has left and returned
+// (as a browser's title; w::tip).
+{
+  const tipOf = async (x, y) => { await T.mouse('move', x, y); await T.mouse('move', x + 1, y); await t.sleep(1300); return (await T.state()).workspace?.tip || {}; };
+  let tip = await tipOf(moreX, cl.y + 13);
+  const text = tip.text;
+  t.check('resting on a head button shows its tooltip', !!text && tip.shown && tip.ago < 1200, tip);
+  await T.mouse('click', moreX + 1, cl.y + 13);
+  await T.until('…a click opens its menu', (s) => s.headProps?.[chat]?.menu, 3000);
+  tip = await tipOf(moreX + 2, cl.y + 13);
+  t.check('after a click on a head button its tooltip stays away while the pointer rests there (F213)', tip.text === text && !tip.shown, tip);
+  await T.mouse('click', cl.x + 40, cl.y + 300);
+  await T.until('…its menu closed', (s) => !s.headProps?.[chat]?.menu, 3000);
+  await t.sleep(200);
+  tip = await tipOf(moreX, cl.y + 13);
+  t.check('…and comes back once the pointer left and returned', tip.text === text && tip.shown && tip.ago < 1200, tip);
+  await T.mouse('move', cl.x + 40, cl.y + 300);
+}
 
 // ─── Full screen over the whole window (F80) ───
 await T.ui('pane-full', chat);
@@ -169,17 +188,46 @@ await T.ui('add-pane', 'layout:cols3');
 s = await T.state();
 await T.ui('pane-split', s.leaves.find((l) => l.key).key, 'right');
 s = await T.until('four columns, wider than the grid', (s) => s.leaves.length >= 4 && s.grid?.max > 100, 5000);
-const g = s.grid;
+let g = s.grid;
+// The chat to the third column (its head dropped on the launcher there: they
+// swap), where it stays wholly in view while the grid scrolls (F213 below).
+{
+  const ck = s.leaves.find((l) => l.key?.startsWith('live:')), to = s.leaves.filter((l) => l.key?.startsWith('pend:')).sort((p, q) => p.x - q.x)[0];
+  if (ck && to && to.x > ck.x + ck.w) {
+    const [x0, y0] = [ck.x + 60, ck.y + 12], [x1, y1] = [to.x + to.w / 2, to.y + 200];
+    await T.mouse('move', x0, y0); await T.mouse('down', x0, y0);
+    for (let i = 1; i <= 6; i++) { await T.mouse('move', x0 + (x1 - x0) * i / 6, y0 + (y1 - y0) * i / 6, { buttons: ['left'] }); await t.sleep(30); }
+    await T.mouse('up', x1, y1);
+    s = await T.until('(the chat moved to the third column)', (s) => !s.drag && s.leaves.find((l) => l.key === ck.key)?.x > to.x - 2, 3000);
+    await t.sleep(300);
+    s = await T.state(); g = s.grid;
+  }
+}
+const chatLeaf = s.leaves.find((l) => l.key?.startsWith('live:'));
 const src = s.leaves.filter((l) => l.key && l.x >= g.x).sort((p, q) => p.x - q.x)[0];
 const hx = Math.max(src.x + 60, g.x + 80), hy = src.y + 12;
 await T.mouse('move', hx, hy);
 await T.mouse('down', hx, hy);
 const ry = hy + 200, rx = g.x + g.w - 15;
-for (let i = 1; i <= 6; i++) { await T.mouse('move', hx + (rx - hx) * i / 6, ry, { buttons: ['left'] }); await t.sleep(30); }
+for (let i = 1; i <= 5; i++) { await T.mouse('move', hx + (rx - hx) * i / 6, ry, { buttons: ['left'] }); await t.sleep(30); }
+await t.sleep(300);
+const er0 = (await T.state()).renders || {}, ef = T.frames.mark();
+await T.mouse('move', rx, ry, { buttons: ['left'] });
 s = await T.until('held at the right edge, the grid scrolls right', (s) => s.drag && s.grid.scroll > 60, 5000);
 const lit = s.leaves.find((l) => l.id === s.drag.target);
 t.check('…and the lit pane is the one now under the pointer', !s.drag.target || (lit && rx >= lit.x && rx < lit.x + lit.w), { target: s.drag.target, lit, rx });
 s = await T.until('…up to its end', (s) => s.drag && Math.abs(s.grid.scroll - s.grid.max) < 1, 5000);
+// Each tick moves the grid by whole pixels: the panes' bodies are replayed
+// moved, not drawn again (F213): the chat's log, its composer and Mini's
+// layers render far less than once a tick (a pane crossing the grid's edge
+// is clipped differently each tick and renders).
+{
+  const er1 = s.renders || {}, frames = T.frames.since(ef).frames;
+  const d = Object.fromEntries(Object.keys(er1).map((k) => [k, (er1[k] || 0) - (er0[k] || 0)]).filter(([, v]) => v));
+  console.log(`  edge scroll to the end (${Math.round(s.grid.max)} px, ${frames} frames):`, JSON.stringify(d));
+  const seen = chatLeaf && chatLeaf.x - s.grid.max >= g.x && chatLeaf.x + chatLeaf.w <= g.x + g.w;
+  t.check('during an edge scroll the chat (wholly in view) is moved, not drawn: its log, composer and Mini\'s layers not on every tick (F213)', seen && frames >= 5 && (d.log || 0) < frames / 2 && (d.composer || 0) < frames / 2 && (d['mini-panes'] || 0) < frames / 2, { d, frames, chat: chatLeaf, g });
+}
 const lx = g.x + 15;
 for (let i = 1; i <= 6; i++) { await T.mouse('move', rx + (lx - rx) * i / 6, ry, { buttons: ['left'] }); await t.sleep(30); }
 s = await T.until('held at the left edge, it scrolls back', (s) => s.drag && s.grid.scroll < 1, 5000);
