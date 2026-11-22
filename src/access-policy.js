@@ -69,6 +69,7 @@ const COLLABORATOR_ROUTES = [
   ['GET', '/api/files/download'],
   ['POST', '/api/files/download-link'],
   ['POST', '/api/files/write'],
+  ['POST', '/api/files/create'],
   ['POST', '/api/files/upload'],
   ['POST', '/api/files/delete'],
   ['POST', '/api/resolve-file-path'],
