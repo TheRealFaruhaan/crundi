@@ -52,6 +52,10 @@ pub struct PaneHead {
     /// A rename just made: (the new title, the title it replaced). Shown
     /// until the server's title changes (the web sets it at once).
     renamed: Option<(String, String)>,
+    /// Where the title, the state badge and the tools were last laid out
+    /// (window coordinates): the driver's check that a long title never
+    /// pushes the badge or the buttons out of the pane.
+    rects: Rc<std::cell::RefCell<[Option<Bounds<Pixels>>; 3]>>,
     _subs: Vec<Subscription>,
 }
 
@@ -66,7 +70,7 @@ impl PaneHead {
     pub(crate) fn new(key: String, chat: bool, info: Rc<dyn Fn(&App) -> HeadInfo>, projects: Entity<Projects>, wb: WeakEntity<Workbench>, watch: Box<dyn FnOnce(&mut Context<PaneHead>) -> Vec<Subscription>>, cx: &mut Context<Self>) -> Self {
         let subs = watch(cx);
         let kind = extra::head_of(cx, &key);
-        PaneHead { key, chat, info, kind, projects, wb, last: None, menu: false, menu_drawn: false, closed_at: None, renaming: None, renamed: None, _subs: subs }
+        PaneHead { key, chat, info, kind, projects, wb, last: None, menu: false, menu_drawn: false, closed_at: None, renaming: None, renamed: None, rects: Rc::default(), _subs: subs }
     }
 
     /// What the title or the extra reads may have changed (the kind's
@@ -104,6 +108,8 @@ impl PaneHead {
             "secrets": e.secrets, "buttons": buttons,
             "icon": self.kind.as_ref().and_then(|k| k.icon).is_some(),
             "menu": self.menu_drawn, "renaming": self.renaming.is_some(),
+            "rects": self.rects.borrow().iter().zip(["title", "badge", "tools"]).map(|(b, k)| (k.to_string(), b.map_or(serde_json::Value::Null, |b| serde_json::json!({
+                "x": f32::from(b.origin.x), "y": f32::from(b.origin.y), "w": f32::from(b.size.width), "h": f32::from(b.size.height) })))).collect::<serde_json::Map<_, _>>(),
         })
     }
 
@@ -223,6 +229,9 @@ impl Render for PaneHead {
         // A rename shows until the server's title moves on.
         if self.renamed.as_ref().is_some_and(|(_, old)| *old != info.title) { self.renamed = None; }
         let id = f.leaf;
+        *self.rects.borrow_mut() = [None, None, None];
+        let rects = self.rects.clone();
+        let probe = move |k: usize| { let r = rects.clone(); canvas(move |b, _, _| { r.borrow_mut()[k] = Some(b); }, |_, _, _, _| {}).absolute().top_0().left_0().size_full() };
         let fold = self.chat && f.narrow;
         if !fold && self.menu { self.menu = false; }
         self.menu_drawn = fold && self.menu;
@@ -249,9 +258,11 @@ impl Render for PaneHead {
                 .capture_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| if e.keystroke.key == "escape" { cx.stop_propagation(); this.end_rename(false, cx); }))
                 .child(w::title_input(st)));
         } else {
-            let t = div().id(("title", id)).flex_none().max_w(px(cap)).min_w_0().h(T::SP_16).px(T::SP_6).rounded(T::R_CONTROL)
+            // The title takes only what the row leaves (elided, as the web's
+            // .term-head-title): never the badge's or the tools' room.
+            let t = div().id(("title", id)).flex_initial().max_w(px(cap)).min_w_0().overflow_hidden().h(T::SP_16).px(T::SP_6).rounded(T::R_CONTROL)
                 .flex().items_center().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text())
-                .child(div().truncate().child(title));
+                .relative().child(probe(0)).child(div().truncate().child(title));
             row = row.child(if rename_path(&self.key).is_some() {
                 t.cursor_text().hover(|s| s.bg(T::bg_tertiary())).tooltip(w::tooltip("Click to rename"))
                     .on_click(cx.listener(|this, e: &ClickEvent, window, cx| {
@@ -263,11 +274,11 @@ impl Render for PaneHead {
         }
         if self.chat {
             let badge = match info.state.as_str() { "working" => Some(("WORKING", "warn")), "needs-input" => Some(("NEEDS INPUT", "accent")), "waiting" => Some(("WAITING", "sky")), _ => None };
-            if let Some((b, tone)) = badge { row = row.child(w::state_badge(b, tone)); }
+            if let Some((b, tone)) = badge { row = row.child(w::state_badge(b, tone).flex_none().relative().child(probe(1))); }
         }
         row = row.child(div().flex_1().min_w_0());
         let h = T::SP_20;
-        let mut t = div().flex().flex_none().items_center().gap(T::SP_4)
+        let mut t = div().flex().flex_none().items_center().gap(T::SP_4).relative().child(probe(2))
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| { this.act(cx, move |w, cx| w.focus_pane(id, cx)); cx.stop_propagation(); }));
         if !fold { t = t.children(self.tools(&e, f, false, cx)); }
         if self.chat {

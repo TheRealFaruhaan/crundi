@@ -143,6 +143,25 @@ await T.mouse('click', moreX, cl.y + 13);
 await T.until('open again', (s) => s.headProps?.[chat]?.menu, 3000);
 await T.mouse('click', cl.x + 40, cl.y + 300);
 await T.until('a press outside closes them', (s) => !s.headProps?.[chat]?.menu, 3000);
+// A very long title never pushes the head's right side out (the owner's
+// "Factory: Replace Electron…" chat): the title takes what is left, elided;
+// the WORKING badge and the buttons keep their size, inside the pane.
+{
+  const long = 'Factory: Replace Electron with the native client, and everything the owner uses, carried over without anything lost';
+  const id = chat.slice('live:'.length);
+  await T.api.http('POST', `/api/ui-sessions/${id}/rename`, { title: long });
+  await T.until('a very long title in a narrow pane', (s) => s.heads?.[chat] === long && leafOf(s, chat)?.narrow, 8000);
+  await T.ui('composer-event', JSON.stringify({ type: 'state', state: 'working' }));
+  s = await T.until('…working: the WORKING badge drawn', (s) => s.headProps?.[chat]?.rects?.badge, 5000);
+  cl = leafOf(s, chat);
+  const r = s.headProps[chat].rects;
+  const right = (b) => b.x + b.w;
+  t.check('…the buttons stay inside the pane', right(r.tools) <= cl.x + cl.w + 0.5 && r.tools.w >= 28 + 24 + 24, { r, cl });
+  t.check('…the badge whole, left of the buttons', r.badge.w >= 40 && right(r.badge) <= r.tools.x + 0.5, r);
+  t.check('…the title elided in the room left, before the badge', right(r.title) <= r.badge.x + 0.5 && r.title.w < cl.w / 2, { r, cl });
+  await snap('long-title-narrow');
+  await T.ui('composer-event', JSON.stringify({ type: 'state', state: 'idle' }));
+}
 // A head button's tooltip after a click (F213): it stays away while the
 // pointer rests there, and comes back once the pointer has left and returned
 // (as a browser's title; w::tip).

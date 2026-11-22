@@ -24,6 +24,7 @@ Rules: `package/CONTRACT.md`. Gap list: `PARITY-ELECTRON.md` (mark each line don
 | Quitting leaves no process behind | local, tester | | |
 | Every PARITY-ELECTRON.md line done and tested | all | | |
 | Owner: the first browser start froze the window ("not responding") | gaps | yes: webview client.rs starts the host on a thread of its own (commands wait in the link); the drawer tab shows its page loading from the start (Reload arrow turning, Electron's .brd-loading) | yes (test/electron.mjs browserstart: host start slowed to 3 s, real Tab presses answered within 200 ms, the tab loading meanwhile) |
+| Owner: a long chat title pushed the pane head's badge and buttons off the pane | gaps | yes: workbench head.rs (the shared pane head, every pane): the title takes only the room left, elided (the web's .term-head-title); the badge and the tools keep their size | yes (test/workbench.mjs "a very long title in a narrow pane": the drawn title, badge and buttons against the pane; fails without the fix) |
 | UI review approves | reviewer | | |
 | Owner has tried it | owner | | |
 
