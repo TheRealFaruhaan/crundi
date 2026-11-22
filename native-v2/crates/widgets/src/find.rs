@@ -145,6 +145,50 @@ impl Element for MarksEl {
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, _: &mut (), _: &mut (), _: &mut Window, _: &mut App) {}
 }
 
+/// The words drawn by painted elements (a kanban card, a map's ideas):
+/// each one's box from its drawing's top left, its words, and whether they
+/// are a tip (`label_mark`) rather than words on it (`mark`). Laid out with
+/// the drawing and kept with it.
+pub type Words = Rc<Vec<(Bounds<Pixels>, SharedString, bool)>>;
+
+/// Many drawings' words, from one element's prepaint (F243): one element
+/// state for all of them under `key`. A drawing whose list is the same as
+/// last frame's (`Rc::ptr_eq`: it was not laid out again) keeps its marks,
+/// and only their bounds move. Per frame that is a cell set per word, not
+/// an element namespace and a state lookup each, as `mark` children cost.
+pub fn words_at<'a>(key: &'static str, groups: impl IntoIterator<Item = (&'a Words, Point<Pixels>)>, window: &mut Window) {
+    let mask = window.content_mask().bounds;
+    window.with_global_id(ElementId::Name(key.into()), |gid, window| {
+        // By the list and its occurrence (one drawing shown twice, as the
+        // map's ghosts share theirs, keeps a set of marks for each place).
+        type St = std::collections::HashMap<(usize, u32), (Words, Vec<Rc<Mark>>)>;
+        window.with_element_state::<St, _>(gid, |st, _| {
+            let mut old = st.unwrap_or_default();
+            let mut now: St = std::collections::HashMap::with_capacity(old.len());
+            for (words, origin) in groups {
+                if words.is_empty() { continue; }
+                let p = Rc::as_ptr(words) as usize;
+                let mut n = 0;
+                while now.contains_key(&(p, n)) { n += 1; }
+                let k = (p, n);
+                let (w, marks) = match old.remove(&k) {
+                    Some(had) => had,
+                    None => {
+                        let marks: Vec<Rc<Mark>> = words.iter().map(|(_, t, label)| Rc::new(Mark { text: t.clone(), label: *label, seen: Cell::new(Bounds::default()) })).collect();
+                        for m in &marks { register(m); }
+                        (words.clone(), marks)
+                    }
+                };
+                for ((b, _, _), m) in w.iter().zip(&marks) {
+                    m.seen.set(Bounds::new(origin + b.origin, b.size).intersect(&mask));
+                }
+                now.insert(k, (w, marks));
+            }
+            ((), now)
+        })
+    });
+}
+
 /// Spaces folded, trimmed, lower case (the web's norm).
 pub fn norm(s: &str) -> String { s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase() }
 

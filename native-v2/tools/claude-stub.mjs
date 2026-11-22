@@ -26,7 +26,11 @@ import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
-if (args.includes('--version')) { console.log('0.0.0 (Crundi test stub)'); process.exit(0); }
+// A version no release is newer than (F244): with 0.0.0 the server's Claude
+// Code watch (src/webapp.js checkClaudeVersion, 60 s after it starts) posted
+// "Claude Code … is available" to the Inbox, whose new unread count redrew
+// the sidebar in whichever suite's idle window it fell.
+if (args.includes('--version')) { console.log('999.0.0 (Crundi test stub)'); process.exit(0); }
 /** A chat's title from what the person asked. */
 const titleFor = (text) => {
   const p = String(text || '').toLowerCase();

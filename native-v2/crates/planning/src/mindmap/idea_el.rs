@@ -166,7 +166,7 @@ impl Element for MapEl {
         // div's padding box reported it): a change lays the map out again.
         for it in &self.items { super::measured(&it.id, f32::from(it.draw.inner) / self.z.max(0.01), cx); }
         // The words on them, for Cru's highlight (F202).
-        for it in &self.items { crate::paint::prepaint_marks(&it.id, &it.marks, bounds.origin + point(it.left, it.top), window, cx); }
+        crundi_widgets::find::words_at("mm-words", self.items.iter().map(|it| (&it.marks, bounds.origin + point(it.left, it.top))), window);
     }
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), _: &mut (), window: &mut Window, cx: &mut App) {
         for it in &self.items { crate::paint::paint_draw(&it.draw, bounds.origin + point(it.left, it.top), window, cx); }

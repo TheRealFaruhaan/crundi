@@ -220,7 +220,9 @@ impl Element for CardEl {
     fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), window: &mut Window, cx: &mut App) -> Option<(Rc<Draw>, Hitbox)> {
         let (d, marks) = self.draw(bounds.size.width, window, cx);
         // Its words, for Cru's highlight (F202).
-        crate::paint::prepaint_marks(&self.key.card.id, &marks, bounds.origin, window, cx);
+        // (Under the card's own id, hashed: no string made per frame.)
+        let ns = { use std::hash::{Hash, Hasher}; let mut h = std::collections::hash_map::DefaultHasher::new(); self.key.card.id.hash(&mut h); h.finish() };
+        window.with_element_namespace(ElementId::Integer(ns), |window| crundi_widgets::find::words_at("card-words", [(&marks, bounds.origin)], window));
         // Its box, as painted (the drop target, a press's grab).
         let bx = super::board::Box4 { x: f32::from(bounds.origin.x), y: f32::from(bounds.origin.y), w: f32::from(bounds.size.width), h: f32::from(bounds.size.height) };
         let mut bxs = self.boxes.borrow_mut();

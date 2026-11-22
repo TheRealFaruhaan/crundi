@@ -592,9 +592,15 @@ struct Drag { alias: String, from: Pixels, active: bool, target: Option<usize> }
 pub struct Sidebar {
     stores: Stores,
     folded: Option<bool>,
-    inbox: Entity<crate::InboxBadge>,
-    /// What it draws of the projects, copied when it changed (not every state event).
+    /// The Inbox button's state, copied when it changed.
+    ib: crate::InboxBadge,
+    /// What it draws of the projects, copied when it changed (not every state
+    /// event). Render reads no entity (F244): GPUI redraws a view when any
+    /// entity it read while rendering notifies, and Projects notifies on
+    /// every terminals change, most of which the sidebar doesn't show.
     seen: (Vec<Project>, String, String, usize),
+    /// Each row's icon, copied with `seen`.
+    icons: Vec<Option<Arc<Image>>>,
     /// Where each row was drawn (the drag's targets).
     rows: Rc<RefCell<Vec<(String, Bounds<Pixels>)>>>,
     drag: Option<Drag>,
@@ -603,20 +609,23 @@ pub struct Sidebar {
 }
 
 fn seen_of(p: &crate::Projects) -> (Vec<Project>, String, String, usize) { (p.list.clone(), p.open.clone(), p.mode.clone(), p.icons_ready()) }
+fn icons_of(p: &crate::Projects) -> Vec<Option<Arc<Image>>> { p.list.iter().map(|r| p.icon_of(&r.alias)).collect() }
 
 impl Sidebar {
     fn new(stores: Stores, cx: &mut Context<Self>) -> Self {
         let inbox = crate::inbox_badge(cx);
         let subs = vec![
-            cx.observe(&stores.projects, |this: &mut Self, p, cx| { let s = seen_of(p.read(cx)); if s != this.seen { this.seen = s; cx.notify(); } }),
+            cx.observe(&stores.projects, |this: &mut Self, p, cx| { let s = seen_of(p.read(cx)); if s != this.seen { this.seen = s; this.icons = icons_of(p.read(cx)); cx.notify(); } }),
             // Only the fold changes the sidebar's own drawing (not the tab).
             cx.observe(&stores.nav, |this: &mut Self, nav, cx| { let f = nav.read(cx).folded; if this.folded != Some(f) { this.folded = Some(f); cx.notify(); } }),
             // The Inbox button's count (Desktop's).
-            cx.observe(&inbox, |_, _, cx| cx.notify()),
+            cx.observe(&inbox, |this: &mut Self, b, cx| { let b = b.read(cx).clone(); if b != this.ib { this.ib = b; cx.notify(); } }),
         ];
         let seen = seen_of(stores.projects.read(cx));
+        let icons = icons_of(stores.projects.read(cx));
+        let ib = inbox.read(cx).clone();
         let folded = Some(stores.nav.read(cx).folded);
-        Sidebar { stores, folded, inbox, seen, rows: Rc::default(), drag: None, drag_end: None, _subs: subs }
+        Sidebar { stores, folded, ib, seen, icons, rows: Rc::default(), drag: None, drag_end: None, _subs: subs }
     }
 
     /// Where the dragged project would land among the others (projectReorderTarget).
@@ -691,7 +700,7 @@ impl Render for Sidebar {
         let mut k = 0usize; // the row's place among those not dragged
         for (i, pr) in list_.iter().enumerate() {
             let on = pr.alias == open;
-            let icon = self.stores.projects.read(cx).icon_of(&pr.alias);
+            let icon = self.icons.get(i).cloned().flatten();
             let is_dragged = dragging.as_ref().is_some_and(|(a, _)| *a == pr.alias);
             if !is_dragged {
                 if dragging.as_ref().is_some_and(|(_, t)| *t == Some(k)) { list = list.child(w::drop_line()); }
@@ -746,7 +755,7 @@ impl Render for Sidebar {
                 .child(fold)
         };
         let (s1, s2) = (self.stores.clone(), self.stores.clone());
-        let ib = self.inbox.read(cx).clone();
+        let ib = self.ib.clone();
         // One paint layer (w::layer): the sidebar is replayed every frame.
         w::layer(div().id("sidebar")
             .flex().flex_col().size_full().overflow_hidden().bg(T::bg_secondary()).border_r_1().border_color(T::border())
