@@ -107,7 +107,90 @@ pub fn bg<T: Send + 'static>(work: impl FnOnce(&crundi_core::api::Api) -> T + Se
 /// Bring the window to the front (a notification's click, the tray's Open),
 /// shown again first if the × hid it. With the window closed (Wayland's
 /// hide), the pump opens it again first (lib.rs `windowless`).
-pub fn raise() { on_app(|win, _| { show_window(win); win.activate_window() }); }
+///
+/// The click is the person asking for it (main.js bringToFront): focus is
+/// asked outright, and on Linux the window is held on top for 300 ms while
+/// the desktop catches up (GNOME's focus-stealing prevention would show
+/// "Crundi is ready" instead).
+pub fn raise() {
+    on_app(|win, _| {
+        show_window(win);
+        win.activate_window();
+        crate::kidlock::steal_focus(win);
+        RAISES.with(|r| r.set(r.get() + 1));
+        if cfg!(target_os = "linux") && !window_locked() {
+            crate::kidlock::above(win, true);
+            RAISED_ABOVE.with(|a| a.set(true));
+            crundi_webview::later(std::time::Duration::from_millis(300), || on_app(|win, _| {
+                // (Kid mode or the PC lock keeps it above: theirs to let go.)
+                if !window_locked() { crate::kidlock::above(win, false); }
+                RAISED_ABOVE.with(|a| a.set(false));
+            }));
+        }
+    });
+}
+
+thread_local! {
+    /// Raises asked so far, and the window held above by one now (the driver's look).
+    static RAISES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static RAISED_ABOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The kid lock's watchdog: its last look, and what it put right (shown, restored, full screen, to the front).
+    static WATCH: std::cell::Cell<(Option<std::time::Instant>, u64, [u64; 4])> = const { std::cell::Cell::new((None, 0, [0; 4])) };
+    /// The X11 window's id (the driver's look; 0: none).
+    static X11_ID: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// How often the watchdog looks (main.js kidWatchdog: 700 ms).
+const WATCH_EVERY: std::time::Duration = std::time::Duration::from_millis(700);
+
+/// Kid mode holds the window (the watchdog is kid mode's alone, as main.js's).
+fn kid_held() -> bool { window_locked() && crate::cru_kid::on() }
+
+/// When the watchdog looks next (lib.rs `next_due`): only while kid mode holds the window.
+pub fn watch_due() -> Option<std::time::Instant> {
+    if !kid_held() { return None; }
+    Some(WATCH.with(|w| w.get().0).map(|t| t + WATCH_EVERY).unwrap_or_else(std::time::Instant::now))
+}
+
+/// Each pump: while kid mode holds the window, whatever got
+/// past the keys (a gesture, task view, a shortcut the OS keeps) is put
+/// right: shown, un-minimised, full screen, in front (main.js kidWatchdog).
+pub fn watchdog(win: &mut Window) {
+    #[cfg(target_os = "linux")]
+    { if X11_ID.with(|x| x.get()) == 0 { X11_ID.with(|x| x.set(crate::kidlock::x11_window(win).unwrap_or(0))); } }
+    if !kid_held() { WATCH.with(|w| { let mut v = w.get(); v.0 = None; w.set(v); }); return; }
+    let (last, mut ticks, mut fixed) = WATCH.with(|w| w.get());
+    if last.is_some_and(|t| t.elapsed() < WATCH_EVERY) { return; }
+    ticks += 1;
+    if HIDDEN.with(|h| h.get()) { show_window(win); fixed[0] += 1; }
+    if crate::kidlock::restore_minimized(win) { fixed[1] += 1; }
+    // On X11 what the window manager says (its _NET_WM_STATE), else the platform's flags.
+    #[cfg(target_os = "linux")]
+    let wm = crate::kidlock::x11_wm_state(win);
+    #[cfg(not(target_os = "linux"))]
+    let wm: Option<(bool, bool, bool)> = None;
+    let (full, front) = wm.map(|(f, a, _)| (f, a)).unwrap_or((win.is_fullscreen(), win.is_window_active()));
+    if !full { crate::kidlock::fullscreen_on(win); fixed[2] += 1; }
+    if !front { crate::kidlock::window(win, true); win.activate_window(); fixed[3] += 1; }
+    WATCH.with(|w| w.set((Some(std::time::Instant::now()), ticks, fixed)));
+}
+
+#[cfg(target_os = "linux")]
+fn wm_state_json(win: &Window) -> Option<serde_json::Value> { crate::kidlock::x11_wm_state(win).map(|(f, a, h)| serde_json::json!({ "fullscreen": f, "focused": a, "hidden": h })) }
+#[cfg(not(target_os = "linux"))]
+fn wm_state_json(_: &Window) -> Option<serde_json::Value> { None }
+
+/// The raise and the watchdog, for the driver.
+pub fn window_props(win: Option<&Window>) -> serde_json::Value {
+    let (_, ticks, f) = WATCH.with(|w| w.get());
+    serde_json::json!({
+        "raises": RAISES.with(|r| r.get()), "raisedAbove": RAISED_ABOVE.with(|a| a.get()),
+        "watch": { "ticks": ticks, "shown": f[0], "restored": f[1], "fullscreen": f[2], "front": f[3] },
+        "x11": X11_ID.with(|x| x.get()),
+        "fullscreen": win.map(|w| w.is_fullscreen()), "active": win.map(|w| w.is_window_active()),
+        "wmState": win.and_then(wm_state_json),
+    })
+}
 
 thread_local! {
     static HIDDEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };

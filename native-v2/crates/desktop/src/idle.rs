@@ -97,7 +97,7 @@ fn dbus_idle_ms() -> Option<u64> {
 }
 
 #[cfg(target_os = "linux")]
-fn screen_locked() -> bool {
+pub(crate) fn screen_locked() -> bool {
     let Some(c) = session() else { return false };
     ask::<bool>(&c, "org.gnome.ScreenSaver", "/org/gnome/ScreenSaver", "org.gnome.ScreenSaver", "GetActive")
         .or_else(|| ask::<bool>(&c, "org.freedesktop.ScreenSaver", "/ScreenSaver", "org.freedesktop.ScreenSaver", "GetActive"))
@@ -114,8 +114,19 @@ fn idle_secs() -> Option<u64> {
     let now = unsafe { GetTickCount() };
     Some(now.wrapping_sub(li.dwTime) as u64 / 1000)
 }
+/// The workstation locked (Win+L, the lock screen): the input desktop is
+/// then Winlogon's, which this session cannot open.
 #[cfg(target_os = "windows")]
-fn screen_locked() -> bool { false }
+pub(crate) fn screen_locked() -> bool {
+    use windows_sys::Win32::System::StationsAndDesktops::{CloseDesktop, OpenInputDesktop, DESKTOP_SWITCHDESKTOP};
+    // SAFETY: plain calls; the handle is closed when one was opened.
+    unsafe {
+        let h = OpenInputDesktop(0, 0, DESKTOP_SWITCHDESKTOP);
+        if h.is_null() { return true; }
+        CloseDesktop(h);
+    }
+    false
+}
 
 #[cfg(target_os = "macos")]
 fn idle_secs() -> Option<u64> {

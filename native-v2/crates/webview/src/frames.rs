@@ -340,6 +340,8 @@ pub(crate) fn on_event(key: &str, id: u64, ev: Ev) {
             let sc = (n(0), n(1).max(0.0), n(2), n(3).max(0.0));
             set(&mut |f| f.scroll = Some(sc));
         }
+        // A frame downloads nothing (no Save dialog over a chat): cancelled.
+        Ev::Download { dl, .. } => client::send_to(id, Cmd::DownloadTo { id, dl, path: String::new() }),
         // New windows (window.open, target=_blank): the system browser.
         Ev::Popup { url, .. } => if url.starts_with("http://") || url.starts_with("https://") {
             with(|s| s.opened = url.clone());

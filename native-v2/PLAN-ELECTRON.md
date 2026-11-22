@@ -23,6 +23,9 @@ Rules: `package/CONTRACT.md`. Gap list: `PARITY-ELECTRON.md` (mark each line don
 | windows-latest upgrade test from the latest Electron setup | pack | yes (upgrade-test/windows.ps1, workflow job `windows`) | not run: workflow not pushable from the PC |
 | Quitting leaves no process behind | local, tester | | |
 | Every PARITY-ELECTRON.md line done and tested | all | | |
+| Owner: the first browser start froze the window ("not responding") | gaps | yes: webview client.rs starts the host on a thread of its own (commands wait in the link); the drawer tab shows its page loading from the start (Reload arrow turning, Electron's .brd-loading) | yes (test/electron.mjs browserstart: host start slowed to 3 s, real Tab presses answered within 200 ms, the tab loading meanwhile) |
+| Owner: a long chat title pushed the pane head's badge and buttons off the pane | gaps | yes: workbench head.rs (the shared pane head, every pane): the title takes only the room left, elided (the web's .term-head-title); the badge and the tools keep their size | yes (test/workbench.mjs "a very long title in a narrow pane": the drawn title, badge and buttons against the pane; fails without the fix) |
+| Owner: touchpad scrolling stopped dead when the fingers lifted (no momentum) | gaps | yes: vendor/gpui patch (f), the one scroll dispatch every list and pane uses: a precise (pixel) scroll glides on at its last ~100 ms's speed with exponential decay, stops at the edge; new input or a press stops it; Linux only (Windows and macOS send their own momentum; X11 sends lines, unchanged); the wheel's line scroll never glides | yes (test/workbench.mjs "Kinetic scrolling": synthetic precise steps keep moving after the last one then stop, the edge, a press, a line scroll does not glide) |
 | UI review approves | reviewer | | |
 | Owner has tried it | owner | | |
 

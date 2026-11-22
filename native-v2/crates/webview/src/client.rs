@@ -2,8 +2,10 @@
 //! view is first needed, the link's two threads, the views it holds (each
 //! an engine panel or a frame), and stopping it.
 //!
-//! - Lazy: no host at launch. `open_view` starts it; commands sent before
-//!   it is up wait in the link (it reads them once CEF has started).
+//! - Lazy: no host at launch. `open_view` starts it, off the main thread
+//!   (the process's start can take seconds on a cold disk or under a virus
+//!   scan, and the window must keep answering); commands sent before it is
+//!   up wait in the link (it reads them once CEF has started).
 //! - Idle: with no view for `idle_grace()` (CRUNDI_BROWSER_IDLE_SECS,
 //!   default 60) and nothing keeping it (the drawer open: `set_keep_alive`),
 //!   it is asked to stop, and killed if it hasn't within 3 s.
@@ -40,7 +42,7 @@ pub enum Owner { Panel(usize), Frame(String) }
 pub enum State { Off, Starting, Up, Stopping }
 
 /// What the reader hands the main thread, with the link's generation.
-enum In { Ev(u32, Ev), Frame(u32, u64, Arc<RenderImage>), Gone(u32) }
+enum In { Ev(u32, Ev), Frame(u32, u64, Arc<RenderImage>), Gone(u32), Started(u32, Child), NotStarted(u32, String) }
 
 static INBOX: Mutex<Vec<In>> = Mutex::new(Vec::new());
 /// Frames the app took from the host (every view, every host this run).
@@ -171,33 +173,42 @@ fn ensure() -> bool {
 }
 
 fn spawn() -> bool {
-    crate::proc::clear_stale_locks(&crate::common::cef_root());
-    let sp = match crate::proc::spawn_host() {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("[browser] the browser host did not start: {e}");
-            with(|c| { c.available = false; c.last_error = e.to_string(); });
-            return false;
-        }
-    };
-    let pid = sp.child.id();
+    // No host beside the app: no browser this run (known at once, a file's look).
+    if let Err(e) = crate::proc::host_exe() {
+        eprintln!("[browser] the browser host did not start: {e}");
+        with(|c| { c.available = false; c.last_error = e.to_string(); });
+        return false;
+    }
     let epoch = with(|c| { c.epoch += 1; c.epoch });
     let (otx, orx) = mpsc::channel::<Vec<u8>>();
-    let mut sender = sp.send;
-    std::thread::Builder::new().name("browser-host-out".into()).spawn(move || {
-        for b in orx { if sender(&b, None).is_err() { break; } }
-    }).ok();
     let ack = otx.clone();
-    let mut recv = sp.recv;
-    std::thread::Builder::new().name("browser-host-in".into()).spawn(move || reader(epoch, &mut recv, ack)).ok();
-    let dir = with(|c| {
-        c.state = State::Starting; c.child = Some(sp.child); c.pid = pid; c.out = Some(otx);
-        c.starts += 1; c.idle_since = None; c.stop_at = None; c.stats = Value::Null;
-        c.config_dir.clone()
+    // The process is made on a thread of its own: the window keeps
+    // answering while it starts. What is sent meanwhile waits in `orx`.
+    let made = std::thread::Builder::new().name("browser-host-start".into()).spawn(move || {
+        crate::proc::clear_stale_locks(&crate::common::cef_root());
+        // The test driver's slow start (a cold disk, a virus scan): the window must keep answering.
+        if std::env::var_os("CRUNDI_TEST_PORT").is_some() {
+            if let Some(ms) = std::env::var("CRUNDI_TEST_HOST_START_DELAY_MS").ok().and_then(|v| v.parse::<u64>().ok()) { std::thread::sleep(Duration::from_millis(ms)); }
+        }
+        let push = |m: In| { INBOX.lock().unwrap().push(m); crate::wake(); };
+        let sp = match crate::proc::spawn_host() { Ok(s) => s, Err(e) => return push(In::NotStarted(epoch, e.to_string())) };
+        let mut recv = sp.recv;
+        let mut sender = sp.send;
+        push(In::Started(epoch, sp.child));
+        std::thread::Builder::new().name("browser-host-in".into()).spawn(move || reader(epoch, &mut recv, ack)).ok();
+        // This thread then writes the link.
+        for b in orx { if sender(&b, None).is_err() { break; } }
     });
-    if !dir.as_os_str().is_empty() { crate::proc::write_pid(&dir, pid); }
+    if let Err(e) = made {
+        eprintln!("[browser] the browser host did not start: {e}");
+        with(|c| { c.available = false; c.last_error = e.to_string(); });
+        return false;
+    }
+    with(|c| {
+        c.state = State::Starting; c.child = None; c.pid = 0; c.out = Some(otx);
+        c.starts += 1; c.idle_since = None; c.stop_at = None; c.stats = Value::Null;
+    });
     send(Cmd::Hello { textures: crate::gpu::mode() == crate::gpu::Mode::Texture });
-    eprintln!("[browser] browser host started (pid {pid})");
     true
 }
 
@@ -261,6 +272,8 @@ pub fn waiting() -> Vec<String> {
     INBOX.lock().unwrap().iter().map(|m| match m {
         In::Frame(_, id, _) => format!("frame:{id}"),
         In::Gone(_) => "gone".to_string(),
+        In::Started(..) => "started".to_string(),
+        In::NotStarted(..) => "not-started".to_string(),
         In::Ev(_, e) => { let d = format!("{e:?}"); let name: String = d.chars().take_while(|c| c.is_alphanumeric()).collect(); match ev_id(e) { Some(id) => format!("{name}:{id}"), None => name } }
     }).collect()
 }
@@ -270,7 +283,20 @@ pub fn pump() {
     for m in all {
         let cur = with(|c| c.epoch);
         match m {
-            In::Ev(g, _) | In::Frame(g, ..) | In::Gone(g) if g != cur => {}
+            // A host started for a link given up meanwhile: it goes at once.
+            In::Started(g, mut ch) if g != cur => { crate::proc::kill_tree(ch.id()); std::thread::spawn(move || { let _ = ch.wait(); }); }
+            In::Ev(g, _) | In::Frame(g, ..) | In::Gone(g) | In::NotStarted(g, _) if g != cur => {}
+            In::Started(_, ch) => {
+                let pid = ch.id();
+                let dir = with(|c| { c.child = Some(ch); c.pid = pid; c.config_dir.clone() });
+                if !dir.as_os_str().is_empty() { crate::proc::write_pid(&dir, pid); }
+                eprintln!("[browser] browser host started (pid {pid})");
+            }
+            In::NotStarted(_, e) => {
+                eprintln!("[browser] the browser host did not start: {e}");
+                with(|c| { c.available = false; c.last_error = e; });
+                gone();
+            }
             In::Frame(_, id, img) => match owner(id) {
                 Some(Owner::Panel(i)) => crate::engine::on_frame(i, id, img),
                 Some(Owner::Frame(k)) => crate::frames::on_frame(&k, id, img),
@@ -302,7 +328,8 @@ fn ev_id(e: &Ev) -> Option<u64> {
     Some(match e {
         Ev::Shm { id, .. } | Ev::Paint { id, .. } | Ev::Loading { id, .. } | Ev::LoadError { id, .. } | Ev::LoadEnd { id, .. }
         | Ev::Title { id, .. } | Ev::Address { id, .. } | Ev::Cursor { id, .. } | Ev::Console { id, .. } | Ev::Popup { id, .. }
-        | Ev::Scrolled { id } | Ev::Net { id, .. } | Ev::CdpResult { id, .. } | Ev::Gone { id, .. } | Ev::Closed { id } | Ev::Texture { id, .. } => *id,
+        | Ev::Scrolled { id } | Ev::Net { id, .. } | Ev::CdpResult { id, .. } | Ev::Gone { id, .. } | Ev::Closed { id } | Ev::Texture { id, .. }
+        | Ev::Download { id, .. } | Ev::Downloaded { id, .. } => *id,
         Ev::Ready { .. } | Ev::Failed { .. } | Ev::Stats { .. } => return None,
     })
 }

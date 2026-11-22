@@ -61,6 +61,9 @@ pub enum Cmd {
     Ack { id: u64 },
     /// Cookies in every profile (one site and its subdomains, or all).
     ClearCookies { site: Option<String> },
+    /// Where a download the host told of (`Ev::Download`) is saved: the
+    /// whole path the person picked, or "" to cancel it.
+    DownloadTo { id: u64, dl: u32, path: String },
     /// Close every view and leave.
     Quit,
 }
@@ -97,6 +100,11 @@ pub enum Ev {
     Gone { id: u64, status: i32 },
     /// The view is closed and its segment let go.
     Closed { id: u64 },
+    /// The page started a download (held until `Cmd::DownloadTo`): its
+    /// suggested file name and address (app/main.js wireDownloads).
+    Download { id: u64, dl: u32, name: String, url: String },
+    /// A download ended: saved at `path` (ok) or cancelled or failed.
+    Downloaded { id: u64, dl: u32, path: String, ok: bool },
     /// A GPU frame's texture (gpu.rs `Mode::Texture`, Windows): CEF's NT
     /// handle duplicated into the app's process, `w` x `h`. The app closes it.
     Texture { id: u64, handle: u64, w: u32, h: u32 },

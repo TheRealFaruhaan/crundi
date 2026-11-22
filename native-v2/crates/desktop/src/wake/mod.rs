@@ -71,6 +71,8 @@ struct St {
     last_heard: Option<(String, Instant)>,
     log: Vec<String>,
     checked_at: Option<Instant>,
+    /// The wall clock at that look: a gap far past CHECK_EVERY means the PC slept.
+    checked_wall: Option<std::time::SystemTime>,
     started: bool,
 }
 
@@ -101,7 +103,16 @@ fn save_enabled(on: bool) -> bool {
 // ─── The conditions ───
 
 /// On battery? (Linux: a mains supply says offline; macOS: pmset; Windows: assumed on AC.)
-fn read_power() -> bool {
+pub fn read_power() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+        // SAFETY: a plain call filling a sized struct.
+        let mut st: SYSTEM_POWER_STATUS = unsafe { std::mem::zeroed() };
+        // ACLineStatus: 0 offline (on battery), 1 online, 255 unknown.
+        return unsafe { GetSystemPowerStatus(&mut st) } != 0 && st.ACLineStatus == 0;
+    }
+    #[allow(unreachable_code)]
     if cfg!(target_os = "linux") {
         let Ok(rd) = std::fs::read_dir("/sys/class/power_supply") else { return false };
         let mains: Vec<bool> = rd.flatten().filter(|e| std::fs::read_to_string(e.path().join("type")).is_ok_and(|t| t.trim() == "Mains"))
@@ -112,8 +123,12 @@ fn read_power() -> bool {
     } else { false }
 }
 
-/// The screen locked? (Linux: logind's LockedHint; elsewhere: not known, so no.)
-fn read_locked() -> bool {
+/// The screen locked? (Linux: logind's LockedHint; Windows: the input
+/// desktop is Winlogon's (idle.rs); macOS: not known, so no.)
+pub fn read_locked() -> bool {
+    #[cfg(target_os = "windows")]
+    { return crate::idle::screen_locked(); }
+    #[allow(unreachable_code)]
     if !cfg!(target_os = "linux") { return false; }
     let Ok(o) = std::process::Command::new("loginctl").args(["show-session", "auto", "-p", "LockedHint", "--value"]).output() else { return false };
     String::from_utf8_lossy(&o.stdout).trim() == "yes"
@@ -163,9 +178,19 @@ pub fn tick() {
     let due = with(|s| checks(s) && s.checked_at.is_none_or(|t| t.elapsed() >= CHECK_EVERY));
     if due {
         let (b, l) = (read_power(), read_locked());
-        with(|s| { s.checked_at = Some(Instant::now()); s.on_battery = s.test_power.unwrap_or(b); s.locked = s.test_lock.unwrap_or(l); });
+        let now = std::time::SystemTime::now();
+        let slept = with(|s| s.checked_wall.is_some_and(|w| resumed(w, now)));
+        with(|s| { s.checked_at = Some(Instant::now()); s.checked_wall = Some(now); s.on_battery = s.test_power.unwrap_or(b); s.locked = s.test_lock.unwrap_or(l); });
+        // Back from sleep (powerMonitor 'resume'): the microphone a sleep
+        // interrupted does not come back by itself, so the worker starts again.
+        if slept && with(|s| s.worker.is_some()) { log("resumed from sleep: listening again".into()); stop_worker(); }
     }
     reconcile();
+}
+
+/// The PC slept between two looks 2 s apart: the wall clock moved on much further.
+fn resumed(before: std::time::SystemTime, now: std::time::SystemTime) -> bool {
+    now.duration_since(before).is_ok_and(|d| d > CHECK_EVERY + Duration::from_secs(30))
 }
 
 fn reconcile() {
@@ -499,7 +524,18 @@ pub fn settings_part(_window: &mut Window, _cx: &mut App) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
-    use super::{next_due, with, St, CHECK_EVERY};
+
+    #[test]
+    fn sleep_is_a_long_gap() {
+        let t = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        assert!(!resumed(t, t + Duration::from_secs(2)));
+        assert!(!resumed(t, t + Duration::from_secs(20)));
+        assert!(resumed(t, t + Duration::from_secs(600)));
+        assert!(!resumed(t + Duration::from_secs(5), t));
+    }
+
+    use super::{next_due, resumed, with, St, CHECK_EVERY};
+    use std::time::Duration;
     use serde_json::json;
     use std::time::Instant;
 

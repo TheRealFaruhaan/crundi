@@ -172,13 +172,77 @@ pub fn mouse(i: usize, key: &str, m: &Value, reply: Box<dyn FnOnce(Value)>) {
 pub fn touch(i: usize, m: &Value, reply: Box<dyn FnOnce(Value)>) {
     let steps: Vec<Value> = m.get("steps").and_then(|s| s.as_array()).cloned().unwrap_or_default();
     let first = browser::with(|s| !std::mem::replace(&mut s.panels[i].touch_on, true));
-    let go = move || touch_steps(i, steps.into(), Box::new(move || {
-        let url = browser::with(|s| s.panels[i].url.clone());
-        reply(json!({ "ok": true, "url": url }))
-    }));
+    // listenersAt: the listeners at that point first, as main.js lists them before the steps.
+    let at = m.get("listenersAt").and_then(|a| Some((num(a.get("x"))?, num(a.get("y"))?)));
+    let go = move || {
+        let run = move |listeners: Option<Value>| touch_steps(i, steps.into(), Box::new(move || {
+            let url = browser::with(|s| s.panels[i].url.clone());
+            let mut r = json!({ "ok": true, "url": url });
+            if let Some(l) = listeners { r["listeners"] = l; }
+            reply(r)
+        }));
+        match at { Some((x, y)) => listeners_at(i, x, y, Box::new(move |l| run(Some(l)))), None => run(None) }
+    };
     if first {
         browser::cdp(i, "Emulation.setTouchEmulationEnabled", json!({ "enabled": true, "maxTouchPoints": 5 }), Box::new(move |_, _| go()));
     } else { go(); }
+}
+
+/// Touch, pointer and mouse listeners on the element under (x, y) and every
+/// ancestor up to window (app/main.js touchListenersAt, kept identical):
+/// only DevTools can list them, so CDP, one element after another.
+fn listeners_at(i: usize, x: f64, y: f64, done: Box<dyn FnOnce(Value)>) {
+    let expr = format!("(function(){{var a=[],el=document.elementFromPoint({},{});\
+        while(el){{a.push(el);el=el.parentElement||(el.getRootNode&&el.getRootNode().host)||null;}}\
+        a.push(document,window);return a;}})()", x.round(), y.round());
+    let finish = move |v: Value, done: Box<dyn FnOnce(Value)>| {
+        browser::cdp(i, "Runtime.releaseObjectGroup", json!({ "objectGroup": LISTENERS_GROUP }), Box::new(|_, _| {}));
+        done(v)
+    };
+    browser::cdp(i, "Runtime.evaluate", json!({ "objectGroup": LISTENERS_GROUP, "returnByValue": false, "expression": expr }), Box::new(move |ok, r| {
+        let Some(arr) = r.pointer("/result/objectId").and_then(|o| o.as_str()).filter(|_| ok).map(str::to_string) else { return finish(json!([]), done) };
+        browser::cdp(i, "Runtime.getProperties", json!({ "objectId": arr, "ownProperties": true }), Box::new(move |ok, r| {
+            if !ok { return finish(json!([{ "error": format!("listeners unavailable: {}", err_text(&r)) }]), done); }
+            let mut items: Vec<(u64, String, String)> = r.get("result").and_then(|x| x.as_array()).cloned().unwrap_or_default().iter().filter_map(|p| {
+                let n: u64 = p.get("name")?.as_str()?.parse().ok()?;
+                let v = p.get("value")?;
+                let id = v.get("objectId")?.as_str()?.to_string();
+                let el = v.get("description").and_then(|d| d.as_str()).or_else(|| v.get("className").and_then(|d| d.as_str())).unwrap_or("?").to_string();
+                Some((n, id, el))
+            }).collect();
+            items.sort_by_key(|x| x.0);
+            each_listeners(i, items.into(), Vec::new(), Box::new(move |out| finish(Value::Array(out), done)));
+        }));
+    }));
+}
+
+const LISTENERS_GROUP: &str = "crundi-touch";
+
+fn err_text(r: &Value) -> String { r.get("message").and_then(|m| m.as_str()).unwrap_or("CDP error").to_string() }
+
+fn each_listeners(i: usize, mut items: std::collections::VecDeque<(u64, String, String)>, mut out: Vec<Value>, done: Box<dyn FnOnce(Vec<Value>)>) {
+    let Some((_, id, el)) = items.pop_front() else { return done(out) };
+    browser::cdp(i, "DOMDebugger.getEventListeners", json!({ "objectId": id }), Box::new(move |ok, r| {
+        if !ok { out.push(json!({ "error": format!("listeners unavailable: {}", err_text(&r)) })); return done(out); }
+        let ls = listener_rows(&r);
+        if !ls.is_empty() { out.push(json!({ "el": el, "listeners": ls })); }
+        each_listeners(i, items, out, done)
+    }));
+}
+
+/// The gesture listeners of one getEventListeners answer (not our own probe's, named crundiTouch*).
+fn listener_rows(r: &Value) -> Vec<Value> {
+    const TYPES: [&str; 9] = ["touch", "pointer", "mouse", "click", "dblclick", "contextmenu", "wheel", "gesture", "drag"];
+    r.get("listeners").and_then(|l| l.as_array()).cloned().unwrap_or_default().iter().filter_map(|l| {
+        let ty = l.get("type")?.as_str()?;
+        let handler = l.pointer("/handler/description").and_then(|d| d.as_str()).unwrap_or("");
+        if !TYPES.iter().any(|t| ty.starts_with(t)) || handler.contains("crundiTouch") { return None; }
+        let mut row = json!({ "type": ty });
+        if l.get("useCapture").and_then(|c| c.as_bool()) == Some(true) { row["capture"] = json!(true); }
+        if l.get("passive").and_then(|c| c.as_bool()) == Some(true) { row["passive"] = json!(true); }
+        row["handler"] = json!(handler.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(120).collect::<String>());
+        Some(row)
+    }).collect()
 }
 
 fn touch_steps(i: usize, mut steps: std::collections::VecDeque<Value>, done: Box<dyn FnOnce()>) {
@@ -195,6 +259,20 @@ fn touch_steps(i: usize, mut steps: std::collections::VecDeque<Value>, done: Box
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listener_rows_keep_gestures_only() {
+        let r = json!({ "listeners": [
+            { "type": "touchstart", "passive": true, "handler": { "description": "function (e) {\n  go(e)\n}" } },
+            { "type": "pointerdown", "useCapture": true, "handler": { "description": "f" } },
+            { "type": "keydown", "handler": { "description": "k" } },
+            { "type": "touchmove", "handler": { "description": "function crundiTouchProbe(){}" } },
+        ] });
+        let rows = listener_rows(&r);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], json!({ "type": "touchstart", "passive": true, "handler": "function (e) { go(e) }" }));
+        assert_eq!(rows[1], json!({ "type": "pointerdown", "capture": true, "handler": "f" }));
+    }
 
     #[test]
     fn errors() {

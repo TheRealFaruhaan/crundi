@@ -143,6 +143,25 @@ await T.mouse('click', moreX, cl.y + 13);
 await T.until('open again', (s) => s.headProps?.[chat]?.menu, 3000);
 await T.mouse('click', cl.x + 40, cl.y + 300);
 await T.until('a press outside closes them', (s) => !s.headProps?.[chat]?.menu, 3000);
+// A very long title never pushes the head's right side out (the owner's
+// "Factory: Replace Electron…" chat): the title takes what is left, elided;
+// the WORKING badge and the buttons keep their size, inside the pane.
+{
+  const long = 'Factory: Replace Electron with the native client, and everything the owner uses, carried over without anything lost';
+  const id = chat.slice('live:'.length);
+  await T.api.http('POST', `/api/ui-sessions/${id}/rename`, { title: long });
+  await T.until('a very long title in a narrow pane', (s) => s.heads?.[chat] === long && leafOf(s, chat)?.narrow, 8000);
+  await T.ui('composer-event', JSON.stringify({ type: 'state', state: 'working' }));
+  s = await T.until('…working: the WORKING badge drawn', (s) => s.headProps?.[chat]?.rects?.badge, 5000);
+  cl = leafOf(s, chat);
+  const r = s.headProps[chat].rects;
+  const right = (b) => b.x + b.w;
+  t.check('…the buttons stay inside the pane', right(r.tools) <= cl.x + cl.w + 0.5 && r.tools.w >= 28 + 24 + 24, { r, cl });
+  t.check('…the badge whole, left of the buttons', r.badge.w >= 40 && right(r.badge) <= r.tools.x + 0.5, r);
+  t.check('…the title elided in the room left, before the badge', right(r.title) <= r.badge.x + 0.5 && r.title.w < cl.w / 2, { r, cl });
+  await snap('long-title-narrow');
+  await T.ui('composer-event', JSON.stringify({ type: 'state', state: 'idle' }));
+}
 // A head button's tooltip after a click (F213): it stays away while the
 // pointer rests there, and comes back once the pointer has left and returned
 // (as a browser's title; w::tip).
@@ -300,6 +319,48 @@ await T.until('let go, the move ends', (s) => !s.drag, 3000);
   await t.sleep(200);
   await T.mouse('up', g2.x + g2.w / 2, py);
   await T.until('let go, that move ends', (s) => !s.drag, 3000);
+}
+// ─── Kinetic scrolling: a touchpad's scroll glides on, a wheel's does not ───
+// (vendor/gpui patch (f): the one scroll path every list and pane uses.)
+// Precise steps over the grid (four columns, wider than it): after the
+// last one it keeps moving, slows, and stops; a strong flick stops at the
+// edge; the wheel's line scroll stops dead; a press catches a glide.
+{
+  s = await T.state();
+  const G = () => s.grid;
+  // Over a pane's head (nothing inside it scrolls: the grid takes the scroll).
+  const hd = s.leaves.filter((l) => l.key && l.x > G().x && l.x + l.w < G().x + G().w)[0] || s.leaves[0];
+  const at = [hd.x + hd.w / 2, hd.y + 12];
+  const scrollOf = async () => (s = await T.state()).grid.scroll;
+  const settle = async () => { let a = await scrollOf(); for (let i = 0; i < 40; i++) { await t.sleep(150); const b = await scrollOf(); if (Math.abs(b - a) < 0.5 && !s.window?.gliding) return b; a = b; } return a; };
+  // A touchpad's swipe: n precise steps 12 ms apart (timed in the app, as the hardware sends them).
+  const swipe = async (dx, n = 8) => { await T.mouse('wheel', at[0], at[1], { dx, precise: true, steps: n, every: 12 }); await t.sleep(n * 12 + 5); };
+  const start = await settle();
+  const toEnd = start < G().max / 2 ? -1 : 1;   // pixel deltas follow the fingers: negative scrolls right
+  await swipe(4 * toEnd, 10);
+  const g1 = await T.until('a touchpad scroll glides on after its last step', (s) => s.window?.gliding, 1500);
+  const end = await settle();
+  // The steps alone move it 40 px; the glide carries it further, then stops.
+  t.check('…further than its steps took it, then slows and stops', Math.abs(end - start) > 40 + 10 && !s.window?.gliding, { start, during: g1?.grid?.scroll, end });
+  // A strong flick: it glides to the edge and stops there.
+  await swipe(40 * toEnd);
+  const edge = await settle();
+  t.check('…a strong one stops at the content\'s edge', Math.abs(edge - (toEnd < 0 ? G().max : 0)) < 1, { edge, max: G().max });
+  // Back the other way, then a press while it glides: it stops where it is.
+  await swipe(-8 * toEnd);
+  await T.until('(gliding back)', (s) => s.window?.gliding && Math.abs(s.grid.scroll - edge) > 64, 1500);
+  await T.mouse('down', at[0], at[1]); await T.mouse('up', at[0], at[1]);
+  const caught = await scrollOf();
+  await t.sleep(300);
+  t.check('…a press catches the glide: it stops at once', Math.abs((await scrollOf()) - caught) < 0.5 && !s.window?.gliding, { caught, now: s.grid.scroll });
+  // The mouse wheel's line scroll: it moves, and stops dead.
+  const w0 = await scrollOf();
+  for (let i = 0; i < 4; i++) { await T.mouse('wheel', at[0], at[1], { dx: toEnd, lines: true }); await t.sleep(14); }
+  const w1 = await scrollOf();
+  await t.sleep(300);
+  const w2 = await scrollOf();
+  t.check('a mouse wheel\'s line scroll moves the grid', Math.abs(w1 - w0) > 1, { w0, w1 });
+  t.check('…and does not glide', Math.abs(w2 - w1) < 0.5 && !s.window?.gliding, { w1, w2 });
 }
 await T.d.send({ cmd: 'resize', w: 1440, h: 900 });
 

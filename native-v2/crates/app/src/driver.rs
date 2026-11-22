@@ -60,7 +60,7 @@ fn state(stores: &Stores, window: &mut Window, cx: &mut App) -> Map<String, Valu
     // The window as the system has it: active (mapped, in front, with the
     // keys: on Wayland, the compositor's "activated"), its bounds.
     let b = window.bounds();
-    m.insert("window".into(), json!({ "active": window.is_window_active(), "x": f32::from(b.origin.x), "y": f32::from(b.origin.y), "w": f32::from(b.size.width), "h": f32::from(b.size.height) }));
+    m.insert("window".into(), json!({ "active": window.is_window_active(), "gliding": window.gliding(), "x": f32::from(b.origin.x), "y": f32::from(b.origin.y), "w": f32::from(b.size.width), "h": f32::from(b.size.height) }));
     for a in registry::list(cx) {
         // Merged one level deep: two areas each giving "areas": {<theirs>}
         // keep both (a plain extend let the last area's replace the others').
@@ -147,8 +147,27 @@ pub fn mouse(r: &Request, window: &mut Window, cx: &mut App) {
         "wheel" => {
             mv(window, cx, None);
             // dx: sideways (a touchpad's swipe), pixels as a touchpad sends.
+            // precise: a touchpad's step (it glides on when the steps stop);
+            // lines: a mouse wheel's notches (never glides). Neither: pixels
+            // that never glide, so the suites' offsets stay exact.
             let (dx, dy) = (r.num("dx") as f32, r.num("dy") as f32);
-            window.dispatch_event(PlatformInput::Scroll(ScrollEvent { position: p, delta: ScrollDelta::Pixels(point(px(dx), px(dy))), modifiers: m, touch_phase: TouchPhase::Moved, source: ScrollSource::Pointer }), cx);
+            let flag = |k: &str| r.cmd.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+            let delta = if flag("lines") { ScrollDelta::Lines(point(dx, dy)) } else { ScrollDelta::Pixels(point(px(dx), px(dy))) };
+            let ev = ScrollEvent { position: p, delta, modifiers: m, touch_phase: TouchPhase::Moved, source: ScrollSource::Pointer };
+            // steps (every ms apart, default 12): a touchpad's burst, sent at
+            // once but each timed as the hardware sends them (a driver command
+            // per step comes slower than a touchpad under Xvfb).
+            let steps = (r.num("steps") as usize).clamp(1, 200);
+            if flag("precise") && r.cmd.get("steps").is_some() {
+                let every = if r.cmd.get("every").is_some() { r.num("every") as u64 } else { 12 };
+                for i in 0..steps {
+                    window.set_scroll_age(std::time::Duration::from_millis(every * (steps - 1 - i) as u64));
+                    window.dispatch_event(PlatformInput::Scroll(ev.clone()), cx);
+                }
+                return;
+            }
+            if !flag("precise") { window.set_no_glide(); }
+            window.dispatch_event(PlatformInput::Scroll(ev), cx);
         }
         // A move with buttons: ["left"] is one with the button held.
         _ => { let held = r.cmd.get("buttons").and_then(|b| b.as_array()).is_some_and(|b| b.iter().any(|x| x.as_str() == Some("left"))); mv(window, cx, held.then_some(MouseButton::Left)) }

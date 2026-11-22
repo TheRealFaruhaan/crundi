@@ -61,10 +61,15 @@ keyring = { version = "=3.6.3", default-features = false, features = ["async-sec
 
 [target.'cfg(target_os = "windows")'.dependencies]
 tray-icon = "=0.21.2"
+# Notifications' clicks (notify.rs): a toast under the app's AUMID, heard in-process.
+tauri-winrt-notification = "=0.8.1"
 # The window's × hides to the tray (ShowWindow), the auto lock's idle time (GetLastInputInfo).
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_SystemInformation"] }
+# (and the power and the screen's lock: GetSystemPowerStatus, OpenInputDesktop).
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_SystemInformation", "Win32_System_Power", "Win32_System_StationsAndDesktops"] }
 keyring = { version = "=3.6.3", default-features = false, features = ["windows-native"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tray-icon = "=0.21.2"
+# Notifications' clicks (notify.rs): the notification centre, waited on for a click.
+mac-notification-sys = "=0.6.15"
 keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
