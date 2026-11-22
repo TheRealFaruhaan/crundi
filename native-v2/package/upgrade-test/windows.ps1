@@ -20,7 +20,8 @@ $product = if ($full) { 'Crundi' } else { 'Crundi Client' }
 $oldExe = if ($full) { 'Crundi.exe' } else { 'Crundi Client.exe' }
 $newExe = if ($full) { 'crundi.exe' } else { 'crundi-client.exe' }
 $guid = node (Join-Path $here '..\feed.mjs') guid ($(if ($full) { 'com.crundi.app' } else { 'com.crundi.client' }))
-$inst = Join-Path $env:LOCALAPPDATA "Programs\$product"
+# electron-builder's install folder is the package name (crundi, crundi-client).
+$inst = Join-Path $env:LOCALAPPDATA "Programs\$(if ($full) { 'crundi' } else { 'crundi-client' })"
 $userData = Join-Path $env:APPDATA $product
 $uninstRoot = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'

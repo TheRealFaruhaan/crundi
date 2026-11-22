@@ -125,6 +125,38 @@ export async function run(T, t) {
     await sleep(400);
     const r = M(await T.props()).nodes.find((x) => x.id === idea.id);
     await dropOnTerm('a Mindmap idea', r.box.x + Math.min(30, r.box.w / 2), r.box.y + r.box.h / 2, `[Mindmap Idea ID: ${idea.id}]`);
+    await T.until('…and the idea in hand is gone from over the terminal', (p) => !M(p).drag, 3000);
+
+    // Onto a chat's box (the owner, 22 Nov): the reference goes in at the
+    // caret and the idea in hand goes with the release (the chat takes the
+    // drop and stops the release there; it stayed floating over the box).
+    await T.ui('new-chat');
+    s = await T.until('a chat pane beside the map', (p) => p.chat && leaf(p, `live:${p.chat}`) && leaf(p, 'panel:mindmap'), 30000);
+    if (s) {
+      await T.ui('composer-text', '');
+      await T.settle(400, 4000);
+      s = await T.props();
+      const cl = leaf(s, `live:${s.chat}`);
+      const ri = M(s).nodes.find((x) => x.id === idea.id);
+      const [gx, gy] = [ri.box.x + Math.min(30, ri.box.w / 2), ri.box.y + ri.box.h / 2];
+      const [tx, ty] = [cl.x + cl.w / 2, cl.y + cl.h - 40];
+      await T.mouse('move', gx, gy);
+      await sleep(250);
+      await T.mouse('down', gx, gy);
+      for (let i = 1; i <= 14; i++) await T.mouse('move', gx + (tx - gx) * i / 14, gy + (ty - gy) * i / 14, { buttons: ['left'] });
+      await T.until('over the chat\'s box, the idea\'s clone is there with the pointer', (p) => M(p).drag?.id === idea.id, 4000);
+      await T.mouse('up', tx, ty);
+      await T.until('dropped on the chat\'s box: "[Mindmap Idea ID: …]" goes in', (p) => (p.composer?.text || '').includes(`[Mindmap Idea ID: ${idea.id}]`), 6000);
+      // (The map draws the idea in hand exactly while its drag is set.)
+      if (await T.until('…and no idea is left in hand over the box', (p) => !M(p).drag, 3000)) await T.snap('planning', 'mindmap-drop-chat');
+      await T.ui('composer-text', '');
+      // (The chat's × arms "Sure?" first; the second closes it.)
+      const ck = `live:${s.chat}`;
+      await T.ui('workbench:pane-close', ck);
+      await T.until('the chat\'s × arms "Sure?"', (p) => leaf(p, ck)?.armed, 4000);
+      await T.ui('workbench:pane-close', ck);
+      await T.until('…the second closes it', (p) => !p.panes?.includes(ck), 10000);
+    }
   }
   await T.ui('workbench:pane-close', 'panel:mindmap');
   await T.until('the Mindmap pane closes', (p) => !p.panes?.includes('panel:mindmap'));

@@ -84,4 +84,65 @@ export async function run(T_, t) {
     await T.mouse('click', 60, 600);
     await T.until('…the ring goes', (p) => !D(p).cruSpot?.ring, 4000);
   }
+
+  // A long idea hovered opens up over the idea under it (the owner, 22 Nov):
+  // opaque, drawn over its neighbour's words (the web's :hover z-index 20).
+  // The picture where the two lie over each other does not change when the
+  // neighbour's words do: none of them show through.
+  {
+    const long = 'Hover: ' + Array.from({ length: 12 }, (_, i) => `a long line of words number ${i + 1}`).join(', ');
+    const hroot = (await mpost({ action: 'addNode', text: 'Hover: a root' }))?.node?.id;
+    const longId = (await mpost({ action: 'addNode', text: long, parentId: hroot }))?.node?.id;
+    const nbId = (await mpost({ action: 'addNode', text: 'Neighbour words lie under it', parentId: hroot }))?.node?.id;
+    const box = (p, id) => M(p).nodes.find((x) => x.id === id)?.box;
+    const view = (p) => { const [cx, cy] = M(p).canvas, [vw, vh] = M(p).view; return { x: cx, y: cy, w: vw, h: vh }; };
+    const both = (p) => { const v = view(p); return [longId, nbId].every((id) => { const b = box(p, id); return b && b.x >= v.x && b.y >= v.y && b.x + b.w <= v.x + v.w && b.y + b.h <= v.y + v.h; }) && box(p, longId).y + 200 <= v.y + v.h; };
+    let q = await T.until('a long idea and one under it', (p) => box(p, longId) && box(p, nbId), 8000);
+    if (q && !both(q)) {
+      const v = view(q), b = box(q, longId);
+      const [dx, dy] = [b.x - (v.x + v.w / 3), b.y - (v.y + 40)];
+      await T.act('mindmap-pan', String(dx), String(dy));
+      await t.sleep(300);
+      if (!both(await T.state())) await T.act('mindmap-pan', String(-2 * dx), String(-2 * dy));
+      q = await T.until('…both on show', both, 4000);
+      if (!q) { const z = await T.state(); console.log('   view', view(z), 'long', box(z, longId), 'under', box(z, nbId)); }
+    }
+    // Pixels differing between two pictures in a crop (ImageMagick, else PIL).
+    const diff = (x, y, crop) => {
+      let n = T.diff(x, y, crop);
+      if (n < 0) {
+        const py = 'import sys;from PIL import Image,ImageChops;w,h,x,y=map(int,sys.argv[3].replace("+","x").split("x"));a=Image.open(sys.argv[1]).convert("RGB").crop((x,y,x+w,y+h));b=Image.open(sys.argv[2]).convert("RGB").crop((x,y,x+w,y+h));d=ImageChops.difference(a,b).convert("L");print(sum(1 for v in d.getdata() if v))';
+        try { n = Number(execFileSync('python3', ['-I', '-c', py, x, y, crop], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()); } catch { /* none */ }
+      }
+      return n;
+    };
+    const shot = async (name) => {
+      await T.mouse('move', 60, 600);
+      await t.sleep(300);
+      const p0 = await T.state(), b = box(p0, longId);
+      await T.mouse('move', b.x + b.w / 2, b.y + b.h / 2);
+      const h = await T.until(`the long idea hovered opens up (${name})`, (p) => M(p).hover === longId, 4000);
+      await t.sleep(400);
+      return h && T.snap('planning', name);
+    };
+    if (q) {
+      const nb = box(q, nbId), lb = box(q, longId);
+      t.check('the neighbour lies under the long idea', nb.y > lb.y + lb.h && Math.abs(nb.x - lb.x) < 2, { lb, nb });
+      const a = await shot('mindmap-hover-over');
+      await mpost({ action: 'updateNode', id: nbId, text: 'Other words are under it now' });
+      await T.until('the neighbour has other words', (p) => M(p).nodes.some((x) => x.id === nbId && x.text === 'Other words are under it now'), 6000);
+      const b = await shot('mindmap-hover-over-2');
+      await T.mouse('move', 60, 600);
+      await T.until('…away, it closes', (p) => !M(p).hover, 4000);
+      await t.sleep(400);
+      const c = await T.snap('planning', 'mindmap-hover-off');
+      if (a?.ok && b?.ok && c?.ok) {
+        const n2 = box(await T.state(), nbId);
+        const crop = `${Math.round(n2.w - 8)}x${Math.round(n2.h - 4)}+${Math.round(n2.x + 4)}+${Math.round(n2.y + 2)}`;
+        t.check('the opened idea covers its neighbour (drawn there)', diff(b.path, c.path, crop) > 0, crop);
+        t.check('…opaque: none of the neighbour\'s words show through it', diff(a.path, b.path, crop) === 0, crop);
+      }
+    }
+    await mpost({ action: 'deleteNode', id: hroot });
+  }
 }
