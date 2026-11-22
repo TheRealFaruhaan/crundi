@@ -24,11 +24,13 @@ ${StrStr}
   !define APP_ID "com.crundi.client"
   !define EXE "crundi-client.exe"
   !define OLD_EXE "Crundi Client.exe"
+  !define DIR_NAME "crundi-client"
 !else
   !define PRODUCT_NAME "Crundi"
   !define APP_ID "com.crundi.app"
   !define EXE "crundi.exe"
   !define OLD_EXE "Crundi.exe"
+  !define DIR_NAME "crundi"
 !endif
 !define PUBLISHER "Obitech"
 !define UNINSTALLER "Uninstall ${PRODUCT_NAME}.exe"
@@ -37,7 +39,9 @@ ${StrStr}
 
 Name "${PRODUCT_NAME}"
 OutFile "${OUTFILE}"
-InstallDir "$LOCALAPPDATA\Programs\${PRODUCT_NAME}"
+; Where electron-builder put it: Programs\<package name> (crundi,
+; crundi-client; seen in the CI upgrade test), so an install moves over in place.
+InstallDir "$LOCALAPPDATA\Programs\${DIR_NAME}"
 Icon "${ICON}"
 UninstallIcon "${ICON}"
 BrandingText "${PRODUCT_NAME} ${VERSION}"

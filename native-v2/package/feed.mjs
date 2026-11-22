@@ -10,7 +10,8 @@
 
 import { createHash } from 'node:crypto';
 import { createReadStream, statSync, writeFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // electron-builder's namespace for appId GUIDs (app-builder-lib, ELECTRON_BUILDER_NS_UUID).
 const NS = '50e065bc-3134-11e6-9bab-38c9862bdaf3';
@@ -34,7 +35,10 @@ export async function yml(file, out, version) {
   writeFileSync(out, `version: ${version}\nfiles:\n  - url: ${url}\n    sha512: ${sha512}\n    size: ${size}\npath: ${url}\nsha512: ${sha512}\nreleaseDate: '${new Date().toISOString()}'\n`);
 }
 
-const [cmd, ...a] = process.argv.slice(2);
+// Only as a command: build.mjs imports it with its own arguments.
+const same = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+const main = !!process.argv[1] && same(resolve(process.argv[1]), fileURLToPath(import.meta.url));
+const [cmd, ...a] = main ? process.argv.slice(2) : [];
 if (cmd === 'guid') console.log(guid(a[0]));
 else if (cmd === 'yml') await yml(a[0], a[1], a[2]);
 else if (cmd) { console.error('usage: feed.mjs guid <appId> | yml <installer> <out.yml> <version>'); process.exit(2); }

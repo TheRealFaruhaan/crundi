@@ -28,11 +28,11 @@ Every stream builds to this. A change is a question for the Manager.
 
 ## Identity (so the new installer replaces Electron's)
 - **Windows:**
-  - NSIS, one-click, per-user, into `%LOCALAPPDATA%\Programs\Crundi` (client: `...\Crundi Client`).
+  - NSIS, one-click, per-user, into `%LOCALAPPDATA%\Programs\crundi` (client: `...\crundi-client`): electron-builder's folder, the package name (read in the CI upgrade test).
   - appId and AUMID `com.crundi.app` (client `com.crundi.client`), with the same uninstall key electron-builder used (read it from an installed Electron setup in the CI upgrade test).
   - Shortcuts as `build/installer.nsh` makes them; the DisconnectRDP task as it does.
 - **Linux:** a .deb with package name `crundi` (client `crundi-client`), executable `crundi` (client `crundi-client`), installed in `/opt/Crundi/` (client `/opt/Crundi Client/`). It replaces the Electron package of the same name.
-- **Launch at startup:** Linux `~/.config/autostart/crundi.desktop` (Electron's app.getName() is the package name; seen in the Docker upgrade test; client `Crundi Client.desktop`); Windows HKCU Run with Electron's value name (read it from the CI upgrade test). There is one implementation, and it replaces Electron's entry rather than adding a second one.
+- **Launch at startup:** Linux `~/.config/autostart/crundi.desktop` (Electron's app.getName() is the package name; seen in the Docker upgrade test; client `Crundi Client.desktop`); Windows HKCU Run with Electron's value name `electron.app.Crundi` (client `electron.app.Crundi Client`; read in the CI upgrade test). There is one implementation, and it replaces Electron's entry rather than adding a second one.
 
 ## Release asset names (so Electron installs update into the native client by themselves)
 - Windows: `Crundi-Setup-<v>.exe` and `latest.yml`. Client edition: `Crundi-Client-Setup-<v>.exe` and `client.yml`.

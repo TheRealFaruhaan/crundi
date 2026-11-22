@@ -6,8 +6,9 @@
 //! Names are package/CONTRACT.md's, so an Electron install moves over in
 //! place: the autostart entry `crundi.desktop` (Linux all-in-one: Electron's
 //! app.getName() is its package name; client `Crundi Client.desktop`),
-//! the Windows Run value named after the AppUserModelId `com.crundi.app`
-//! (client `com.crundi.client`), the update file `latest`/`client`.
+//! the Windows Run value Electron's setLoginItemSettings names
+//! `electron.app.Crundi` (client `electron.app.Crundi Client`; read in the CI
+//! upgrade test), the update file `latest`/`client`.
 
 use serde_json::{json, Value};
 use std::io::Write as _;
@@ -86,6 +87,11 @@ pub fn updater(cmd: &str) -> bool {
 
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
+/// The Run value's name, Electron's ("electron.app." + app.getName()), so
+/// the setting replaces Electron's entry instead of adding a second one.
+pub fn run_value_name() -> String { run_value(app_name()) }
+fn run_value(app_name: &str) -> String { format!("electron.app.{app_name}") }
+
 /// The file that is the setting (Linux; macOS; every system under the
 /// driver): present means on. Under the driver, `$XDG_CONFIG_HOME` the run
 /// made, else the client's own config folder.
@@ -123,7 +129,7 @@ fn win_registry() -> bool { cfg!(target_os = "windows") && !testing() }
 /// Does the app start at login now? (The system is the source of truth.)
 pub fn launch_enabled() -> bool {
     if win_registry() {
-        return std::process::Command::new("reg").args(["query", RUN_KEY, "/v", app_id()]).output().is_ok_and(|o| o.status.success());
+        return std::process::Command::new("reg").args(["query", RUN_KEY, "/v", &run_value_name()]).output().is_ok_and(|o| o.status.success());
     }
     launch_entry().exists()
 }
@@ -132,9 +138,12 @@ pub fn launch_enabled() -> bool {
 pub fn set_launch(on: bool) -> Result<bool, String> {
     let exe = launch_exe();
     if win_registry() {
+        let name = run_value_name();
+        // (A value under the appId, from an earlier native build, goes: one entry.)
+        let _ = std::process::Command::new("reg").args(["delete", RUN_KEY, "/v", app_id(), "/f"]).output();
         let mut c = std::process::Command::new("reg");
-        if on { c.args(["add", RUN_KEY, "/v", app_id(), "/t", "REG_SZ", "/d", &format!("\"{exe}\""), "/f"]); }
-        else { c.args(["delete", RUN_KEY, "/v", app_id(), "/f"]); }
+        if on { c.args(["add", RUN_KEY, "/v", &name, "/t", "REG_SZ", "/d", &format!("\"{exe}\""), "/f"]); }
+        else { c.args(["delete", RUN_KEY, "/v", &name, "/f"]); }
         let ok = c.output().is_ok_and(|o| o.status.success());
         if !ok && on { return Err("Could not change the startup setting".into()); }
     } else {
@@ -290,6 +299,13 @@ pub fn on_second_instance(f: impl Fn() + Send + 'static) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_run_value_is_electrons() {
+        // Seen in the CI upgrade test (windows.ps1): Electron 1.21.7's values.
+        assert_eq!(super::run_value("Crundi"), "electron.app.Crundi");
+        assert_eq!(super::run_value("Crundi Client"), "electron.app.Crundi Client");
+    }
 
     #[test]
     fn the_entry() {

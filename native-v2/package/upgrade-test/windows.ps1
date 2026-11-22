@@ -20,7 +20,8 @@ $product = if ($full) { 'Crundi' } else { 'Crundi Client' }
 $oldExe = if ($full) { 'Crundi.exe' } else { 'Crundi Client.exe' }
 $newExe = if ($full) { 'crundi.exe' } else { 'crundi-client.exe' }
 $guid = node (Join-Path $here '..\feed.mjs') guid ($(if ($full) { 'com.crundi.app' } else { 'com.crundi.client' }))
-$inst = Join-Path $env:LOCALAPPDATA "Programs\$product"
+# electron-builder's install folder is the package name (crundi, crundi-client).
+$inst = Join-Path $env:LOCALAPPDATA "Programs\$(if ($full) { 'crundi' } else { 'crundi-client' })"
 $userData = Join-Path $env:APPDATA $product
 $uninstRoot = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
@@ -36,8 +37,25 @@ function StopTree($procId) {
 }
 function UnderInstall { Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith("$inst\", 'OrdinalIgnoreCase')) -or ($_.CommandLine -and $_.CommandLine.IndexOf($inst, [StringComparison]::OrdinalIgnoreCase) -ge 0) } }
 
+# An installer or uninstaller still running (NSIS uninstallers relaunch from
+# %TEMP%, so -Wait can return before they finish) makes the next setup fail.
+function WaitInstallers {
+  for ($i = 0; $i -lt 60; $i++) {
+    $busy = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(Un_[A-Z]\.exe|Au_\.exe|Uninstall .*\.exe|Crundi.*Setup.*\.exe)$' })
+    if (-not $busy.Count) { return }
+    if ($i -eq 0) { Write-Host "waiting for: $($busy.Name -join ', ')" }
+    Start-Sleep 2
+  }
+}
+
 Write-Host "== Electron: $Old"
-$p = Start-Process $Old -ArgumentList '/S' -Wait -PassThru
+WaitInstallers
+for ($try = 1; $try -le 3; $try++) {
+  $p = Start-Process $Old -ArgumentList '/S' -Wait -PassThru
+  WaitInstallers
+  if ($p.ExitCode -eq 0) { break }
+  Write-Host "Electron setup exited $($p.ExitCode) (try $try)"; Start-Sleep 5
+}
 Check ($p.ExitCode -eq 0) "Electron setup exits 0 ($($p.ExitCode))"
 Check (Test-Path "$inst\$oldExe") "Electron installed at $inst\$oldExe"
 $before = @(Entries)
@@ -71,6 +89,7 @@ Write-Host "user data: $($hash.Count) files"
 Write-Host "== Native: $New"
 $t = Get-Date
 $p = Start-Process $New -ArgumentList '/S' -Wait -PassThru
+WaitInstallers
 Check ($p.ExitCode -eq 0) "native setup exits 0 ($($p.ExitCode)) in $([int]((Get-Date) - $t).TotalSeconds) s"
 Check (Test-Path "$inst\$newExe") "$newExe installed"
 Check ((Get-Item "$inst\$newExe").Name -ceq $newExe) "the executable is the native one ($((Get-Item "$inst\$newExe").VersionInfo.FileDescription))"
@@ -139,6 +158,7 @@ UnderInstall | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorActio
 
 Write-Host "== Uninstall"
 $p = Start-Process "$inst\Uninstall $product.exe" -ArgumentList '/currentuser', '/S' -Wait -PassThru
+WaitInstallers
 Start-Sleep 5
 Check (@(Entries).Count -eq 0) "uninstall removes the entry"
 Check (-not (Test-Path "$inst\$newExe")) "uninstall removes the files"
@@ -148,3 +168,4 @@ $size = (Get-Item $New).Length; $osize = (Get-Item $Old).Length
 Write-Host ("size: native {0:N1} MB, Electron {1:N1} MB" -f ($size / 1MB), ($osize / 1MB))
 if ($failures.Count) { Write-Host "`n$($failures.Count) FAILED:"; $failures | ForEach-Object { Write-Host "  $_" }; exit 1 }
 Write-Host "`nWindows upgrade test passed ($Edition)"
+exit 0
