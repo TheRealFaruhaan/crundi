@@ -1,0 +1,23 @@
+<div class="wna a-gg">
+  <div class="card"><div class="h">farhan-RP-15</div>
+    <div class="r"><span class="tg"><i></i></span>Not on battery</div>
+    <div class="r"><span class="num">15</span>Only when I am away (minutes idle)</div>
+    <div class="s"><span class="dot"></span><span class="w1">In use: the job waits</span><span class="w2">Away 15 min: the job starts</span></div>
+  </div>
+  <style>
+    .a-gg{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:13px}
+    .a-gg .card{position:absolute;left:110px;top:90px;width:420px;border:1px solid var(--border);border-radius:12px;background:var(--bg-card);padding:16px 18px}
+    .a-gg .h{font-weight:600;margin-bottom:12px}
+    .a-gg .r{display:flex;align-items:center;gap:10px;margin-bottom:10px;color:var(--text-secondary)}
+    .a-gg .tg{position:relative;width:34px;height:20px;border-radius:10px;background:var(--accent)}
+    .a-gg .tg i{position:absolute;top:2px;left:16px;width:16px;height:16px;border-radius:50%;background:#fff}
+    .a-gg .num{font-family:var(--mono);padding:2px 8px;border:1px solid var(--border);border-radius:6px;color:var(--text-primary)}
+    .a-gg .s{position:relative;height:22px;margin-top:6px;display:flex;align-items:center;gap:8px}
+    .a-gg .dot{width:8px;height:8px;border-radius:50%;animation:aggD 10s infinite}
+    .a-gg .w1,.a-gg .w2{position:absolute;left:16px}
+    .a-gg .w1{color:var(--yellow);animation:aggW1 10s infinite}.a-gg .w2{color:var(--green);opacity:0;animation:aggW2 10s infinite}
+    @keyframes aggD{0%,48%{background:var(--yellow)}52%,100%{background:var(--green)}}
+    @keyframes aggW1{0%,46%{opacity:1}50%,100%{opacity:0}}
+    @keyframes aggW2{0%,50%{opacity:0}54%,94%{opacity:1}100%{opacity:0}}
+  </style>
+</div>

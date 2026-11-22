@@ -188,7 +188,11 @@ data class ChatUi(
     val voice: ChatVoiceUi? = null,
     /** The mic's last levels, for the recording bar (ChatVoiceSession.levels). */
     val voiceLevels: kotlinx.coroutines.flow.StateFlow<List<Float>>? = null,
+    /** "Bring changes back" is on its way (a chat on a PC). */
+    val pulling: Boolean = false,
 ) {
+    /** The PC this chat's Claude runs on, when it runs on one (null on older servers). */
+    val runsOn get() = chat.runsOn ?: pane?.runsOn
     /** Put to sleep (parked): the live state's row for it says so (ChatSleep). */
     val asleep get() = ChatSleep.asleep(pane)
     val title get() = pane?.label?.takeIf { it.isNotEmpty() } ?: chat.title.ifEmpty { "Chat" }
@@ -216,6 +220,8 @@ interface ChatActions : EntryActions, ComposerActions, ScheduleActions {
     fun dismissRecap() {}
     /** Ask [question] on the side; the answer shows in the sheet. */
     fun askAside(question: String) {}
+    /** A chat on a PC: bring its changes back to the server now (POST /api/workers chat-pull). */
+    fun pullChanges() {}
 }
 
 private fun activity(c: ChatState): String? {
@@ -271,6 +277,7 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
         if (!asleep) MiniChat(c.id, if (c.exited) "exited" else c.state.wire, ui.draft, ui.pending.map { it.text }, sugOn)
         Column(Modifier.fillMaxSize().imePadding()) {
             if (!ui.inPane) ChatHeader(ui, actions, wide)
+            ui.runsOn?.let { PcBar(it, ui.pulling, actions::pullChanges) }
             if (!asleep && !c.loaded) { LoadingState(Modifier.weight(1f), text = "Opening the chat"); return@Column }
             if (asleep) Box(Modifier.weight(1f).fillMaxWidth()) { SleepingChat(ui, actions) } else {
             val entries = c.visible
@@ -442,6 +449,45 @@ private fun ChatHeader(ui: ChatUi, actions: ChatActions, wide: Boolean = false) 
             )
             if (ui.isBubble) CrundiIconButton("maximize", actions::openInMain, contentDescription = "Open in Crundi")
             CrundiIconButton("more", { actions.sheet(ChatSheet.Menu) }, contentDescription = "Chat actions")
+        }
+        Box(Modifier.fillMaxWidth().height(Dimens.Hairline).background(CrundiColors.BorderSubtle))
+    }
+}
+
+/**
+ * A chat whose Claude runs on a PC (the web's term-pc-tag): "on <PC>", "PC
+ * offline" while it is away (what is sent waits for it), the branch its
+ * changes last landed on, and "Bring changes back".
+ */
+@Composable
+internal fun PcBar(pc: mv.obitech.crundi.api.model.ChatPc, pulling: Boolean, onPull: () -> Unit) {
+    val tint = if (pc.online) CrundiColors.Green else CrundiColors.TextMuted
+    val pill = RoundedCornerShape(99.dp)
+    Column(Modifier.fillMaxWidth().background(CrundiColors.BgSecondary)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                Modifier.weight(1f, fill = false).clip(pill).border(Dimens.Hairline, if (pc.online) CrundiColors.Green else CrundiColors.Border, pill).padding(horizontal = 8.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                CrundiIcon("hard-drive", size = 12.dp, tint = tint)
+                Text(pc.badge, style = CrundiType.Small.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = tint), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (pc.branch.isNotEmpty()) Row(Modifier.weight(1f, fill = false), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                CrundiIcon("git-branch", size = 12.dp, tint = CrundiColors.TextMuted)
+                Text(pc.branch, style = CrundiType.Small.copy(fontSize = 11.sp, color = CrundiColors.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Box(Modifier.weight(1f))
+            Row(
+                Modifier.clip(Dimens.ShapeSm).border(Dimens.Hairline, CrundiColors.Border, Dimens.ShapeSm)
+                    .clickable(enabled = !pulling, onClickLabel = "Bring changes back", onClick = onPull).padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                if (pulling) Spinner(10.dp) else CrundiIcon("download", size = 13.dp, tint = CrundiColors.AccentHover)
+                Text("Bring changes back", style = CrundiType.Small.copy(fontSize = 11.sp, color = if (pulling) CrundiColors.TextMuted else CrundiColors.TextPrimary), maxLines = 1)
+            }
         }
         Box(Modifier.fillMaxWidth().height(Dimens.Hairline).background(CrundiColors.BorderSubtle))
     }
@@ -998,6 +1044,19 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
             }
         }
         override fun dismissSuggestion() { act { api.chats.dismissSuggestion(chatId) } }
+        override fun pullChanges() {
+            if (ui.pulling) return
+            ui = ui.copy(pulling = true, error = null)
+            scope.launch {
+                ui = try {
+                    val r = api.workers.pullChat(chatId)
+                    ui.copy(pulling = false, notice = r.words)
+                } catch (e: Exception) {
+                    val m = errorText(e)
+                    ui.copy(pulling = false, error = if (m == mv.obitech.crundi.ui.components.ErrorWords.NOT_SUPPORTED) m else "Could not bring the changes back: $m")
+                }
+            }
+        }
         override fun dismissRecap() {
             val r = chat.recap ?: return
             ui = ui.copy(retiredRecap = r.key)
@@ -1046,6 +1105,10 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
         override fun factoryDiff(e: ChatEntry) {
             val run = (e.raw["runId"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return
             act(e.id) { val d = api.factories.diff(run); ui = ui.copy(factoryDiffs = ui.factoryDiffs + (e.id to (d.diff + if (d.truncated) "\n… (cut short)" else ""))) }
+        }
+        override fun cancelWorkerJob(e: ChatEntry) {
+            val job = e.workerJob.job.ifEmpty { return }
+            act(e.id) { api.workers.cancelJob(job) }
         }
         override fun media(m: ChatMedia) {
             when {

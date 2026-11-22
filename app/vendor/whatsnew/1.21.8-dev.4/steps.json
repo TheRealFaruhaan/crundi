@@ -1,0 +1,16 @@
+{
+  "steps": [
+    {
+      "id": "worker-run",
+      "tag": "Workers",
+      "title": "Builds on your PC",
+      "body": "Chats can now run a command on one of your worker PCs: a release build, a render, anything too heavy for the server. The code comes from GitHub at the server's commit, or as a copy of the project with your unsaved changes; the output streams into the chat and the files it made come back. It runs at low priority, keeps build caches between runs, and carries on if the connection drops.",
+      "keys": [
+        { "keys": ["Ask a chat"], "text": "\"build it on my PC\"" },
+        { "keys": ["Workers", "A PC"], "text": "Jobs: what ran, its log, Cancel" }
+      ],
+      "art": "worker-run.html",
+      "artTitle": "Workers"
+    }
+  ]
+}

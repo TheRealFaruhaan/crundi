@@ -82,6 +82,8 @@ class RunCallbacks(
     val onOpenChat: (String) -> Unit = {},
     val onDiff: () -> Unit = {},
     val onRetry: () -> Unit = {},
+    /** Move an offline PC's steps to this server ([FactoryRun.pcsAway], by worker id). */
+    val onMoveToServer: (String) -> Unit = {},
 )
 
 enum class RunTab(val label: String) { Run("Run"), Timeline("Timeline") }
@@ -113,6 +115,7 @@ fun FactoryRunRoute(id: String, onAllRuns: (() -> Unit)? = null) {
             onOpenChat = { nav.chat(it) },
             onDiff = { nav.to(FactoryRoutes.diff(id)) },
             onRetry = { loader.refresh() },
+            onMoveToServer = { w -> actions.run { api.factories.moveToServer(id, w) } },
         )
     }
     Box(Modifier.fillMaxSize()) {
@@ -231,6 +234,7 @@ internal fun ColumnScope.RunPane(r: FactoryRun, cb: RunCallbacks, now: Long, hin
         Text("It reached its limit (${r.capHit.str("reason") ?: r.capHit.str("kind") ?: "time or handoffs"}).", style = CrundiType.Small.copy(color = CrundiColors.TextPrimary))
         CrundiButton("Let it carry on", cb.onResume, kind = ButtonKind.Primary)
     }
+    for (a in r.pcsAway) PcAwayCard(a, cb)
     for (a in r.asks) AskCard(a, cb)
     for (t in r.tokens.filter { it.wait != null }) WaitCard(t, cb, now)
     if (r.awaitingFinish || r.status == "finishing") FinishCard(r, cb)
@@ -270,6 +274,19 @@ private fun Panel(title: String, accent: androidx.compose.ui.graphics.Color, con
     ) {
         Text(title, style = CrundiType.Heading.copy(color = accent))
         content()
+    }
+}
+
+/** A PC holding steps is offline: who waits on it, and "Move to this server". */
+@Composable
+private fun PcAwayCard(a: mv.obitech.crundi.api.model.RunPcAway, cb: RunCallbacks) {
+    Panel("A PC is offline", if (a.overdue) CrundiColors.Red else CrundiColors.Yellow) {
+        val since = if (a.sinceMs > 0) java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(a.sinceMs))
+            else (a.since as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+        val who = a.worker.ifEmpty { a.workerId.ifEmpty { "A PC" } }
+        Text("$who is offline" + (if (since.isNotEmpty()) " since $since" else "") + (if (a.employees.isNotEmpty()) ": " + a.employees.joinToString(", ") else ""),
+            style = CrundiType.Small.copy(color = CrundiColors.TextPrimary))
+        CrundiButton("Move to this server", { cb.onMoveToServer(a.workerId) }, kind = ButtonKind.Primary, icon = "server")
     }
 }
 

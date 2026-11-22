@@ -45,7 +45,7 @@ check('a failed stats poll does not blank the service cards',
 
 {
   const registry = readFileSync(join(here, '..', 'src', 'service-registry.js'), 'utf8');
-  const stdio = readFileSync(join(here, '..', 'src', 'mcp-stdio.js'), 'utf8');
+  const stdio = readFileSync(join(here, '..', 'src', 'mcp-stdio.js'), 'utf8') + readFileSync(join(here, '..', 'src', 'mcp-tools.js'), 'utf8');
   check('the registry can check a registration without saving', /export function checkRegistration\(\{ alias, name, cwd, command \}\)/.test(registry));
   check('both collaborator request routes refuse an invalid service up front',
     (web.match(/checkRegistration\(\{ alias(?:: inv\.project)?, name: (?:body|a)\.name, cwd: want, command: (?:body|a)\.command \}\)/g) || []).length === 2);
@@ -53,7 +53,7 @@ check('a failed stats poll does not blank the service cards',
     /pre\.kind === 'service' && pre\.payload\) \{\s*const chk = checkRegistration\(pre\.payload\);\s*if \(!chk\.ok\) return json/.test(web));
   check('the asking chat hears approve, fail and decline',
     /The owner approved the service/.test(web) && /could not be registered: \$\{reg\.error\}/.test(web) && /The owner declined: \$\{r\.request\.title\}/.test(web)
-    && /name === 'register_service'\) && process\.env\.CRUNDI_CHAT_ID/.test(stdio));
+    && /name === 'register_service'\) && (?:process\.)?env\.CRUNDI_CHAT_ID/.test(stdio));
   check('the owner sees whether the service was actually registered',
     /r\.service && !r\.service\.ok\) toast\('Approved, but it could not be registered/.test(html));
 }

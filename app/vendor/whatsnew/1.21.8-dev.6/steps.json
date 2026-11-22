@@ -1,0 +1,36 @@
+{
+  "steps": [
+    {
+      "id": "terminal-on-pc",
+      "tag": "Workers",
+      "title": "Terminals and shells on your PC",
+      "body": "Runs on now sits at the top of a new pane and applies to all three: an Empty Shell, UI Mode and Terminal can each run on one of your worker PCs, in its own copy of the project. The pane shows which PC it is on, and that PC's changes come back to a branch here when you ask.",
+      "keys": [
+        { "keys": ["New pane", "Runs on"], "text": "this server, or a PC" },
+        { "keys": ["Pane header", "<PC>"], "text": "bring its changes back" }
+      ],
+      "art": "terminal-on-pc.html",
+      "artTitle": "Workbench"
+    },
+    {
+      "id": "factory-pc-away",
+      "tag": "Factories",
+      "title": "Move steps off a PC that went away",
+      "body": "When a PC holding a factory's steps stays offline (30 minutes by default, set per factory), you are told, and the run's Details offer Move to this server: those steps start again here from the run's worktree.",
+      "keys": [
+        { "keys": ["Factory settings", "PC offline"], "text": "how long to wait" },
+        { "keys": ["Run", "Move to this server"], "text": "carry on without the PC" }
+      ],
+      "art": "factory-pc-away.html",
+      "artTitle": "Factory"
+    },
+    {
+      "id": "worker-self-update",
+      "tag": "Workers",
+      "title": "Workers keep themselves up to date",
+      "body": "A worker running on its own (tray or headless) updates itself to this server's version when its PC is idle. The Workers tab shows each one's version, and whether it updates itself or with the PC app.",
+      "art": "worker-update.html",
+      "artTitle": "Workers"
+    }
+  ]
+}

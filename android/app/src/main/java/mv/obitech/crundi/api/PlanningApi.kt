@@ -179,6 +179,19 @@ class FactoriesApi internal constructor(private val rpc: Rpc) {
         runAct("pause", id, "mode" to (if (now) "now" else null), "resumeOnReset" to resumeOnReset.takeIf { it })
     suspend fun resume(id: String) = runAct("resume", id)
     suspend fun recover(id: String, note: String? = null) = runAct("recover", id, "note" to note)
+    /**
+     * Move the steps a PC holds while it is offline ([FactoryRun.pcsAway]) to
+     * this server. An older server answers "Unknown factory run action":
+     * that throws [ApiException] saying it is not supported.
+     */
+    suspend fun moveToServer(id: String, worker: String) {
+        try {
+            rpc.post("/api/factory-runs", mapOf("action" to "moveToServer", "id" to id, "worker" to worker))
+        } catch (e: mv.obitech.crundi.api.ApiException) {
+            if (e.status == 400 && e.message.startsWith("Unknown factory run action", ignoreCase = true)) throw mv.obitech.crundi.api.ApiException(e.status, "Not supported by this server", e.body)
+            throw e
+        }
+    }
     /** Answer an Ask step. */
     suspend fun answerAsk(id: String, tokenId: String, replyId: String, note: String? = null) = runAct("ask", id, "tokenId" to tokenId, "replyId" to replyId, "note" to note)
     /** End a Wait step now: outcome done or timeout. */

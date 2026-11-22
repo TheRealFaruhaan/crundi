@@ -39,6 +39,7 @@
     '.fx-card-desc{font-size:12.5px;color:var(--text-secondary);line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:1.45em}',
     '.fx-meta{font-size:11.5px;color:var(--text-muted)}',
     '.fx-row-btns{display:flex;flex-wrap:wrap;gap:6px}',
+    '.fx-pc-away{align-self:center;font-size:12px;color:var(--text-muted)}',
     '.fx-chip{font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid var(--border);color:var(--text-secondary);white-space:nowrap}',
     '.fx-chip.ok{color:var(--green);border-color:rgba(16,185,129,.4)}',
     '.fx-chip.draft,.fx-chip.waiting,.fx-chip.paused{color:var(--yellow);border-color:rgba(245,158,11,.4)}',
@@ -164,6 +165,16 @@
   var listeners = [];
   function runEvent(d) { listeners.slice().forEach(function (fn) { try { fn(d || {}); } catch (e) { /* a view's problem */ } }); }
   function onEvent(fn) { listeners.push(fn); return function () { listeners = listeners.filter(function (x) { return x !== fn; }); }; }
+
+  // The owner's worker PCs, offered in the editor's "Runs on" fields.
+  // null when there are none to offer: not the owner (403), an older server
+  // (404), or no answer.
+  function fetchWorkers(ctx) {
+    return ctx.apiFetch('/api/workers').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (!j || !j.ok || !Array.isArray(j.workers)) return null;
+      return j.workers.map(function (w) { return { id: w.id, name: w.name || w.id, online: !!w.online }; });
+    }).catch(function () { return null; });
+  }
 
   // ─── factory-flow.js, loaded on first use ───
   var flowLoading = null;
@@ -593,6 +604,14 @@
       wrap.appendChild(p);
     }
     if (run.paused || run.capHit) { var rs = btn(run.capHit ? 'Let it carry on' : 'Resume', ''); rs.onclick = function () { act({ action: 'resume' }); }; wrap.appendChild(rs); }
+    // A PC holding steps is offline: say since when, and offer to run them here.
+    (run.pcsAway || []).forEach(function (a) {
+      var mv = btn('Move to this server', a.overdue ? '' : 'ghost', 'server', ctx);
+      mv.title = a.worker + ' is offline' + (a.since ? ' since ' + new Date(a.since).toLocaleTimeString() : '') + ': ' + (a.employees || []).join(', ') + ' wait' + ((a.employees || []).length === 1 ? 's' : '') + ' for it. Their steps start again here, from the run\u2019s worktree; what they did on the PC since their last handoff stays there.';
+      mv.onclick = function () { act({ action: 'moveToServer', worker: a.workerId }, 'Move ' + (a.employees || []).join(', ') + ' from ' + a.worker + ' to this server? Their steps start again here from the run\u2019s worktree; work on the PC since their last handoff does not come back.'); };
+      wrap.appendChild(mv);
+      wrap.appendChild(el('span', 'fx-pc-away', esc(a.worker + ' offline' + (a.overdue ? ' for over ' + a.minutes + ' min' : '') + ': ' + (a.employees || []).join(', ') + ' wait')));
+    });
     if (['starting', 'running', 'waiting', 'paused', 'crashed', 'finishing'].indexOf(run.status) >= 0) {
       var st = btn('Stop', 'ghost danger'); st.onclick = function () { act({ action: 'stop' }, 'Stop this factory? Its team stops and the Manager\'s chat stays as an ordinary chat. The worktree is kept (see Cleanup).'); }; wrap.appendChild(st);
     }
@@ -996,7 +1015,10 @@
         var F = await loadFlow(ctx);
         full.innerHTML = '';
         var host = el('div', ''); host.style.height = '100%'; host.style.minHeight = '0'; host.style.flex = '1'; full.appendChild(host);
-        if (kind === 'editor') sub = F.mountEditor(host, { apiFetch: ctx.apiFetch, factoryId: id, onClose: function () { closeSub(); show('library'); } });
+        if (kind === 'editor') {
+          var pcs = await fetchWorkers(ctx);
+          sub = F.mountEditor(host, { apiFetch: ctx.apiFetch, factoryId: id, workers: pcs, onClose: function () { closeSub(); show('library'); } });
+        }
         else sub = F.mountViewer(host, { apiFetch: ctx.apiFetch, runId: id, subscribe: onEvent, openChat: function (chatId, name) { openChat(ctx, chatId, name); }, onClose: function () { closeSub(); show(current); } });
       } catch (e) {
         full.innerHTML = '';

@@ -52,8 +52,14 @@ object ChatReducer {
             recap = recap(session["recap"]),
             pendingInjections = (session["pendingInjections"] as? JsonArray)?.mapNotNull { runCatching { CrundiJson.decodeFromJsonElement<PendingInjection>(it) }.getOrNull() }.orEmpty(),
             factory = (session["factory"] as? JsonObject)?.let { runCatching { CrundiJson.decodeFromJsonElement<FactoryRole>(it) }.getOrNull() },
+            where = s("where"),
+            pc = pcOf(session["pc"]),
         )
     }
+
+    /** A session's or meta event's `pc` (claude-ui.js whereOf); null when absent or unreadable. */
+    fun pcOf(el: kotlinx.serialization.json.JsonElement?): mv.obitech.crundi.api.model.ChatPc? =
+        (el as? JsonObject)?.let { runCatching { CrundiJson.decodeFromJsonElement<mv.obitech.crundi.api.model.ChatPc>(it) }.getOrNull() }
 
     /** A socket message for this chat: ui-history or ui-event. Anything else leaves the state as it is. */
     fun message(s: ChatState, m: JsonObject): ChatState = when (m.type()) {
@@ -84,6 +90,9 @@ object ChatReducer {
                 permissionMode = str("permissionMode") ?: s.permissionMode,
                 model = str("model") ?: s.model,
                 plan = if (ev.containsKey("plan")) plan(ev["plan"]) else s.plan,
+                // A PC came or went, or its changes landed on a branch.
+                pc = if (ev.containsKey("pc")) pcOf(ev["pc"]) else s.pc,
+                where = if (ev.containsKey("pc")) (pcOf(ev["pc"])?.where?.ifEmpty { null } ?: s.where) else s.where,
             )
             "init" -> s.copy(
                 sessionId = str("sessionId")?.takeIf { it.isNotEmpty() } ?: s.sessionId,

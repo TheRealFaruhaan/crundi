@@ -291,6 +291,7 @@ fun FactoryLiveRoute(id: String, onEnded: () -> Unit = {}) {
             },
             onDiff = { nav.to(FactoryRoutes.diff(id)) },
             onRetry = { loader.refresh() },
+            onMoveToServer = { w -> actions.run { api.factories.moveToServer(id, w) } },
         )
     }
     Box(Modifier.fillMaxSize()) {

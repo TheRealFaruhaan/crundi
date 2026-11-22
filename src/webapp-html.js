@@ -1236,6 +1236,41 @@ export function getWebappHtml(botUsername, appVersion = '') {
       max-width: 110px; overflow: hidden; text-overflow: ellipsis;
       color: var(--sky); border: 1px solid var(--sky); border-radius: 99px; padding: 1px 7px; margin-right: 4px;
     }
+    /* A chat whose claude runs on a worker PC: its name, "PC offline" when it is away; a click brings its changes back. */
+    .term-pc-tag {
+      flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 0.62rem; font-weight: 700; white-space: nowrap;
+      max-width: 170px; overflow: hidden; text-overflow: ellipsis; cursor: pointer; background: transparent;
+      color: var(--green); border: 1px solid var(--green); border-radius: 99px; padding: 1px 7px; margin-right: 4px;
+    }
+    .term-pc-tag .ic { width: 11px; height: 11px; flex: none; }
+    .term-pc-tag.off { color: var(--text-muted); border-color: var(--border); }
+    .term-pc-tag.busy { opacity: 0.6; cursor: progress; }
+    .term-pc-note { flex: 0 1 auto; min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.66rem; color: var(--text-muted); margin-right: 4px; }
+    /* Runs on: the launcher's first choice, above everything (applies to all
+       three). A pill group as wide as the launch rows; it wraps on a phone or
+       in a narrow cell. The chosen place carries the accent. */
+    .term-launch .tl-where { display: flex; flex-direction: column; gap: 6px; width: 300px; max-width: 100%; margin-bottom: 4px; }
+    .term-launch .tl-where[hidden] { display: none; }
+    .term-launch .tl-where-label { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+    .term-launch .tl-places {
+      display: flex; flex-wrap: wrap; gap: 4px; padding: 3px;
+      border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-tertiary);
+    }
+    .term-launch .tl-places button.tl-place {
+      flex: 1 1 auto; min-width: 0; max-width: 100%; padding: 6px 10px; font-size: 12px; font-weight: 600;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      border: 1px solid transparent; border-radius: calc(var(--radius-sm) - 2px);
+      background: transparent; color: var(--text-secondary);
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+    .term-launch .tl-place .ic { width: 14px; height: 14px; flex: none; }
+    .term-launch .tl-place .tl-pname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .term-launch .tl-place .tl-pdot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex: none; }
+    .term-launch .tl-places button.tl-place:hover { color: var(--text-primary); background: var(--bg-secondary); }
+    .term-launch .tl-places button.tl-place.on { color: var(--text-primary); background: var(--accent-dim); border-color: var(--accent); }
+    .term-launch .tl-places button.tl-place.on .ic { color: var(--accent-hover); }
+    .term-launch .tl-where-hint { font-size: 11.5px; line-height: 1.4; color: var(--text-muted); }
+    .term-launch .tl-where-hint[hidden] { display: none; }
     .appr-acts button {
       flex: 1; border-radius: var(--radius-sm); border: 1px solid var(--border);
       background: var(--bg-primary); color: var(--text-secondary); cursor: pointer;
@@ -3734,6 +3769,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           <button class="tab-btn" data-tab="services" title="Services"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="13" width="20" height="6" rx="1.5"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="16" x2="6.01" y2="16"/></svg><span class="tab-label">Services</span></button>
           <button class="tab-btn" data-tab="docker" title="Docker"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg><span class="tab-label">Docker</span></button>
           <button class="tab-btn" data-tab="homepool" title="Homepool: where traffic leaves from"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M9 16a4 4 0 0 1 6 0"/><path d="M11 19h2"/></svg><span class="tab-label">Homepool</span></button>
+          <button class="tab-btn" data-tab="workers" title="Workers: your PCs that do heavy work for this server"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 9l2 2-2 2"/><path d="M12 13h4"/></svg><span class="tab-label">Workers</span></button>
           <button class="tab-btn" data-tab="browsers" title="Browsers"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span class="tab-label">Browsers</span></button>
           <button class="tab-btn" data-tab="info" title="Info"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span class="tab-label">Info</span></button>
           <button class="tab-btn" data-tab="secrets" title="Secrets"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span class="tab-label">Secrets</span> <span class="secret-badge" id="secret-badge" style="display:none"></span></button>
@@ -3818,6 +3854,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         <div class="services-panel tab-panel" id="services-panel" data-panel="services"></div>
         <div class="tab-panel docker-tab" id="docker-panel" data-panel="docker"></div>
         <div class="tab-panel docker-tab" id="homepool-panel" data-panel="homepool"></div>
+        <div class="tab-panel docker-tab" id="workers-panel" data-panel="workers"></div>
         <div class="tab-panel factories-tab" id="factories-panel" data-panel="factories"></div>
         <div class="factory-panel tab-panel" id="factory-panel" data-panel="factory"></div>
         <div class="services-panel tab-panel" id="browsers-panel" data-panel="browsers"></div>
@@ -4040,6 +4077,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
   <script src="/vendor/crundi-notes.js?v=${vendorTag('crundi-notes.js')}"><\/script>
   <script src="/vendor/crundi-docker.js?v=${vendorTag('crundi-docker.js')}"><\/script>
   <script src="/vendor/crundi-homepool.js?v=${vendorTag('crundi-homepool.js')}"><\/script>
+  <script src="/vendor/crundi-workers.js?v=${vendorTag('crundi-workers.js')}"><\/script>
   <script src="/vendor/crundi-browser-drawer.js?v=${vendorTag('crundi-browser-drawer.js')}"><\/script>
   <script src="/vendor/crundi-factories.js?v=${vendorTag('crundi-factories.js')}"><\/script>
   <script src="/vendor/crundi-widgets.js?v=${vendorTag('crundi-widgets.js')}"><\/script>
@@ -5703,7 +5741,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       bg.title = 'Claude usage (real, account-wide)'
         + '\\nWeekly: ' + week + '%  (resets ' + rs(u.week) + ')'
         + '\\n5-hour: ' + five + '%  (resets ' + rs(u.fiveHour) + ')'
-        + (u.subscriptionType ? '\\nPlan: ' + u.subscriptionType : '');
+        + (u.subscriptionType ? '\\nPlan: ' + u.subscriptionType : '')
+        + (u.stale ? '\\nLast known' + (u.fromClaude ? ' (from Claude Code)' : '') + ': the live refresh failed (' + (u.error || '?') + ')' : '');
       tickResets(); // also fills the time bars from resets_at
     }
     const ubLast = {}; // last shown usage % per bar (to shine only on change)
@@ -5806,6 +5845,42 @@ export function getWebappHtml(botUsername, appVersion = '') {
         }
       } catch { /* an older client */ }
     }
+    // This PC as a worker (the PC client only): its switch and state.
+    let pcWorkerSubscribed = false;
+    function pcWorkerApply(s) {
+      const box = document.getElementById('pc-worker-on'), st = document.getElementById('pc-worker-status'), dir = document.getElementById('pc-worker-dir');
+      if (!box || !s) return;
+      box.checked = !!s.enabled;
+      box.disabled = !s.available && !s.enabled;
+      if (dir && document.activeElement !== dir) dir.value = s.workDir || '';
+      const words = { off: s.enabled ? 'Starting' : 'Off', starting: 'Starting', connecting: 'Connecting', online: 'Online', offline: 'Offline, retrying', paused: 'Paused', restarting: 'Restarting', refused: 'Removed by the server', replaced: 'Replaced by another copy', missing: 'Not in this build', error: 'Could not start', conflict: 'Another worker on this PC is connected' };
+      if (st) st.textContent = !s.available ? 'This build of the app has no worker program in it yet.' : (words[s.state] || s.state || '') + (s.detail ? ': ' + s.detail : '') + (s.job ? ' · running: ' + s.job.command : '');
+    }
+    async function showPcWorker() {
+      if (!window.api || !window.api.worker) return;
+      try {
+        pcWorkerApply(await window.api.worker.status());
+        if (!pcWorkerSubscribed && window.api.worker.onStatus) { pcWorkerSubscribed = true; window.api.worker.onStatus((x) => pcWorkerApply(x)); }
+      } catch { /* an older client */ }
+    }
+    async function pcWorkerToggle(on) {
+      const w = window.api && window.api.worker;
+      if (!w) return;
+      try {
+        if (!on) { await w.disable(); return showPcWorker(); }
+        const s = await w.status();
+        if (s.configured && s.server === location.origin) { await w.start(); return showPcWorker(); }
+        const r = await apiFetch('/api/workers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'join-self', name: s.name, deviceId: s.deviceId, kind: 'electron', version: s.version, os: s.os }) });
+        if (r.status === 404) throw new Error('This server does not support workers yet. Update the server to use them.');
+        const d = await r.json();
+        if (!r.ok || d.ok === false) throw new Error(d.error || 'Could not join');
+        const e = await w.enable({ server: location.origin, key: d.key, id: d.id, workDir: (document.getElementById('pc-worker-dir') || {}).value || '' });
+        if (!e.ok) throw new Error(e.error || 'Could not start');
+        toast('This PC is now a worker', 'success');
+      } catch (err) { toast(err.message, 'error'); }
+      showPcWorker();
+    }
+
     // Cru's settings, shared by every device (the server keeps them): the
     // brain, model, voice, how it listens, when the screen closes, spending,
     // keys, the conversation, the notebook, and the two brains compared.
@@ -7642,6 +7717,67 @@ export function getWebappHtml(botUsername, appVersion = '') {
       };
     }
 
+    // ─── Runs on: a new chat on this server, or on one of the owner's PCs ───
+    // The PCs offered are the ones online, with chats allowed and claude
+    // installed (POST /api/workers chat-places). Owner only; an older server
+    // answers without places, and the choice simply never shows.
+    let chatPlaces = [];
+    let chatPlacesAt = 0;
+    let chatPlacesLoading = null;
+    const chatWhereByLid = {};
+    function loadChatPlaces(force) {
+      if (userRole === 'collaborator') return Promise.resolve([]);
+      if (!force && Date.now() - chatPlacesAt < 30000) return Promise.resolve(chatPlaces);
+      if (chatPlacesLoading) return chatPlacesLoading;
+      chatPlacesLoading = apiFetch('/api/workers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'chat-places' }) })
+        .then(r => r.json()).then(d => { chatPlaces = (d && d.ok && Array.isArray(d.places)) ? d.places : []; })
+        .catch(() => { chatPlaces = []; })
+        .then(() => { chatPlacesAt = Date.now(); chatPlacesLoading = null; document.querySelectorAll('.term-launch').forEach(fillRunsOnNow); return chatPlaces; });
+      return chatPlacesLoading;
+    }
+    function fillRunsOnNow(scope) {
+      const box = scope && scope.querySelector('.tl-where');
+      if (!box) return;
+      const lid = box.dataset.lid || '';
+      if (!chatPlaces.length) { box.hidden = true; box.innerHTML = ''; delete chatWhereByLid[lid]; return; }
+      const want = chatWhereByLid[lid] || '';
+      if (want && !chatPlaces.some(p => p.where === want)) delete chatWhereByLid[lid];
+      const cur = chatWhereByLid[lid] || '';
+      const pill = (where, icon, name, title, dot) => '<button type="button" class="tl-place' + (cur === where ? ' on' : '') + '" data-where="' + escHtml(where) + '"'
+        + ' aria-pressed="' + (cur === where ? 'true' : 'false') + '" title="' + escHtml(title) + '">'
+        + ic(icon) + '<span class="tl-pname">' + escHtml(name) + '</span>' + (dot ? '<span class="tl-pdot" aria-label="online"></span>' : '') + '</button>';
+      const picked = chatPlaces.find(p => p.where === cur);
+      box.innerHTML = '<div class="tl-where-label" id="tl-where-' + escHtml(lid) + '">Runs on</div>'
+        + '<div class="tl-places" role="group" aria-labelledby="tl-where-' + escHtml(lid) + '">'
+        + pill('', 'server', 'This server', 'Runs here, on the Crundi server', false)
+        + chatPlaces.map(p => pill(p.where, 'hard-drive', p.name, p.name + ' is online: runs there', true)).join('')
+        + '</div>'
+        + '<div class="tl-where-hint"' + (picked ? '' : ' hidden') + '>' + (picked
+          ? 'Runs on ' + escHtml(picked.name) + ': its own Claude, the project cloned there; changes come back to a branch here.'
+          : '') + '</div>';
+      box.hidden = false;
+      box.querySelectorAll('.tl-place').forEach((b) => b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        chatWhereByLid[lid] = b.dataset.where || '';
+        fillRunsOnNow(scope);
+      }));
+    }
+    function fillRunsOn(scope) {
+      fillRunsOnNow(scope);
+      loadChatPlaces(false).then(() => fillRunsOnNow(scope));
+    }
+    /** Bring a PC chat's changes back to the server now; says where the branch is. */
+    async function pullPcChat(tid, btn) {
+      if (btn) { if (btn.classList.contains('busy')) return; btn.classList.add('busy'); }
+      try {
+        const r = await apiFetch('/api/workers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'chat-pull', chat: tid }) });
+        const d = await r.json();
+        if (!d.ok) { toast(d.error || 'Could not bring the changes back', 'error'); return; }
+        toast('Changes brought back' + (d.branch ? ' on branch ' + d.branch : '') + (d.worktree ? ' (' + d.worktree + ')' : ''), 'success');
+      } catch (err) { toast('Could not bring the changes back: ' + err.message, 'error'); }
+      finally { if (btn) btn.classList.remove('busy'); }
+    }
+
     async function launchTerminal(mode, localId, resumeId, sessionMode, release) {
       const done = release || (() => {});
       if (!currentProject) { done(); return; }
@@ -7658,6 +7794,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
         // permissions.defaultMode rather than forcing 'default' over it.
         const chatBody = { project: currentProject };
         if (chatSkip) { chatBody.skipPermissions = true; chatBody.title = 'Chat (skip perms)'; }
+        // Runs on a PC, when one was picked in this cell's launcher: a chat, a
+        // terminal or an empty shell alike.
+        const pickedWhere = localId ? (chatWhereByLid[localId] || '') : '';
+        const where = pickedWhere && chatPlaces.some(p => p.where === pickedWhere) ? pickedWhere : '';
+        if (isChat && where) chatBody.where = where;
         // Resuming replays a prior transcript into a fresh CLI process
         // (claude --resume <id>), so it must be decided at spawn time.
         if (isChat && sessionMode) {
@@ -7675,6 +7816,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
             ? chatBody
             : Object.assign(
                 { project: currentProject, skipPermissions: skipPerms, shell: shellOnly },
+                where ? { where } : {},
                 // A shell-only cell runs no Claude, so a conversation id would
                 // mean nothing there.
                 (!shellOnly && sessionMode) ? { sessionMode, resumeId: resumeId || '' } : {})),
@@ -8289,6 +8431,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '<button class="term-head-btn term-close" data-action="term-close-pending" data-lid="' + d.localId + '" title="Remove">\\u00d7</button>';
         body.innerHTML = '<div class="term-launch">'
           + '<div class="icon">&gt;_</div>'
+          // Runs on: this server, or a PC that takes chats (filled in by
+          // fillRunsOn; hidden when there is none). At the very top: it is the
+          // first choice, and applies to Empty Shell, UI Mode and Terminal alike.
+          + '<div class="tl-where" data-lid="' + d.localId + '" hidden></div>'
           + '<button class="btn-shell" data-action="launch-terminal" data-mode="shell" data-lid="' + d.localId + '">Empty Shell</button>'
           + '<div class="term-agent-group">'
           + '<div class="term-agent-label">Claude</div>'
@@ -8312,6 +8458,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '</div>'
           + '</div>';
         peekShields(body);
+        fillRunsOn(body);
       } else if (d.type === 'parked') {
         el.dataset.tid = d.t.id;
         el.classList.add('parked-cell');
@@ -9109,6 +9256,33 @@ export function getWebappHtml(botUsername, appVersion = '') {
       else {
         if (!badge && titleEl) { badge = document.createElement('span'); titleEl.after(badge); }
         if (badge) { badge.className = 'term-agent-badge ' + want[0]; badge.textContent = want[1]; }
+      }
+      // A chat or a terminal on one of the owner's PCs: its name, "PC offline"
+      // while it is away, and a click brings its changes back (the title says
+      // where). A chat's sits before its "chat" tag, a terminal's after its title.
+      {
+        let pctag = el.querySelector('.term-pc-tag');
+        const pcAnchor = el.querySelector('.term-kind-tag') || el.querySelector('.term-head-spacer');
+        const pc = t.pc && t.where ? t.pc : null;
+        if (!pc) { if (pctag) pctag.remove(); }
+        else if (pcAnchor) {
+          if (!pctag) { pctag = document.createElement('button'); pctag.dataset.action = 'chat-pc-pull'; pcAnchor.before(pctag); }
+          pctag.dataset.tid = t.id;
+          pctag.className = 'term-pc-tag' + (pc.online ? '' : ' off') + (pctag.classList.contains('busy') ? ' busy' : '');
+          const label = (pc.name || 'PC') + (pc.online ? '' : ' \\u00b7 PC offline');
+          if (pctag.dataset.label !== label) { pctag.dataset.label = label; pctag.innerHTML = ic('hard-drive') + '<span>' + escHtml(label) + '</span>'; }
+          pctag.title = 'Runs on ' + (pc.name || 'a PC') + (pc.online ? '' : ' (offline: what you send waits for it)')
+            + '. Click: bring changes back' + (pc.branch ? ' (branch ' + pc.branch + (pc.worktree ? ' in ' + pc.worktree : '') + ')' : '') + '.';
+        }
+        // What the PC said about a terminal (chat.notice): in its bar. A chat
+        // shows it as a line in the conversation instead.
+        let pnote = el.querySelector('.term-pc-note');
+        const note = pc && t.kind !== 'ui' ? (t.notice || '') : '';
+        if (!note) { if (pnote) pnote.remove(); }
+        else if (pctag) {
+          if (!pnote) { pnote = document.createElement('span'); pnote.className = 'term-pc-note'; pctag.after(pnote); }
+          if (pnote.textContent !== note) { pnote.textContent = note; pnote.title = note; }
+        }
       }
       // Plan pill. Rebuilt in place rather than via headHtmlLive so a state
       // push does not wipe an in-progress rename or the armed close button.
@@ -10502,6 +10676,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
         if (typeof msg.type === 'string' && msg.type.indexOf('docker-') === 0 && window.CrundiDocker) {
           window.CrundiDocker.handleMessage(msg);
         }
+        if ((msg.type === 'workers' || (typeof msg.type === 'string' && msg.type.indexOf('worker-term-') === 0)) && window.CrundiWorkers) {
+          window.CrundiWorkers.handleMessage(msg);
+        }
+        // A PC came, went or changed its switches: the "Runs on" choice follows.
+        if (msg.type === 'workers') loadChatPlaces(true);
       };
 
       ws.onclose = () => {
@@ -10567,7 +10746,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
      * that is the control — this exists so they are not shown doors that open
      * onto a 403.
      */
-    const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'docker', 'homepool', 'info', 'settings', 'widgets', 'factories'];
+    const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'docker', 'homepool', 'workers', 'info', 'settings', 'widgets', 'factories'];
     const COLLAB_HIDDEN_WB = ['git', 'factory'];
 
     function applyRoleToUi() {
@@ -11366,7 +11545,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     // machine- or app-level. The
     // rest are meaningless without a project, so they stay hidden rather than
     // being shown and then erroring.
-    const GLOBAL_TABS = ['media', 'mindmap', 'widgets', 'docker', 'homepool', 'info', 'secrets', 'settings'];
+    const GLOBAL_TABS = ['media', 'mindmap', 'widgets', 'docker', 'homepool', 'workers', 'info', 'secrets', 'settings'];
 
     function syncTabScope() {
       // Global panels (and their top bar chips) exist with or without a
@@ -11409,6 +11588,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (currentTab === 'widgets' && tab !== 'widgets' && window.CrundiWidgets) window.CrundiWidgets.unmountTab();
       if (currentTab === 'docker' && tab !== 'docker' && dockerView) dockerView.hide();
       if (currentTab === 'homepool' && tab !== 'homepool' && homepoolView) homepoolView.hide();
+      if (currentTab === 'workers' && tab !== 'workers' && workersView) workersView.hide();
       if (currentTab === 'factories' && tab !== 'factories' && factoriesView) factoriesView.hide();
       currentTab = tab;
       $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -11417,6 +11597,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (tab === 'services') loadServices();
       if (tab === 'docker') loadDockerTab();
       if (tab === 'homepool') loadHomepoolTab();
+      if (tab === 'workers') loadWorkersTab();
       if (tab === 'factories') loadFactoriesTab();
       if (tab === 'browsers') loadBrowsers();
       if (tab === 'git') loadGitInfo();
@@ -14347,6 +14528,29 @@ export function getWebappHtml(botUsername, appVersion = '') {
       dockerView.show();
     }
 
+    // ─── Workers (app/vendor/crundi-workers.js, src/workers.js) ───
+    //
+    // The owner's PCs joined as workers: what each is, its switches, labels,
+    // and a terminal on it. Owner only (the routes refuse anyone else too).
+    let workersView = null;
+    function loadWorkersTab() {
+      if (!window.CrundiWorkers) { toast('The Workers view did not load. Reload the page.', 'error'); return; }
+      if (!workersView) {
+        workersView = window.CrundiWorkers.mount(document.getElementById('workers-panel'), {
+          apiFetch: apiFetch,
+          toast: toast,
+          icon: ic,
+          send: (m) => { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(m)); return true; } return false; },
+          Terminal: window.Terminal,
+          FitAddon: window.FitAddon,
+          termTheme: TERM_THEME,
+          termFont: TERM_FONT_FAMILY,
+          serverUrl: () => location.origin,
+        });
+      }
+      workersView.show();
+    }
+
     // ─── Homepool (app/vendor/crundi-homepool.js) ───
     //
     // The shared exit: networks, nodes, who may leave through which, and the
@@ -15731,6 +15935,18 @@ export function getWebappHtml(botUsername, appVersion = '') {
             + (vwCan() ? '<p id="voice-wake-hint" style="' + hintStyle + '">Train Hey Cru first: say it five times so it knows your voice.</p>'
               + '<div id="voice-wake-train"></div>' : '') : '')
           + '</div>' : '')
+          // The PC client only: this PC as a worker (app/main.js runs the
+          // bundled crundi-worker; src/workers.js on the server).
+          + (window.api && window.api.worker && userRole !== 'collaborator' ? '<div class="info-section"><h4>This PC as a worker</h4>'
+            + '<p style="' + hintStyle + ';margin-bottom:10px;">Lets this server use this PC for heavy work: builds, renders, and later whole chats. It shows in the Workers tab, with a terminal on this PC for you. Turn it off at any time.</p>'
+            + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+            + '<label style="' + labelStyle + ';margin:0;display:flex;gap:8px;align-items:center;cursor:pointer;"><input type="checkbox" id="pc-worker-on" data-action="pc-worker-toggle"> Use this PC as a worker</label>'
+            + '<span id="pc-worker-status" style="font-size:0.78rem;color:var(--text-muted);"></span></div>'
+            + '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;"><span style="' + labelStyle + ';margin:0;">Work folder</span>'
+            + '<input id="pc-worker-dir" style="flex:1;min-width:200px;font-family:var(--mono);font-size:0.78rem;padding:5px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);">'
+            + '<button data-action="pc-worker-dir" style="' + btnStyle + '">Save</button></div>'
+            + '<p style="' + hintStyle + ';margin-top:6px;">Where projects are cloned or copied for work on this PC.</p>'
+            + '</div>' : '')
           // Sign-in methods. At least one must stay on; the server refuses to
           // disable the last, so these toggles can fail and say why.
           + '<div class="info-section"><h4>Sign-in</h4>'
@@ -15887,6 +16103,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         panel.innerHTML = html;
         organizeSettings(panel);
         showVoiceWake();
+        showPcWorker();
         showVoiceServer();
         const pushHost = document.getElementById('phone-push');
         if (pushHost && window.CrundiPhone) window.CrundiPhone.renderPush(pushHost, { apiFetch, toast });
@@ -16415,6 +16632,13 @@ export function getWebappHtml(botUsername, appVersion = '') {
           });
           break;
         }
+        case 'pc-worker-toggle': pcWorkerToggle(!!(document.getElementById('pc-worker-on') || {}).checked); break;
+        case 'pc-worker-dir': {
+          const w = window.api && window.api.worker, v = ((document.getElementById('pc-worker-dir') || {}).value || '').trim();
+          if (!w || !v) break;
+          if (w.setDir) w.setDir(v).then((r) => { if (r && r.ok) toast('Saved', 'success'); else toast((r && r.error) || 'Could not save', 'error'); showPcWorker(); });
+          break;
+        }
         case 'voice-wake-toggle': {
           const on = !!(document.getElementById('voice-wake-on') || {}).checked;
           if (window.api && window.api.voiceWake) window.api.voiceWake.set(on).then(() => showVoiceWake());
@@ -16510,6 +16734,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
           e.stopPropagation();
           const view = chatViews.get(d.tid);
           if (view && view.togglePlan) view.togglePlan();
+          break;
+        }
+        case 'chat-pc-pull': {
+          e.stopPropagation();
+          if (d.tid) pullPcChat(d.tid, e.target.closest('.term-pc-tag'));
           break;
         }
         case 'term-font': if (d.tid) setTermFont(d.tid, parseInt(d.dir, 10) || 1); break;

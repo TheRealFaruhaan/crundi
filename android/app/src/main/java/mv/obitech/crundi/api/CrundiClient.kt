@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -81,6 +82,8 @@ class CrundiClient(val transport: Transport, scope: CoroutineScope = CoroutineSc
     val inbox = InboxApi(rpc)
     /** Homepool, the shared exit (capability "homepool"): Settings > Homepool. Owner only. */
     val homepool = HomepoolApi(rpc)
+    /** The owner's worker PCs (capability "workers"): Settings > Workers. Owner only. */
+    val workers = WorkersApi(rpc)
 
     /**
      * A chat, live: its whole conversation, then every change, as
@@ -113,6 +116,12 @@ class CrundiClient(val transport: Transport, scope: CoroutineScope = CoroutineSc
 
     /** A shell in a container: collect [DockerShell.events] to open it. */
     fun dockerShell(containerId: String, cols: Int = 80, rows: Int = 24) = DockerShell(socket, containerId, cols, rows)
+
+    /** A shell on a worker PC: collect [WorkerTerminal.events] to open it. */
+    fun workerTerminal(workerId: String, cols: Int = 80, rows: Int = 24) = WorkerTerminal(socket, workerId, cols, rows)
+
+    /** Something about the workers changed (the UI websocket's `workers` push, or the same event on the event stream). */
+    fun workerChanges(): Flow<Unit> = kotlinx.coroutines.flow.merge(workerChanges(socket), events.changes("workers").map { })
 
     /** Live server log lines. */
     fun serverLogs(): Flow<ServerLog> = serverLogs(socket)

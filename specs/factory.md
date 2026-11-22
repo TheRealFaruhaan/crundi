@@ -285,6 +285,16 @@ word), journaled as a `limits` event that overrides the factory's:
 - **pauseAt5h / pauseAtWeek** (50-100, default 100): pause when the window
   reaches it; resume by itself once the window has reset. Pausing holds new
   steps; whoever is mid-turn finishes.
+- **paceOnly** (default off) and **paceCeiling** (50-100, default 100): with
+  paceOnly on, reaching pauseAt pauses only when the run is ahead of pace:
+  the window's used % above the % of its time passed (from its reset time;
+  5 hours or 7 days). Behind pace it keeps going. At paceCeiling it always
+  pauses. With no reset time to judge by, it pauses as without paceOnly.
+  Resuming: after the recorded reset, with nothing over, as before; or, with
+  **paceResumeBehind** (1-50 points, default 0 = off) and a pause by the
+  limit, as soon as every window is under its line or, below the ceiling,
+  that many points behind pace. The gap between pausing (ahead) and resuming
+  (that far behind) keeps a run from pausing and resuming on every reading.
 - **maxParallel** (default 0, no limit): at most this many people working at
   once; the rest wait for a seat (`waitingForSeat`, shown as "Waiting its
   turn" in the working strip) and start as seats free.

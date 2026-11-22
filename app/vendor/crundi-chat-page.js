@@ -441,7 +441,10 @@
     $('cp-title').textContent = meta.title || 'Chat';
     document.title = (meta.title || 'Chat') + ' · Crundi';
     var word = STATE_WORDS[meta.state] || '';
-    $('cp-proj').textContent = meta.project + (word && meta.project ? ' · ' : '') + word;
+    // A chat on one of the owner's PCs says which, and when that PC is away.
+    var pc = meta.pc && meta.pc.name ? 'on ' + meta.pc.name + (meta.pc.online ? '' : ' · PC offline') : '';
+    $('cp-proj').textContent = [meta.project, pc, word].filter(Boolean).join(' · ');
+    $('cp-proj').classList.toggle('pc-off', !!(meta.pc && !meta.pc.online));
     $('cp-dot').className = meta.state || '';
     var m = meta.mark;
     if (m) {
@@ -488,6 +491,7 @@
       meta.project = s.project || '';
       meta.state = s.status === 'exited' ? '' : (s.agentState || '');
       meta.mark = s.mark || null;
+      meta.pc = s.where && s.pc ? s.pc : null;
       paintHead();
       return true;
     }).catch(function () { return false; });
@@ -574,7 +578,7 @@
           fb.hidden = false;
           fb.onclick = function () { openMain('/#factory-run=' + encodeURIComponent(runId)); };
         }
-        if (msg.session) { meta.state = msg.session.status === 'exited' ? '' : (msg.session.state || ''); if (msg.session.title && !meta.title) meta.title = msg.session.title; paintHead(); }
+        if (msg.session) { meta.state = msg.session.status === 'exited' ? '' : (msg.session.state || ''); if (msg.session.title && !meta.title) meta.title = msg.session.title; if (msg.session.where && msg.session.pc) meta.pc = msg.session.pc; paintHead(); }
       }
       if (msg.type === 'ui-event') {
         view.applyEvent(msg.event);
@@ -586,7 +590,8 @@
         if (ev.type === 'exit') { meta.state = ''; paintHead(); }
         // A new title arrives as a change to the session's details; the list
         // has the whole of it, long form included.
-        if (ev.type === 'meta') loadMeta();
+        if (ev.type === 'meta' && ev.pc) { meta.pc = ev.pc; paintHead(); }
+        else if (ev.type === 'meta') loadMeta();
       }
     };
     ws.onclose = function () {

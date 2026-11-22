@@ -15,6 +15,10 @@
 #   Crundi-Client-<version>-linux-x64.deb   desktop app for Ubuntu, client only
 #   ghcr.io/<owner>/crundi:<version>    Linux server image
 #   ghcr.io/<owner>/crundi-homepool-node:<version>   the Docker homepool node
+#   crundi-worker-<version>-<os>-<arch>[.exe|.tar.gz]  the worker on its own
+#     (tray app; and linux-x64-headless for servers)
+#   crundi-worker-<version>-<label>[.exe] + .sig  plain signed binaries for
+#     the worker's self-update (worker-sign)
 name: Release extras
 
 on:
@@ -56,6 +60,21 @@ jobs:
       # invisible to node --check and would ship a UI that dies at boot.
       - name: Check syntax
         run: npm run check
+
+      # The worker (worker/, Rust) goes inside the client: its "Use this PC
+      # as a worker" switch runs it (app/main.js). Tray build on Windows.
+      # Never stops the installer: without it the switch says the build has no
+      # worker program, and the standalone worker job still publishes it.
+      - uses: dtolnay/rust-toolchain@stable
+        continue-on-error: true
+      - name: Build the worker
+        continue-on-error: true
+        shell: bash
+        run: |
+          export CRUNDI_WORKER_VERSION=$(node -p "require('./package.json').version")
+          cargo build --release --manifest-path worker/Cargo.toml
+          mkdir -p build/worker
+          cp worker/target/release/crundi-worker.exe build/worker/
 
       - name: Build client installer
         run: npx electron-builder --win --config build/electron-builder-client.yml --publish never
@@ -280,6 +299,23 @@ jobs:
           build/linux-node/bin/node -e "require('node-pty'); console.log('node-pty loads')"
           test -s node_modules/cloudflared/bin/cloudflared
 
+      # The worker (worker/, Rust) goes inside both packages: the PC client's
+      # "Use this PC as a worker" switch runs it (app/main.js). The tray build
+      # needs GTK and an app-indicator library.
+      # Never stops the installer: without it the switch says the build has no
+      # worker program, and the standalone worker job still publishes it.
+      - uses: dtolnay/rust-toolchain@stable
+        continue-on-error: true
+      - name: Build the worker
+        continue-on-error: true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+          export CRUNDI_WORKER_VERSION=$(node -p "require('./package.json').version")
+          cargo build --release --manifest-path worker/Cargo.toml
+          mkdir -p build/worker
+          cp worker/target/release/crundi-worker build/worker/
+
       - name: Build the all-in-one package
         run: npx electron-builder --linux --publish never
       - name: Build the client package
@@ -425,6 +461,131 @@ jobs:
             ghcr.io/${{ env.OWNER }}/crundi-homepool-node:${{ contains(env.VERSION, '-') && 'dev' || 'latest' }}
           cache-from: type=gha,scope=homepool-node
           cache-to: type=gha,mode=max,scope=homepool-node
+
+  worker:
+    # The worker on its own (specs/workers-protocol.md): the tray app for PCs
+    # without the Crundi PC client, and a headless build for Linux servers.
+    # Unsigned, like the installers.
+    name: Worker (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, label: windows-x64, bin: crundi-worker.exe }
+          - { os: ubuntu-latest, label: linux-x64, bin: crundi-worker }
+          - { os: macos-latest, label: macos-arm64, bin: crundi-worker }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux packages for the tray
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+      - name: Test
+        shell: bash
+        run: cargo test --manifest-path worker/Cargo.toml --no-default-features
+      - name: Build
+        shell: bash
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          export CRUNDI_WORKER_VERSION="$VER"
+          cargo build --release --manifest-path worker/Cargo.toml
+          mkdir -p out
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp worker/target/release/crundi-worker.exe "out/crundi-worker-${VER}-${{ matrix.label }}.exe"
+          else
+            tar -C worker/target/release -czf "out/crundi-worker-${VER}-${{ matrix.label }}.tar.gz" crundi-worker
+          fi
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cargo build --release --manifest-path worker/Cargo.toml --no-default-features --target-dir worker/target-headless
+            tar -C worker/target-headless/release -czf "out/crundi-worker-${VER}-linux-x64-headless.tar.gz" crundi-worker
+          fi
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: worker-${{ matrix.label }}
+          path: out/*
+          if-no-files-found: error
+      # Attached by this job itself, so a worker build that fails cannot hold
+      # back the installers the attach job uploads.
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
+          for attempt in $(seq 1 60); do
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
+            [ "$attempt" -eq 60 ] && { echo "The release $TAG never appeared."; exit 1; }
+            sleep 10
+          done
+          node scripts/release-upload.mjs --tag "$TAG" --repo "$GITHUB_REPOSITORY" --upload out/*
+
+  worker-sign:
+    # Every standalone worker binary, signed with the release key (ed25519,
+    # secret WORKER_SIGNING_KEY), as a plain file plus <file>.sig: what a
+    # worker's self-update downloads and checks against the public key built
+    # into it. Linux only: its OpenSSL signs ed25519.
+    name: Sign the worker binaries
+    needs: [worker]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/release-upload.mjs
+            package.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: worker-*
+          path: in
+          merge-multiple: true
+      - name: Plain binaries and signatures
+        env:
+          WORKER_SIGNING_KEY: ${{ secrets.WORKER_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "$WORKER_SIGNING_KEY" ] || { echo "No WORKER_SIGNING_KEY secret"; exit 1; }
+          VER=$(node -p "require('./package.json').version")
+          umask 077; printf '%s\n' "$WORKER_SIGNING_KEY" > /tmp/key.pem
+          mkdir -p out
+          for label in linux-x64 linux-x64-headless macos-arm64; do
+            f="in/crundi-worker-${VER}-${label}.tar.gz"
+            [ -f "$f" ] || { echo "missing $f"; continue; }
+            mkdir -p "x/$label" && tar -xzf "$f" -C "x/$label"
+            cp "x/$label/crundi-worker" "out/crundi-worker-${VER}-${label}"
+          done
+          [ -f "in/crundi-worker-${VER}-windows-x64.exe" ] && cp "in/crundi-worker-${VER}-windows-x64.exe" out/
+          for b in out/*; do
+            openssl pkeyutl -sign -inkey /tmp/key.pem -rawin -in "$b" -out "$b.sig"
+            openssl pkeyutl -verify -inkey /tmp/key.pem -rawin -in "$b" -sigfile "$b.sig"
+          done
+          rm -f /tmp/key.pem
+          ls -la out
+      - name: Attach
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
+          for attempt in $(seq 1 60); do
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
+            [ "$attempt" -eq 60 ] && { echo "The release $TAG never appeared."; exit 1; }
+            sleep 10
+          done
+          # The .exe already went up from its own job; its signature goes now.
+          node scripts/release-upload.mjs --tag "$TAG" --repo "$GITHUB_REPOSITORY" --upload $(ls out/* | grep -v 'windows-x64.exe$')
 
   attach:
     name: Attach to the release

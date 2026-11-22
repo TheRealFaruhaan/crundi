@@ -70,6 +70,21 @@ jobs:
       - name: Check syntax (server + embedded browser JS)
         run: npm run check
 
+      # The worker (worker/, Rust) goes inside the PC app too: its "Use this PC
+      # as a worker" switch runs it (app/main.js). Tray build on Windows.
+      # Never stops the installer: without it the switch says the build has no
+      # worker program, and the standalone worker job still publishes it.
+      - uses: dtolnay/rust-toolchain@stable
+        continue-on-error: true
+      - name: Build the worker
+        continue-on-error: true
+        shell: bash
+        run: |
+          export CRUNDI_WORKER_VERSION=$(node -p "require('./package.json').version")
+          cargo build --release --manifest-path worker/Cargo.toml
+          mkdir -p build/worker
+          cp worker/target/release/crundi-worker.exe build/worker/
+
       - name: Build & publish (unsigned — no cert on the runner)
         run: npx electron-builder --win --publish always
         env:

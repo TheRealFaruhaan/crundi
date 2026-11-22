@@ -28,6 +28,8 @@ class ChatsApi internal constructor(private val rpc: Rpc) {
         "project" to o.project, "title" to o.title, "model" to o.model, "effort" to o.effort,
         "permissionMode" to o.permissionMode, "skipPermissions" to o.skipPermissions,
         "sessionMode" to o.sessionMode, "resumeId" to o.resumeId,
+        // Only when a PC was picked: an older server never sees the field.
+        "where" to o.where?.takeIf { it.isNotEmpty() },
     )), null)
 
     /** Is the conversation a new chat would continue heavy (big or old)? Offer "start fresh" if so. */
@@ -139,11 +141,13 @@ class TerminalsApi internal constructor(private val rpc: Rpc) {
     /**
      * Open a terminal. [shell] true for a plain shell, otherwise Claude
      * ([sessionMode] continue/new/resume, [model], [skipPermissions]).
+     * [where]: null for this server, "worker:<id>" for a PC (a shell there runs in the project's folder on that PC).
      */
-    suspend fun create(project: String, shell: Boolean = false, cols: Int = 80, rows: Int = 30, title: String? = null, command: String? = null, sessionMode: String? = null, resumeId: String? = null, model: String? = null, skipPermissions: Boolean? = null): Created =
+    suspend fun create(project: String, shell: Boolean = false, cols: Int = 80, rows: Int = 30, title: String? = null, command: String? = null, sessionMode: String? = null, resumeId: String? = null, model: String? = null, skipPermissions: Boolean? = null, where: String? = null): Created =
         rpc.read(rpc.post("/api/terminals/create", mapOf(
             "project" to project, "shell" to shell, "cols" to cols, "rows" to rows, "title" to title, "command" to command,
             "sessionMode" to sessionMode, "resumeId" to resumeId, "model" to model, "skipPermissions" to skipPermissions,
+            "where" to where?.takeIf { it.isNotEmpty() },
         )), null)
 
     suspend fun close(id: String) { rpc.post(at(id, "close")) }

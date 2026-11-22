@@ -109,7 +109,7 @@ check('policy opens delete/tunnel routes and the delete tool (ownership enforced
 
 {
   const fw = readFileSync(join(here, '..', 'src', 'forwards.js'), 'utf8');
-  const stdio = readFileSync(join(here, '..', 'src', 'mcp-stdio.js'), 'utf8');
+  const stdio = readFileSync(join(here, '..', 'src', 'mcp-stdio.js'), 'utf8') + readFileSync(join(here, '..', 'src', 'mcp-tools.js'), 'utf8');
   const html = readFileSync(join(here, '..', 'src', 'webapp-html.js'), 'utf8');
   check('forwards record their project', /project: String\(project \|\| ''\)\.toLowerCase\(\)\.trim\(\),/.test(fw) && /export function setProject\(host, project\)/.test(fw));
   check('owner can assign a forward\'s project (real projects only)',
@@ -127,7 +127,7 @@ check('policy opens delete/tunnel routes and the delete tool (ownership enforced
 
 {
   const ui = readFileSync(join(here, '..', 'src', 'claude-ui.js'), 'utf8');
-  const stdio = readFileSync(join(here, '..', 'src', 'mcp-stdio.js'), 'utf8');
+  const stdio = readFileSync(join(here, '..', 'src', 'mcp-stdio.js'), 'utf8') + readFileSync(join(here, '..', 'src', 'mcp-tools.js'), 'utf8');
   const html = readFileSync(join(here, '..', 'src', 'webapp-html.js'), 'utf8');
   const prompt = readFileSync(join(here, '..', 'src', 'system-prompt.js'), 'utf8');
   check('a collaborator chat can ask the owner to run a command (an approval, nothing runs)',
@@ -145,7 +145,7 @@ check('policy opens delete/tunnel routes and the delete tool (ownership enforced
     && /body\.tool === 'request_owner_command' && !mcpCollabKey\)/.test(web));
   check('each collaborator chat tells its tool bridge which chat it is',
     /CRUNDI_CHAT_ID: collabChatId,/.test(ui) && /`\$\{collaborator\.id\}-\$\{collabChatId\}\.json`/.test(ui)
-    && /process\.env\.CRUNDI_CHAT_ID\)\s*\{?\s*args\.sessionId = process\.env\.CRUNDI_CHAT_ID/.test(stdio)
+    && /(?:process\.)?env\.CRUNDI_CHAT_ID\)\s*\{?\s*args\.sessionId = (?:process\.)?env\.CRUNDI_CHAT_ID/.test(stdio)
     && /function collaboratorSessionFor\(key, hint, project\)/.test(ui));
   check('the inbox offers Run / Decline for a command',
     /it\.kind === 'command'\) \{[\s\S]{0,800}>Run<\/button>[\s\S]{0,200}>Decline<\/button>/.test(html));

@@ -238,7 +238,7 @@ function rig({ phoneOk = true, pushOk = true, channelsOn = ['telegram'] } = {}) 
 
 // ─── Wiring ───
 {
-  const stdio = readFileSync(join(root, 'src/mcp-stdio.js'), 'utf8');
+  const stdio = readFileSync(join(root, 'src/mcp-stdio.js'), 'utf8') + readFileSync(join(root, 'src/mcp-tools.js'), 'utf8');
   const web = readFileSync(join(root, 'src/webapp.js'), 'utf8');
   const prompt = readFileSync(join(root, 'src/system-prompt.js'), 'utf8');
   const policy = readFileSync(join(root, 'src/access-policy.js'), 'utf8');

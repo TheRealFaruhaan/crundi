@@ -47,7 +47,7 @@ import { randomBytes, timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import * as Engine from './factory-engine.js';
 import * as Git from './factory-git.js';
-import { validateFactory, normalizeFactory, normalizeLimits, MANAGER_ID, flowGraph, reachable } from './factory-model.js';
+import { validateFactory, normalizeFactory, normalizeLimits, usageOver, usageResumable, windowTimePct, MANAGER_ID, flowGraph, reachable } from './factory-model.js';
 import { reduce, replay, asksOf, timeLeft, isHeld, UNFINISHED as UNFINISHED_SET, JOURNAL_VERSION } from './factory-journal.js';
 import { systemPromptFor, stepMessage, nudgeMessage, cancelMessage, recoveryOverview } from './factory-prompts.js';
 import { hardDeny, ruleMatches, checkRule, batchMessage, denyMessage, DENY_RULES, ALLOW_RULES, GATEKEEPER_ID, gatekeeperPrompt, startRules, scopedRules, rulesFor } from './factory-permissions.js';
@@ -83,15 +83,21 @@ const SECRET_ASK_MS = 10 * 60 * 1000;
  *        checks a secret's PIN (secrets-store.decryptSecret); the value it
  *        returns is dropped at once
  * @param {(id:string) => {id:string, name:string}|null} [o.secretMeta]  a secret's name
+ * @param {object} [o.workersApi]   worker PCs (workers-protocol.md, phase 5); absent: no PCs,
+ *        everyone runs on this server. { resolve(nameOrId) -> {id, name, online}|null,
+ *        isOnline(id) -> bool, onChange(cb(workerId, online)) -> unsubscribe,
+ *        pullChat(chatId, { base, intoWorktree, branch }) -> Promise<{ ok, head?, error? }> }
  */
 export function createFactoryRunner({
   dataDir, agents, getProject, getFactory, git = Git, listSkills = () => [], services = null,
   notify = () => {}, onChange = () => {},
   unlockSecret = null, secretMeta = () => null,
+  workersApi = null,
   secretAskMs = SECRET_ASK_MS,   // how long a secret request waits on the Manager or the Gatekeeper
   settleMs = SETTLE_MS, setupTimeoutMs = SETUP_TIMEOUT_MS, permissionBatchMs = PERMISSION_BATCH_MS,
   autoRecoverDelays = AUTO_RECOVER_DELAYS,
   tickScale = 1,   // tests shrink the ticker's minutes
+  minuteMs = 60_000,   // tests shrink workerOfflineMinutes' minutes
   wokeGraceMs = WOKE_GRACE_MS,   // tests shorten it
   now = () => new Date().toISOString(),
 }) {
@@ -109,6 +115,16 @@ export function createFactoryRunner({
   const vault = createSecretVault();
 
   if (typeof agents.onPermission === 'function') agents.onPermission((req) => onPermissionRequest(req));
+
+  /** A worker PC going away or coming back holds or resumes the steps on it. */
+  let unsubscribeWorkers = null;
+  if (workersApi && typeof workersApi.onChange === 'function') {
+    try {
+      unsubscribeWorkers = workersApi.onChange((workerId, online) => {
+        onWorkerChange(String(workerId || ''), !!online).catch(() => { /* best effort */ });
+      });
+    } catch { unsubscribeWorkers = null; }
+  }
 
   /**
    * Everything the runner says into a chat goes through here, so a turn that
@@ -252,6 +268,7 @@ export function createFactoryRunner({
           id: t.id, nodeId: t.nodeId, label: t.delegate ? 'Job from the Manager' : n?.label || n?.type || '', status: t.status, employeeId: who || '', employee: roster.get(who)?.name || '', ws: t.ws,
           ...(t.delegate ? { job: t.delegate.task } : {}),
           ...(who && (t.status === 'work' || t.status === 'answer') && L.permissions.some(p => p.employeeId === who) ? { blocked: true } : {}),
+          ...(who && L.employees[who]?.workerHeld && L.employees[who].busy === t.id ? { waitingForPc: L.employees[who].workerHeld.name } : {}),
           ...(wp ? { wait: { kind: wp.kind, what: n?.wait?.what || '', startedAt: wp.startedAt, deadline: wp.deadline, timeoutAt: wp.timeoutAt, tries: wl?.tries || 0, last: (wl?.last || '').slice(-300), ...(wp.key ? { signalPath: `/api/factory-hook/wait/${s.id}/${t.id}?key=${wp.key}` } : {}) } } : {}),
         };
       }),
@@ -259,9 +276,13 @@ export function createFactoryRunner({
         const e = L.employees[x.id] || {};
         let activity = null;
         if (e.chatId && agents.activity) { try { activity = agents.activity(e.chatId); } catch { activity = null; } }
-        return [x.id, { chatId: e.chatId || '', busy: e.busy || null, queued: (e.queue || []).length, retired: !!r.retired[x.id], name: x.name, ...(e.held ? { held: true } : {}), ...(activity ? { activity } : {}) }];
+        return [x.id, { chatId: e.chatId || '', busy: e.busy || null, queued: (e.queue || []).length, retired: !!r.retired[x.id], name: x.name, ...(e.held || e.workerHeld ? { held: true } : {}), ...(e.workerHeld ? { waitingForPc: e.workerHeld.name } : {}), ...(e.chatId && e.pc ? { pc: e.pc.name } : {}), ...(activity ? { activity } : {}) }];
       })),
       liveSessions: Object.values(L.employees).filter(e => e.chatId).length,
+      // Who runs on a worker PC, and whether that PC is online now.
+      onPcs: onPcsOf(entry),
+      // PCs this run waits for: since when, and whether past workerOfflineMinutes ("Move to this server").
+      pcsAway: pcsAwayOf(entry),
       usage: usageOf(r),
       limits: limitsOf(entry),
       waitingForSeat: entry.live.seats.map(x => ({ tokenId: x.ef.tokenId, employeeId: x.ef.employeeId, employee: s.snapshot.roster.find(p => p.id === x.ef.employeeId)?.name || x.ef.employeeId })),
@@ -493,7 +514,290 @@ export function createFactoryRunner({
       tools: { allow: [], deny: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'] }, skills: [] };
   }
 
-  async function ensureSession(entry, employeeId, { fresh = false, reuseId = '' } = {}) {
+  // ─── Steps on a worker PC (workers-protocol.md, phase 5) ───
+
+  const pcOnline = (id) => { try { return !!workersApi.isOnline(id); } catch { return false; } };
+  const pcName = (id) => { let w = null; try { w = workersApi?.resolve(id); } catch { w = null; } return w?.name || id; };
+  const nameOf = (entry, employeeId) => st(entry).snapshot.roster.find(r => r.id === employeeId)?.name || employeeId;
+
+  /**
+   * Where a person's step runs: the step node's runsOn, else the person's.
+   * null: this server (no PCs, or nothing set). { unknown, want }: a PC this
+   * server does not know (it runs here instead). Else { id, name, online }.
+   */
+  function pcFor(entry, employeeId, nodeId = '') {
+    if (!workersApi || employeeId === GATEKEEPER_ID) return null;
+    // Moved to this server after its PC stayed away: here for the rest of the run.
+    if ((entry.live.moved && entry.live.moved.has(employeeId))
+      || st(entry).history.some(h => h.type === 'worker-moved' && (h.employees || []).includes(nameOf(entry, employeeId)))) return null;
+    const f = st(entry).snapshot;
+    const node = nodeId ? f.nodes.find(n => n.id === nodeId) : employeeId === MANAGER_ID ? f.nodes.find(n => n.type === 'manager') : null;
+    // The node's own setting counts only on that person's own step (a job
+    // the Manager hands out sits on the Manager's node).
+    const own = node && ((node.type === 'employee' && node.employeeId === employeeId) || (node.type === 'manager' && employeeId === MANAGER_ID)) ? node.runsOn : '';
+    const want = String(own || f.roster.find(x => x.id === employeeId)?.runsOn || '').trim();
+    if (!want) return null;
+    let w = null;
+    try { w = workersApi.resolve(want); } catch { w = null; }
+    if (!w || !w.id) return { unknown: true, want };
+    return { id: String(w.id), name: w.name || want, online: pcOnline(String(w.id)) };
+  }
+
+  /** Who runs on a PC (by person, and steps that name their own), for the summary and factory_status. */
+  function onPcsOf(entry) {
+    if (!workersApi) return [];
+    const f = st(entry).snapshot, out = [], seen = new Set();
+    const add = (employeeId, pc, step = '') => {
+      if (!pc || pc.unknown) return;
+      const k = `${employeeId}|${pc.id}|${step}`;
+      if (seen.has(k)) return;
+      seen.add(k);
+      const e = entry.live.employees[employeeId];
+      out.push({ employee: nameOf(entry, employeeId), employeeId, worker: pc.name, workerId: pc.id, online: pc.online, ...(step ? { step } : {}), ...(e?.workerHeld?.worker === pc.id ? { held: true } : {}) });
+    };
+    for (const r of f.roster) {
+      const e = entry.live.employees[r.id];
+      if (e?.chatId && e.pc) add(r.id, { ...e.pc, online: pcOnline(e.pc.id) });
+      add(r.id, pcFor(entry, r.id));
+    }
+    for (const n of f.nodes) if (n.type === 'employee' && n.runsOn) add(n.employeeId, pcFor(entry, n.employeeId, n.id), n.label || n.employeeId);
+    return out;
+  }
+
+  /** The commit a folder is at ('' if it cannot be read). */
+  async function headOf(path) {
+    try { const h = await git.git(['rev-parse', 'HEAD'], path); return h.ok ? h.stdout.trim() : ''; } catch { return ''; }
+  }
+
+  /**
+   * Bring a PC chat's work into the server's worktree for a workspace: the
+   * PC's branch fetched onto the workspace's branch, its uncommitted work
+   * applied. The caller commits it.
+   */
+  async function bringBack(entry, chatId, wsId, base) {
+    const w = rr(entry).ws[wsId] || rr(entry).ws.main || {};
+    const intoWorktree = w.path || rr(entry).worktree;
+    const branch = w.branch || rr(entry).branch;
+    try {
+      const r = await workersApi.pullChat(chatId, { base: base || rr(entry).baseCommit || '', intoWorktree, branch });
+      return r && r.ok ? r : { ok: false, error: (r && r.error) || 'the PC did not answer' };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  }
+
+  /** A step whose PC is offline when it should start: it waits, holding no seat. */
+  function holdForPc(entry, emp, ef, pc, recovery) {
+    emp.busy = ef.tokenId;
+    emp.nudged = false;
+    emp.workerHeld = { worker: pc.id, name: pc.name, pending: true, ef, recovery, since: now() };
+    entry.live.seats = entry.live.seats.filter(x => x.ef.tokenId !== ef.tokenId);
+    if (ef.employeeId === MANAGER_ID) pauseForPc(entry, pc);
+    armPcAway(entry, pc.id);
+    writeCache(entry);
+  }
+
+  // ─── A PC away too long (settings.workerOfflineMinutes) ───
+
+  /** How long a PC holding steps may be away before the person is told (0: wait forever). */
+  function pcAwayMs(entry) {
+    const n = Number(st(entry).snapshot.settings.workerOfflineMinutes);
+    return (Number.isFinite(n) && n >= 0 ? n : 30) * minuteMs;
+  }
+  /** A PC is away holding steps of this run: its clock starts (once). */
+  function armPcAway(entry, workerId) {
+    if (!workerId) return;
+    const A = entry.live.pcAway || (entry.live.pcAway = {});
+    if (A[workerId]) return;
+    A[workerId] = { since: now(), overdue: false };
+    const ms = pcAwayMs(entry);
+    if (ms <= 0) return;   // 0: wait for it however long
+    entry.timers['pcAway:' + workerId] = setTimeout(() => { pcOverdue(entry, workerId).catch(() => { /* best effort */ }); }, Math.min(ms, 2 ** 31 - 1));
+    entry.timers['pcAway:' + workerId].unref?.();
+  }
+  function clearPcAway(entry, workerId) {
+    clearTimeout(entry.timers['pcAway:' + workerId]);
+    delete entry.timers['pcAway:' + workerId];
+    if (entry.live.pcAway) delete entry.live.pcAway[workerId];
+  }
+  /** Who waits for a PC (held on it), by employee id. */
+  const heldOn = (entry, workerId) => Object.entries(entry.live.employees).filter(([, e]) => e.workerHeld && (!workerId || e.workerHeld.worker === workerId)).map(([id]) => id);
+  /** The PCs this run waits for, for the summary (and the Details' "Move to this server"). */
+  function pcsAwayOf(entry) {
+    return Object.entries(entry.live.pcAway || {}).map(([workerId, a]) => {
+      const who = heldOn(entry, workerId);
+      return who.length ? { workerId, worker: pcName(workerId), since: a.since, minutes: Math.round(pcAwayMs(entry) / minuteMs), overdue: !!a.overdue, employees: who.map(id => nameOf(entry, id)) } : null;
+    }).filter(Boolean);
+  }
+  /** The PC has been away that long: the person is told, and may move its steps here. */
+  function pcOverdue(entry, workerId) {
+    return locked(entry, async () => {
+      const a = entry.live.pcAway && entry.live.pcAway[workerId];
+      if (!a || !UNFINISHED.has(st(entry).status) || st(entry).status === 'crashed') return;
+      if (pcOnline(workerId)) { clearPcAway(entry, workerId); writeCache(entry); return; }
+      const who = heldOn(entry, workerId);
+      if (!who.length) { clearPcAway(entry, workerId); writeCache(entry); return; }
+      a.overdue = true;
+      const name = pcName(workerId);
+      const mins = Math.round(pcAwayMs(entry) / minuteMs);
+      commit(entry, { type: 'worker-away', worker: workerId, name, minutes: mins, employees: who.map(id => nameOf(entry, id)) });
+      notify('worker-away', summary(entry), `Factory "${st(entry).snapshot.name}": the PC ${name} has been offline for ${mins} minute${mins === 1 ? '' : 's'}; ${who.map(id => nameOf(entry, id)).join(', ')} wait${who.length === 1 ? 's' : ''} for it. Move ${who.length === 1 ? 'that step' : 'those steps'} to this server from the run's Details ("Move to this server"), or let it wait.`);
+    });
+  }
+
+  /**
+   * Move the steps a PC holds to this server ("Move to this server"): their
+   * chats there are given up (what they did since their last handoff stays on
+   * the PC), and each step starts again here, from the run's worktree, with a
+   * recovery prompt. Those people stay on this server for the rest of the run.
+   * workerId '' : every PC this run waits for.
+   */
+  async function moveToServer(runId, { worker: want = '' } = {}) {
+    const entry = runs.get(runId);
+    if (!entry) return { ok: false, error: 'Run not found.' };
+    if (!workersApi) return { ok: false, error: 'This run has no steps on a PC.' };
+    let workerId = String(want || '');
+    if (workerId) { let w = null; try { w = workersApi.resolve(workerId); } catch { w = null; } if (w && w.id) workerId = String(w.id); }
+    let resumeFor = '';
+    const r = await locked(entry, async () => {
+      if (!UNFINISHED.has(st(entry).status) || st(entry).status === 'crashed') return { ok: false, error: `The run is ${st(entry).status}.` };
+      const ids = new Set(heldOn(entry, workerId));
+      // The Manager on that PC, away with the run paused for it, counts too.
+      const m = entry.live.employees[MANAGER_ID];
+      const p = rr(entry).paused;
+      if (m && m.where && (!workerId || m.where === workerId) && !pcOnline(m.where) && p && p.by === 'worker') ids.add(MANAGER_ID);
+      if (!ids.size) return { ok: false, error: workerId ? `Nothing in this run waits for ${pcName(workerId)}.` : 'Nothing in this run waits for a PC.' };
+      const pcs = new Set();
+      const moved = entry.live.moved || (entry.live.moved = new Set());
+      const starts = [];
+      for (const eid of ids) {
+        const emp = entry.live.employees[eid];
+        const pcId = emp.workerHeld?.worker || emp.where;
+        if (pcId) pcs.add(pcId);
+        const ef = emp.workerHeld?.ef || (emp.busy ? activationFor(entry, emp.busy) : null);
+        const recovery = emp.workerHeld?.pending ? emp.workerHeld.recovery : null;
+        moved.add(eid);
+        if (emp.chatId) {
+          const old = emp.chatId;
+          unwatch(entry, old); chats.delete(old); emp.chatId = '';
+          try { await agents.close(old); } catch { /* the PC is away */ }
+        }
+        emp.workerHeld = null; emp.where = ''; emp.pc = null; emp.pcChat = ''; emp.busy = null; emp.nudged = false;
+        if (ef && activationFor(entry, ef.tokenId)) starts.push({ eid, emp, ef, recovery });
+      }
+      const names = [...pcs].map(pcName);
+      commit(entry, { type: 'worker-moved', worker: workerId || [...pcs].join(','), name: names.join(', '), employees: [...ids].map(id => nameOf(entry, id)) });
+      for (const id of pcs) clearPcAway(entry, id);
+      const why = `the PC you ran on (${names.join(', ') || 'a PC'}) stayed offline, so your step moved to the Crundi server. What you did there since your last handoff did not come back; the run's worktree has everything handed off so far`;
+      if (ids.has(MANAGER_ID) && p && p.by === 'worker') {
+        // The run was paused for the Manager's PC: resume starts everyone again.
+        resumeFor = `the PC the Manager ran on (${names.join(', ')}) stayed offline, so the Manager moved to this server`;
+        const mgr = entry.live.employees[MANAGER_ID];
+        if (!mgr.chatId) { const sres = await ensureSession(entry, MANAGER_ID, { pc: null }); if (!sres.ok) return { ok: false, error: `Could not start the Manager here: ${sres.error}` }; }
+        return { ok: true };
+      }
+      for (const x of starts) {
+        if (isHeld(entry.rec)) continue;   // resume() starts it
+        await startStep(entry, x.emp, x.ef, { recovery: x.recovery || await recoveryFor(entry, x.eid, x.ef, why, '') });
+      }
+      await drain(entry);
+      return { ok: true };
+    });
+    if (!r.ok) return r;
+    if (resumeFor) await resume(runId, { reason: resumeFor });
+    return { ok: true, run: summary(entry) };
+  }
+
+  /** The Manager's PC is away: the whole run pauses until it is back. */
+  function pauseForPc(entry, pc) {
+    if (!['running', 'waiting'].includes(st(entry).status) || rr(entry).paused) return;
+    commit(entry, { type: 'pause', by: 'worker', worker: pc.id, reason: `the PC the Manager runs on (${pc.name}) is offline` });
+    clearClock(entry);
+    notify('paused', summary(entry), `Factory "${st(entry).snapshot.name}" paused: the PC its Manager runs on (${pc.name}) is offline. It carries on when the PC is back.`);
+  }
+
+  async function onWorkerChange(workerId, online) {
+    if (!workerId) return;
+    for (const entry of [...runs.values()]) {
+      if (!UNFINISHED.has(st(entry).status) || st(entry).status === 'crashed') continue;
+      if (online) await workerBack(entry, workerId);
+      else await workerGone(entry, workerId);
+    }
+  }
+
+  /**
+   * A PC went offline: the steps on it are held (seats released, never
+   * nudged or escalated), the rest of the run carries on. The Manager on it
+   * pauses the run. Its chats may still be working there; they are told to
+   * carry on (or restarted with a recovery prompt) when it is back.
+   */
+  function workerGone(entry, workerId) {
+    return locked(entry, async () => {
+      if (!UNFINISHED.has(st(entry).status) || st(entry).status === 'crashed') return;
+      const held = [];
+      let manager = false;
+      for (const [eid, emp] of Object.entries(entry.live.employees)) {
+        if (eid === GATEKEEPER_ID || emp.where !== workerId || emp.workerHeld) continue;
+        if (eid === MANAGER_ID) {
+          if (!emp.chatId) continue;
+          manager = true;
+        } else if (!emp.busy) continue;
+        emp.workerHeld = { worker: workerId, name: pcName(workerId), pending: false, since: now() };
+        held.push(eid);
+      }
+      if (!held.length) return;
+      const name = pcName(workerId);
+      const names = held.map(id => nameOf(entry, id));
+      commit(entry, { type: 'worker-offline', worker: workerId, name, employees: names });
+      armPcAway(entry, workerId);
+      if (manager) pauseForPc(entry, { id: workerId, name });
+      else notify('worker-offline', summary(entry), `Factory "${st(entry).snapshot.name}": the PC ${name} went offline. ${names.join(', ')} wait${names.length === 1 ? 's' : ''} for it; the rest of the run carries on.`);
+      await releaseSeats(entry);
+    });
+  }
+
+  /** A PC is back: its held steps carry on (recovery prompt), and a run its Manager's absence paused resumes. */
+  async function workerBack(entry, workerId) {
+    const name = pcName(workerId);
+    const why = `the PC you run on (${name}) went offline for a while and is back now`;
+    let resumeRun = false;
+    await locked(entry, async () => {
+      if (!UNFINISHED.has(st(entry).status) || st(entry).status === 'crashed') return;
+      clearPcAway(entry, workerId);
+      const back = Object.entries(entry.live.employees).filter(([, e]) => e.workerHeld?.worker === workerId);
+      const p = rr(entry).paused;
+      resumeRun = !!(p && p.by === 'worker' && p.worker === workerId);
+      if (!back.length && !resumeRun) return;
+      commit(entry, { type: 'worker-online', worker: workerId, name, employees: back.map(([id]) => nameOf(entry, id)) });
+      for (const [eid, emp] of back) {
+        const wh = emp.workerHeld;
+        emp.workerHeld = null;
+        const ef = wh.ef || (emp.busy ? activationFor(entry, emp.busy) : null);
+        if (!ef || !activationFor(entry, ef.tokenId)) { if (!emp.busy || !ef || emp.busy === ef.tokenId) emp.busy = null; continue; }
+        const alive = !!(emp.chatId && agents.isAlive(emp.chatId));
+        if (wh.pending || !alive) {
+          // Its chat ended while away: what it did there comes back first,
+          // then a new chat carries on from it (--resume on the PC).
+          if (!wh.pending && emp.pcChat) {
+            const got = await bringBack(entry, emp.pcChat, ef.ws, emp.pcBase);
+            if (got.ok) await git.commitAll(wsPath(entry, ef.ws), `factory: work brought back from ${name}`, excl(entry));
+            else entry.live.error = `Could not bring back ${nameOf(entry, eid)}'s work from ${name}: ${got.error}`;
+          }
+          emp.busy = null;
+          if (isHeld(entry.rec)) continue;   // resume() starts it
+          await startStep(entry, emp, ef, { recovery: wh.pending ? wh.recovery : await recoveryFor(entry, eid, ef, why, '') });
+          continue;
+        }
+        if (isHeld(entry.rec)) { if (eid !== MANAGER_ID) emp.pauseHeld = true; continue; }   // resume() tells them
+        if (agents.state(emp.chatId) === 'idle') await startStep(entry, emp, ef, { recovery: await recoveryFor(entry, eid, ef, why, '') });
+        else sendTo(emp.chatId, `[Factory] ${why[0].toUpperCase() + why.slice(1)}. Carry on with your step.`);
+      }
+      if (!resumeRun) await drain(entry);
+    });
+    if (resumeRun) await resume(st(entry).id, { reason: `the PC the Manager runs on (${name}) went offline; it is back now` });
+  }
+
+  async function ensureSession(entry, employeeId, { fresh = false, reuseId = '', pc, cwd = '', step = '', relaunch = false, newChat = false } = {}) {
     const emp = empOf(entry, employeeId);
     const f = st(entry).snapshot;
     const isManager = employeeId === MANAGER_ID;
@@ -501,16 +805,23 @@ export function createFactoryRunner({
     // Bypass is a launch flag: a session started under the other team mode is
     // relaunched on its conversation the next time it is needed.
     const wantSkip = isManager ? rr(entry).managerMode === 'bypass' : !isGate && rr(entry).teamMode === 'bypass';
-    if (emp.chatId && !fresh && !reuseId && agents.isAlive(emp.chatId) && (isManager || emp.skip === wantSkip)) return { ok: true, chatId: emp.chatId };
+    // Where the chat runs: given by the step, else where it runs now, else
+    // the person's own setting. A PC it does not know: this server.
+    if (pc === undefined) pc = emp.chatId && agents.isAlive(emp.chatId) ? (emp.pc ? { ...emp.pc, online: pcOnline(emp.pc.id) } : null) : pcFor(entry, employeeId);
+    if (pc && pc.unknown) pc = null;
+    const where = pc ? pc.id : '';
+    if (emp.chatId && !fresh && !reuseId && !relaunch && agents.isAlive(emp.chatId) && (emp.where || '') === where && (isManager || emp.skip === wantSkip)) return { ok: true, chatId: emp.chatId };
+    if (pc && !pc.online) return { ok: false, offline: true, error: `the PC it runs on (${pc.name}) is offline` };
     if (emp.chatId) {
       const uuid = agents.sessionUuid(emp.chatId);
-      if (uuid && !fresh) commit(entry, { type: 'session', employeeId, chatId: emp.chatId, sessionUuid: uuid });
+      if (uuid && !fresh) commit(entry, { type: 'session', employeeId, chatId: emp.chatId, sessionUuid: uuid, where: emp.where || '' });
       unwatch(entry, emp.chatId); try { await agents.close(emp.chatId); } catch { /* gone */ } chats.delete(emp.chatId); emp.chatId = '';
     }
     const r = isGate ? gatekeeperEntry(f) : f.roster.find(x => x.id === employeeId);
     if (!r) return { ok: false, error: `Nobody called "${employeeId}" is on the roster.` };
     const known = rr(entry).sessions[employeeId] || {};
-    const resume = !fresh && r.memory === 'keep' && known.sessionUuid ? known.sessionUuid : '';
+    // A conversation is resumed only on the machine that holds it.
+    const resume = !fresh && r.memory === 'keep' && known.sessionUuid && (known.where || '') === where ? known.sessionUuid : '';
     const managerMode = rr(entry).managerMode;
     const res = await agents.spawn({
       project: st(entry).project,
@@ -518,8 +829,11 @@ export function createFactoryRunner({
       role: isManager ? 'manager' : 'employee',
       employeeId,
       title: isManager ? `Factory: ${f.name}` : `${r.name} · ${f.name}`,
-      cwd: rr(entry).worktree,
-      addDirs: [rr(entry).root, runDir(st(entry).id)].filter(Boolean),
+      // On a PC the chat works in its copy of this folder (the run's branch);
+      // the server's other folders do not exist there.
+      cwd: pc ? (cwd || rr(entry).worktree) : rr(entry).worktree,
+      addDirs: pc ? [] : [rr(entry).root, runDir(st(entry).id)].filter(Boolean),
+      ...(pc ? { where: `worker:${pc.id}` } : {}),
       systemPromptExtra: isGate
         ? gatekeeperPrompt({ factory: f, task: rr(entry).cr ? crBrief(rr(entry).cr, f.settings.crTemplate) : st(entry).task, project: st(entry).project, policy: rr(entry).policy, team: f.roster })
         : systemPromptFor({ factory: f, employee: r, project: st(entry).project, paths: paths(entry, employeeId), managerMode, teamMode: rr(entry).teamMode, skills: skillsOf(entry), rules: rulesFor(rr(entry).rules, employeeId) }),
@@ -539,15 +853,25 @@ export function createFactoryRunner({
       background: !isManager,
       resumeId: resume,
       // The Manager keeps its chat id across relaunches and recoveries.
-      id: reuseId || (isManager ? known.chatId || '' : ''),
+      // (A new one when its PC copy starts again from the run's head: the PC
+      // keeps a chat's branch for that chat's life.)
+      id: reuseId || (isManager && !newChat ? known.chatId || '' : ''),
     });
     if (!res.ok) return { ok: false, error: res.error || 'could not start' };
     emp.chatId = res.id;
     emp.skillsSeen = 0;
     emp.skip = wantSkip;
+    emp.where = where;
+    emp.pc = pc ? { id: pc.id, name: pc.name } : null;
+    if (pc) {
+      // The PC's branch for this chat starts here; its work comes back from here.
+      emp.pcChat = res.id;
+      emp.pcBase = await headOf(cwd || rr(entry).worktree);
+      emp.pcStep = step;
+    }
     chats.set(res.id, { runId: st(entry).id, employeeId });
     watch(entry, res.id, employeeId);
-    commit(entry, { type: 'session', employeeId, chatId: res.id, sessionUuid: resume || known.sessionUuid || '' });
+    commit(entry, { type: 'session', employeeId, chatId: res.id, sessionUuid: resume || ((known.where || '') === where ? known.sessionUuid : '') || '', where });
     return { ok: true, chatId: res.id };
   }
 
@@ -601,6 +925,7 @@ export function createFactoryRunner({
    * nudge or escalation follows; resume() or the Manager lets them go on.
    */
   function woke(entry, chatId, employeeId) {
+    if (entry.live.employees[employeeId]?.workerHeld) return;   // its PC is away; told when it is back
     if (!rr(entry).paused && !entry.live.employees[employeeId]?.held) return;   // the usual case: nothing to do
     return locked(entry, async () => {
       const emp = entry.live.employees[employeeId];
@@ -657,7 +982,7 @@ export function createFactoryRunner({
         writeCache(entry);
         return;
       }
-      if (emp.held) return;   // told by the Manager to wait: idle on purpose
+      if (emp.held || emp.workerHeld) return;   // told by the Manager to wait, or its PC is away: idle on purpose
       if (!emp.nudged) {
         emp.nudged = true;
         sendTo(chatId, nudgeMessage());
@@ -677,6 +1002,21 @@ export function createFactoryRunner({
       if (!emp || emp.chatId !== chatId) return;
       emp.chatId = '';
       if (!UNFINISHED.has(st(entry).status) || st(entry).status === 'crashed') return;
+      // Ended because its PC went away: held until the PC is back, never a
+      // crash or an escalation.
+      if (emp.where && workersApi && (emp.workerHeld || !pcOnline(emp.where))) {
+        const pc = { id: emp.where, name: pcName(emp.where) };
+        // Its conversation is picked up again on the PC (--resume) when it is back.
+        let uuid = '';
+        try { uuid = agents.sessionUuid(chatId) || ''; } catch { uuid = ''; }
+        if (uuid) commit(entry, { type: 'session', employeeId, chatId, sessionUuid: uuid, where: emp.where });
+        if (!emp.workerHeld && (emp.busy || employeeId === MANAGER_ID)) emp.workerHeld = { worker: pc.id, name: pc.name, pending: false, since: now() };
+        if (emp.workerHeld) armPcAway(entry, pc.id);
+        if (employeeId === MANAGER_ID) pauseForPc(entry, pc);
+        writeCache(entry);
+        await releaseSeats(entry);
+        return;
+      }
       if (employeeId === MANAGER_ID) {
         entry.live.error = 'The Manager\'s chat ended.';
         commit(entry, { type: 'crash', reason: 'the Manager\'s chat ended' });
@@ -752,6 +1092,13 @@ export function createFactoryRunner({
   }
 
   async function startStep(entry, emp, ef, { recovery = null } = {}) {
+    // A step on a worker PC: offline, it waits for the PC (and holds no seat).
+    let pc = pcFor(entry, ef.employeeId, ef.nodeId);
+    if (pc && pc.unknown) {
+      entry.live.error = `${nameOf(entry, ef.employeeId)} runs on "${pc.want}", a PC this server does not know, so the step runs on this server.`;
+      pc = null;
+    }
+    if (pc && !pc.online) { holdForPc(entry, emp, ef, pc, recovery); return; }
     // The person's limit on people working at once: wait for a free seat.
     if (ef.employeeId !== MANAGER_ID && !emp.busy && seatsFull(entry)) {
       if (!entry.live.seats.some(x => x.ef.tokenId === ef.tokenId)) entry.live.seats.push({ ef, recovery });
@@ -760,7 +1107,37 @@ export function createFactoryRunner({
     }
     const r = st(entry).snapshot.roster.find(x => x.id === ef.employeeId);
     const fresh = !!(r && r.memory === 'fresh' && ef.employeeId !== MANAGER_ID && emp.chatId);
-    const s = await ensureSession(entry, ef.employeeId, { fresh });
+    // Anyone on a PC whose chat lives on there (the Manager always; anyone a
+    // run hands steps to on one token) keeps its copy of the run's branch on
+    // the PC, which falls behind as others hand off. Before each step: their
+    // work comes back and is committed here, and if the run's branch has moved
+    // on from their copy, their folder on the PC is brought up to the run's
+    // head in place (build caches kept). An older worker that cannot do that:
+    // a fresh chat from the run's head (the conversation carries on with
+    // --resume). A chat that is not alive any more: a fresh one on a new step.
+    let relaunch = false, newChat = false, synced = null;
+    const livePc = !!(pc && emp.chatId && emp.where === pc.id && agents.isAlive(emp.chatId));
+    if (livePc && agents.state(emp.chatId) === 'idle') {
+      const behind = await pcBehind(entry, emp, ef, pc);
+      if (behind) {
+        const sy = typeof workersApi.syncChat === 'function'
+          ? await workersApi.syncChat(emp.chatId, { cwd: wsPath(entry, ef.ws) })
+          : { ok: false, unsupported: true, error: 'no syncChat' };
+        if (sy.ok) {
+          emp.pcBase = behind.head;
+          synced = { head: behind.head, stashed: !!sy.stashed };
+          commit(entry, { type: 'worker-resync', worker: pc.id, name: pc.name, employees: [nameOf(entry, ef.employeeId)], head: behind.head, inPlace: true });
+        } else {
+          if (!sy.unsupported) entry.live.error = `Could not bring ${nameOf(entry, ef.employeeId)}'s folder on ${pc.name} up to date (${sy.error}); starting a fresh chat there from the run's head.`;
+          relaunch = true; newChat = true;
+          commit(entry, { type: 'worker-resync', worker: pc.id, name: pc.name, employees: [nameOf(entry, ef.employeeId)], head: behind.head, inPlace: false });
+        }
+      }
+    } else if (pc && ef.employeeId !== MANAGER_ID && emp.chatId && emp.pcStep !== ef.tokenId) {
+      relaunch = true;
+    }
+    const s = await ensureSession(entry, ef.employeeId, { fresh, pc, cwd: wsPath(entry, ef.ws), step: ef.tokenId, relaunch, newChat });
+    if (!s.ok && s.offline && pc) { holdForPc(entry, emp, ef, pc, recovery); return; }
     if (!s.ok) {
       entry.live.error = s.error;
       if (ef.employeeId !== MANAGER_ID) await escalateToken(entry, ef.tokenId, `Could not start ${r?.name || ef.employeeId}: ${s.error}`);
@@ -776,9 +1153,28 @@ export function createFactoryRunner({
       context: await runContextFor(entry, ef),
       cr: crFor(entry, ef, !!recovery),
     });
-    const sent = sendTo(s.chatId, msg);
+    const syncedNote = synced ? ` Your folder there was just brought up to the run's head ${String(synced.head).slice(0, 12)}, so what the others committed since your last step is in it${synced.stashed ? ' (your uncommitted work had already been brought back here first; a backup is in git stash there)' : ''}.` : '';
+    const onPc = pc ? `\n\n[Factory] You run on the PC "${pc.name}", in a copy of the run's branch there: your current folder is your workspace, and paths above under ${wsPath(entry, ef.ws)} mean your current folder. The run's notes and shared folders are on the server and not reachable from this PC. Leave your work in your folder (committed or not); it is brought back to the server when you hand off.${syncedNote}` : '';
+    const sent = sendTo(s.chatId, msg + onPc);
     if (sent && sent.ok === false) entry.live.error = `Could not message ${r?.name || ef.employeeId}: ${sent.error}`;
     else if (notice) commit(entry, { type: 'notice-clear', tokenId: ef.tokenId });
+  }
+
+  /**
+   * The Manager's PC work, brought into the run's worktree and committed.
+   * True when the run's head is no longer what its PC copy is at (someone
+   * handed off meanwhile, or its uncommitted work was committed here).
+   */
+  async function pcBehind(entry, emp, ef, pc) {
+    const ws = wsPath(entry, ef.ws);
+    const who = nameOf(entry, ef.employeeId);
+    const got = await bringBack(entry, emp.chatId, ef.ws, emp.pcBase);
+    if (!got.ok) { entry.live.error = `Could not bring back ${who}'s work from ${pc.name}: ${got.error}`; return null; }
+    try { await git.commitAll(ws, `factory: ${who}'s work brought back from ${pc.name}`, excl(entry)); } catch { /* nothing to commit */ }
+    const head = await headOf(ws);
+    const pcHead = got.head || emp.pcBase || '';
+    if (!head || head === pcHead) return null;
+    return { head };
   }
 
   // ─── Usage limits (the person's choice, per factory, changeable per run) ───
@@ -798,7 +1194,8 @@ export function createFactoryRunner({
   }
 
   function busyPeople(entry) {
-    return Object.entries(entry.live.employees).filter(([id, e]) => id !== MANAGER_ID && id !== GATEKEEPER_ID && e.busy).length;
+    // A step held for its PC holds no seat.
+    return Object.entries(entry.live.employees).filter(([id, e]) => id !== MANAGER_ID && id !== GATEKEEPER_ID && e.busy && !e.workerHeld).length;
   }
 
   function seatsFull(entry) { return busyPeople(entry) >= seatLimit(entry); }
@@ -1420,7 +1817,7 @@ export function createFactoryRunner({
     }
     if (!u || u.ok === false) return { windows: [], resetsAt: '' };
     const L = limitsOf(entry);
-    const full = [['fiveHour', u.fiveHour, L.pauseAt5h], ['week', u.week, L.pauseAtWeek]].filter(([, w, at]) => w && w.utilization >= at);
+    const full = [['fiveHour', u.fiveHour], ['week', u.week]].filter(([k, w]) => usageOver(w, k, L));
     if (!full.length) return { windows: [], resetsAt: u.fiveHour?.resetsAt || '' };
     return { windows: full.map(([k]) => k), resetsAt: full.map(([, w]) => w.resetsAt).filter(Boolean).sort().pop() || '' };
   }
@@ -1440,6 +1837,7 @@ export function createFactoryRunner({
       const p = r.paused;
       const stopped = new Set(p?.stopped || []);
       const base = reason || (p?.by === 'usage' ? 'the usage limit was reached; it has reset now'
+        : p?.by === 'worker' ? 'the PC the Manager runs on went offline; it is back now'
         : p?.resumeOnReset ? `${p.by === 'manager' ? 'the Manager' : 'the person'} paused the run until the usage window reset; it has reset now`
         : p ? `${p.by === 'manager' ? 'the Manager' : 'the person'} paused the run; it is resumed now`
         : 'the run reached a limit; the person let it carry on');
@@ -1586,7 +1984,7 @@ export function createFactoryRunner({
       for (const e of relevant) {
         // Each run's own thresholds: the person may keep headroom for themselves.
         const L = limitsOf(e);
-        const full = [[u.fiveHour, L.pauseAt5h], [u.week, L.pauseAtWeek]].filter(([w, at]) => w && w.utilization >= at).map(([w]) => w);
+        const full = [['fiveHour', u.fiveHour], ['week', u.week]].filter(([k, w]) => usageOver(w, k, L)).map(([, w]) => w);
         const resetsAt = full.map(w => w.resetsAt).filter(Boolean).sort().pop() || '';
         if (!full.length) await locked(e, () => releaseSeats(e));   // the one-at-a-time rule may have lifted
         // Paused to wait for the reset with no usage reading at the time (no
@@ -1605,12 +2003,17 @@ export function createFactoryRunner({
         if (full.length && !rr(e).paused && ['running', 'waiting'].includes(st(e).status)) {
           await pause(st(e).id, { by: 'usage', resetsAt });
         } else if (!full.length && waitsForReset(e)) {
-          // Past the reset recorded when it paused, and nothing over the line.
+          // Past the reset recorded when it paused, and nothing over the line;
+          // or, paused by the limit with a resume condition, far enough behind
+          // pace (usageResumable) to carry on before the reset.
           const at = Date.parse(rr(e).paused.resetsAt || '');
-          if (Number.isFinite(at) && Date.now() < at) continue;
           const byUsage = rr(e).paused.by === 'usage';
-          const res = await resume(st(e).id);
-          if (res.ok) notify('resumed', summary(e), `Factory "${st(e).snapshot.name}" carries on: the usage ${byUsage ? 'limit' : 'window'} has reset.`);
+          const early = Number.isFinite(at) && Date.now() < at;
+          if (early && !(byUsage && usageResumable(u, L))) continue;
+          const res = early
+            ? await resume(st(e).id, { reason: `usage is back ${L.paceResumeBehind} points behind pace, the condition the person set for carrying on before the reset` })
+            : await resume(st(e).id);
+          if (res.ok) notify('resumed', summary(e), early ? `Factory "${st(e).snapshot.name}" carries on: usage is ${L.paceResumeBehind} points behind pace.` : `Factory "${st(e).snapshot.name}" carries on: the usage ${byUsage ? 'limit' : 'window'} has reset.`);
         }
       }
     };
@@ -1665,7 +2068,7 @@ export function createFactoryRunner({
 
     for (const emp of Object.values(entry.live.employees)) {
       if (emp.chatId) { unwatch(entry, emp.chatId); chats.delete(emp.chatId); }
-      emp.chatId = ''; emp.busy = null; emp.queue = []; emp.nudged = false;
+      emp.chatId = ''; emp.busy = null; emp.queue = []; emp.nudged = false; emp.workerHeld = null;
     }
     entry.live.permissions = [];
     entry.live.seats = [];   // rebuilt below from the tokens
@@ -1954,6 +2357,16 @@ export function createFactoryRunner({
           return { ok: false, error: `You changed files in the run's main worktree (${rr(entry).worktree}): ${files.slice(0, 8).join(', ')}${files.length > 8 ? '…' : ''}. Your workspace for this step is ${here}. Move those changes into your workspace, undo them in the main worktree (git -C ${rr(entry).worktree} checkout -- <file>, or delete new files), then hand off again.` };
         }
       }
+      // On a PC: its work comes into the run's worktree first, so the handoff
+      // (and a join after it) never passes part-built work.
+      if (workersApi && emp?.where && emp.chatId === chatId) {
+        const got = await bringBack(entry, chatId, tok?.ws, emp.pcBase);
+        if (!got.ok && !payload?.escalate) {
+          return { ok: false, error: `Your work on the PC ${pcName(emp.where)} could not be brought back to the server, so the handoff was not accepted: ${got.error}. Keep your work in your folder and call factory_handoff again; if it keeps failing, escalate with this reason.` };
+        }
+        if (!got.ok) entry.live.error = `Could not bring back ${nameOf(entry, info.employeeId)}'s work from ${pcName(emp.where)}: ${got.error}`;
+        else if (got.head) emp.pcBase = got.head;
+      }
       const subject = shortSubject(payload?.summary || payload?.escalate || '');
       const c = await git.commitAll(wsPath(entry, tok?.ws), `factory: ${node?.label || node?.type || 'step'}${subject ? ' — ' + subject : ''}`, excl(entry));
       const caps = { maxHandoffs: st(entry).snapshot.settings.caps.maxHandoffs + rr(entry).capExtra };
@@ -1974,6 +2387,7 @@ export function createFactoryRunner({
         ...(skills.length ? { skills } : {}),
       });
       if (emp && emp.busy === tokenId) emp.busy = null;
+      if (emp && emp.workerHeld && !emp.busy) emp.workerHeld = null;   // it handed off, so its PC was there after all
       const where = describeWhere(entry, dry.effects);
       await drain(entry);
       await dequeue(entry, info.employeeId);
@@ -2033,7 +2447,7 @@ export function createFactoryRunner({
           chats.delete(emp.chatId);
           if (eid !== MANAGER_ID) { try { await agents.close(emp.chatId); } catch { /* gone */ } emp.chatId = ''; }
         }
-        emp.busy = null; emp.queue = [];
+        emp.busy = null; emp.queue = []; emp.workerHeld = null;
       }
       clearClock(entry);
       clearTimeout(entry.timers.auto);
@@ -2047,10 +2461,12 @@ export function createFactoryRunner({
   /** Stop timers (tests, shutdown). Runs stay on disk. */
   function dispose() {
     clearInterval(usageTimer);
+    if (unsubscribeWorkers) { try { unsubscribeWorkers(); } catch { /* gone */ } unsubscribeWorkers = null; }
     for (const e of runs.values()) {
       clearClock(e);
       clearTimeout(e.timers.perm);
       clearTimeout(e.timers.auto);
+      for (const k of Object.keys(e.timers)) if (k.startsWith('pcAway:')) clearTimeout(e.timers[k]);
       for (const id of Object.keys(e.waits)) clearWait(e, id);
       for (const id of Object.keys(e.watchers)) unwatch(e, id);
     }
@@ -2125,9 +2541,18 @@ export function createFactoryRunner({
         : t.status === 'wait' ? `the flow waits at "${n?.label || 'Wait'}"`
         : t.status === 'delegated' ? 'you are waiting for a job you handed out'
         : t.status;
-      lines.push(`- ${what}${t.ws && t.ws !== 'main' ? ` (branch ${t.ws})` : ''}`);
+      const wh = entry.live.employees[Engine.personOf(s, t)]?.workerHeld;
+      const pcWait = wh && entry.live.employees[Engine.personOf(s, t)].busy === t.id ? ` (waiting for the PC ${wh.name}, which is offline)` : '';
+      lines.push(`- ${what}${t.ws && t.ws !== 'main' ? ` (branch ${t.ws})` : ''}${pcWait}`);
     }
     if (!s.tokens.length) lines.push('- nothing is moving');
+    const pcs = onPcsOf(entry);
+    if (pcs.length) {
+      lines.push('', 'Where people run (everyone else runs on this server):');
+      for (const p of pcs) lines.push(`- ${p.employee}${p.step ? ` for "${p.step}"` : ''}: on the PC ${p.worker}${p.online ? '' : ' (offline)'}`);
+      const off = [...new Set(pcs.filter(p => !p.online).map(p => p.worker))];
+      if (off.length) lines.push(`PCs offline: ${off.join(', ')}. Steps on them wait until they are back; the rest of the run carries on.`);
+    }
     const loops = f.edges.filter(e => e.maxRounds > 0 && (s.edgeCounts[e.id] || 0) > 0);
     if (loops.length) {
       lines.push('', 'Loops used:');
@@ -2152,7 +2577,8 @@ export function createFactoryRunner({
     const Tk = tickOf(entry);
     lines.push(`Your ticker: every ${Tk.minutes} min${Tk.fixed ? ' (set by the person)' : Tk.chosen ? '' : ' (default; set it with factory_tick)'}, only when you are idle.`);
     const Lm = limitsOf(entry);
-    lines.push(`Usage limits the person set: pause at ${Lm.pauseAt5h}% of the 5-hour window and ${Lm.pauseAtWeek}% of the week${usageNow?.fiveHour ? ` (now ${Math.round(usageNow.fiveHour.utilization)}% and ${Math.round(usageNow.week?.utilization || 0)}%)` : ''}; ${Lm.maxParallel ? `at most ${Lm.maxParallel} at once` : 'no limit on people at once'}${Lm.oneAtATimeAbove ? `, one at a time above ${Lm.oneAtATimeAbove}%` : ''}.${entry.live.seats.length ? ` Waiting for a seat: ${entry.live.seats.length}.` : ''}`);
+    const pace = (w, k) => { const t = windowTimePct(w, k); return t === null ? '' : ` with ${Math.round(t)}% of its time passed`; };
+    lines.push(`Usage limits the person set: pause at ${Lm.pauseAt5h}% of the 5-hour window and ${Lm.pauseAtWeek}% of the week${Lm.paceOnly ? ` only when ahead of pace (used % above the % of the window's time passed), and always at ${Lm.paceCeiling}%${Lm.paceResumeBehind ? `; paused for that, it carries on once ${Lm.paceResumeBehind} points behind pace` : ''}` : ''}${usageNow?.fiveHour ? ` (now ${Math.round(usageNow.fiveHour.utilization)}%${Lm.paceOnly ? pace(usageNow.fiveHour, 'fiveHour') : ''} and ${Math.round(usageNow.week?.utilization || 0)}%${Lm.paceOnly ? pace(usageNow.week, 'week') : ''})` : ''}; ${Lm.maxParallel ? `at most ${Lm.maxParallel} at once` : 'no limit on people at once'}${Lm.oneAtATimeAbove ? `, one at a time above ${Lm.oneAtATimeAbove}%` : ''}.${entry.live.seats.length ? ` Waiting for a seat: ${entry.live.seats.length}.` : ''}`);
     return { ok: true, content: [{ type: 'text', text: lines.join('\n') }] };
   }
 
@@ -2160,7 +2586,7 @@ export function createFactoryRunner({
    * factory_control, from the Manager's chat: pause or resume the run, or
    * change its usage limits, when the person asks (or to stay inside them).
    */
-  async function controlFromManager(chatId, { action, reason = '', limits = null, mode = '', resumeOnReset = false } = {}) {
+  async function controlFromManager(chatId, { action, reason = '', limits = null, mode = '', resumeOnReset = false, worker = '' } = {}) {
     const info = chatInfo(chatId);
     if (!info || info.employeeId !== MANAGER_ID) return { ok: false, error: 'Only the Manager of a factory run can do this.' };
     if (action === 'pause') {
@@ -2182,7 +2608,12 @@ export function createFactoryRunner({
       const r = await setLimits(info.runId, limits || {});
       return r.ok ? { ok: true, message: 'Limits now: ' + JSON.stringify(r.run.limits) } : r;
     }
-    return { ok: false, error: 'action is pause, resume or limits.' };
+    if (action === 'move-to-server') {
+      // On the person's word: the steps a PC that stayed away holds run here instead.
+      const r = await moveToServer(info.runId, { worker });
+      return r.ok ? { ok: true, message: 'Moved: those steps run on the Crundi server from the run\'s worktree now, and those people stay on the server for the rest of the run.' } : r;
+    }
+    return { ok: false, error: 'action is pause, resume, limits or move-to-server.' };
   }
 
   /**
@@ -2401,7 +2832,7 @@ export function createFactoryRunner({
   /** Which of a run's listed secrets are unlocked now (ids, never PINs). */
   function unlockedSecrets(runId) { return vault.unlocked(runId); }
 
-  return { load, startRun, tellFromTrigger, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, messageFromManager, tickFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose, secretContext, askSecret, rememberSecret, forgetSecret, relockSecret, secretUsed, unlockedSecrets };
+  return { load, startRun, tellFromTrigger, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, moveToServer, messageFromManager, tickFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose, secretContext, askSecret, rememberSecret, forgetSecret, relockSecret, secretUsed, unlockedSecrets };
 }
 
 /**
@@ -2500,6 +2931,8 @@ export function claudeUiAgents(claudeUi, { dataDir }) {
         allowedTools: o.allowedTools,
         disallowedTools: o.disallowedTools,
         mcpConfigFile,
+        // 'worker:<id>': the chat runs on that PC (workers-chats.js).
+        ...(o.where ? { where: o.where } : {}),
       });
     },
     send: (id, text) => claudeUi.sendMessage(id, text),

@@ -1,0 +1,30 @@
+<div class="wna a-wkt">
+  <div class="list">
+    <div class="row r1"><span class="dot on"></span><div><div class="nm">Desk PC</div><div class="chips"><i>os:windows</i><i>gpu:nvidia</i><i>ram:64g</i></div></div></div>
+    <div class="row r2"><span class="dot on"></span><div><div class="nm">Build box</div><div class="chips"><i>os:linux</i><i>cores:16</i><i>tool:docker</i></div></div></div>
+    <div class="row r3"><span class="dot"></span><div><div class="nm">Laptop</div><div class="chips"><i>os:macos</i><i>ram:16g</i></div></div></div>
+  </div>
+  <div class="term"><div class="bar">Desk PC</div><div class="ln l1">PS C:\crundi-work&gt; gh auth login</div><div class="ln l2">Logged in to github.com</div><div class="cur"></div></div>
+  <style>
+    .a-wkt{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:13px}
+    .a-wkt .list{position:absolute;left:40px;top:90px;width:270px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);overflow:hidden}
+    .a-wkt .row{display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border);opacity:0;animation:awktR 10s infinite}
+    .a-wkt .row:last-child{border-bottom:none}
+    .a-wkt .r2{animation-delay:.4s}.a-wkt .r3{animation-delay:.8s}
+    .a-wkt .nm{font-weight:600;margin-bottom:5px}
+    .a-wkt .chips{display:flex;gap:4px;flex-wrap:wrap}
+    .a-wkt .chips i{font-style:normal;font-family:var(--mono);font-size:10px;padding:1px 6px;border-radius:999px;background:var(--bg-secondary);color:var(--text-secondary)}
+    .a-wkt .dot{width:8px;height:8px;border-radius:50%;margin-top:5px;background:var(--text-muted);flex:none}
+    .a-wkt .dot.on{background:var(--green)}
+    .a-wkt .term{position:absolute;left:330px;top:90px;width:270px;height:200px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary);font-family:var(--mono);font-size:11px;overflow:hidden;opacity:0;animation:awktT 10s infinite}
+    .a-wkt .bar{padding:6px 10px;background:var(--bg-secondary);color:var(--text-muted);font-family:system-ui,sans-serif}
+    .a-wkt .ln{padding:4px 10px;white-space:nowrap;overflow:hidden;width:0;animation:awktL 10s steps(30) infinite}
+    .a-wkt .l2{color:var(--green);animation-name:awktL2}
+    .a-wkt .cur{margin:2px 10px;width:7px;height:13px;background:var(--accent);animation:awktC 1s steps(2) infinite}
+    @keyframes awktR{0%,4%{opacity:0;transform:translateY(6px)}10%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes awktT{0%,28%{opacity:0}34%,92%{opacity:1}100%{opacity:0}}
+    @keyframes awktL{0%,36%{width:0}56%,100%{width:250px}}
+    @keyframes awktL2{0%,62%{width:0}66%,100%{width:250px}}
+    @keyframes awktC{0%{opacity:1}100%{opacity:0}}
+  </style>
+</div>

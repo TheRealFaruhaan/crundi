@@ -34,6 +34,25 @@ enum class AgentState(val wire: String) {
 @Serializable data class FactoryRole(val runId: String = "", val role: String = "", val employeeId: String = "")
 
 /**
+ * The worker PC a chat's Claude runs on (claude-ui.js whereOf): its name,
+ * whether it is connected now, and where its changes were last brought back.
+ * Missing on older servers and on chats that run here.
+ */
+@Serializable data class ChatPc(
+    val where: String = "",
+    val name: String = "",
+    val online: Boolean = false,
+    val branch: String = "",
+    val worktree: String = "",
+) {
+    /** "on Studio PC", with "PC offline" while it is away (the web's term-pc-tag). */
+    val badge: String get() = "on " + name.ifEmpty { "a PC" } + if (online) "" else " · PC offline"
+}
+
+/** The PC to show for a chat: only when it runs on one ([where] "worker:<id>"); null otherwise. */
+fun chatPcOf(where: String, pc: ChatPc?): ChatPc? = if (where.isNotEmpty() && pc != null) pc else null
+
+/**
  * One item of `state.terminals[]` (and /api/ui-sessions): a chat, a terminal,
  * or a parked pane. [kind] says which: "ui" (chat), "terminal", "parked".
  */
@@ -59,6 +78,12 @@ data class Pane(
     val pending: List<JsonObject> = emptyList(),
     val collaborator: Collaborator? = null,
     val factory: FactoryRole? = null,
+    /** "" here, "worker:<id>" when the chat's Claude runs on a PC. Older servers leave it out. */
+    val where: String = "",
+    /** The PC it runs on (name, online, branch); null here or on an older server. */
+    val pc: ChatPc? = null,
+    /** A terminal on a PC: the last notice the PC sent ("The PC did not have that conversation; starting fresh"). */
+    val notice: String = "",
     // Parked panes only
     val paneKind: String = "",
     val shellOnly: Boolean = false,
@@ -75,6 +100,8 @@ data class Pane(
     /** What to call it: the long title when there is one. */
     val label get() = longTitle.ifEmpty { title }
     val pendingEntries: List<ChatEntry> get() = pending.map { ChatEntry.from(it) }
+    /** The PC this chat runs on, when it runs on one. */
+    val runsOn: ChatPc? get() = chatPcOf(where, pc)
 }
 
 /** POST /api/ui-sessions/create and /api/terminals/create answers. */
@@ -99,6 +126,8 @@ data class NewChat(
     /** continue, new, resume, compact */
     val sessionMode: String? = null,
     val resumeId: String? = null,
+    /** Where Claude runs: null for this server, "worker:<id>" for a PC (POST /api/workers chat-places). */
+    val where: String? = null,
 )
 
 /** A slash command the chat offers (from ui-history / init). */
@@ -224,6 +253,9 @@ data class ChatEntry(
     /** What Claude showed under this call (show_image, show_video, show_audio, show_file, show_embed). */
     fun media(chatId: String): List<ChatMedia> = ChatMediaParser.parse(chatId, this)
 
+    /** A worker-job card's job (a command a chat ran on a PC with worker_run); every field optional. */
+    val workerJob: WorkerJob get() = workerJobOf(raw)
+
     /** The same entry with a patch from the server applied. */
     fun patched(patch: JsonObject): ChatEntry = from(JsonObject(raw + patch))
 
@@ -250,6 +282,37 @@ data class ChatEntry(
             )
         }
     }
+}
+
+/**
+ * A "worker-job" entry read leniently: the server's job view (src/workers-jobs.js
+ * view()) with the entry's id and kind on top, patched live. Any field may be
+ * missing or of an unexpected type; those fall back to their defaults.
+ */
+fun workerJobOf(o: JsonObject): WorkerJob {
+    fun p(k: String, from: JsonObject = o) = from[k] as? JsonPrimitive
+    fun s(k: String, from: JsonObject = o) = p(k, from)?.takeIf { it.isString || it.booleanOrNull == null }?.contentOrNull
+    fun l(k: String, from: JsonObject = o) = p(k, from)?.let { it.longOrNull ?: it.doubleOrNull?.toLong() }
+    fun b(k: String, from: JsonObject = o) = p(k, from)?.booleanOrNull
+    val art = (o["artifacts"] as? JsonObject)?.let { a ->
+        WorkerJobArtifacts(path = s("path", a).orEmpty(), bytes = l("bytes", a) ?: 0, count = (l("count", a) ?: 0).toInt(), expired = b("expired", a) ?: false)
+    }
+    val copy = (o["copy"] as? JsonObject)?.let { c ->
+        WorkerJobCopy(files = (l("files", c) ?: 0).toInt(), sent = (l("sent", c) ?: 0).toInt(), bytes = l("bytes", c) ?: 0, removed = (l("removed", c) ?: 0).toInt())
+    }
+    val notes = (o["notes"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { n -> n.isNotBlank() } }.orEmpty()
+    val state = s("state").orEmpty()
+    return WorkerJob(
+        job = s("job").orEmpty(), worker = s("worker"), workerId = s("workerId"), project = s("project"),
+        command = s("command").orEmpty(), source = s("source"), branch = s("branch"), commit = s("commit"), cwd = s("cwd").orEmpty(),
+        state = state,
+        // Older or partial entries may lack "running": the finished states say it isn't.
+        running = b("running") ?: (state.isNotEmpty() && state !in setOf("done", "failed", "cancelled", "refused", "lost", "error")),
+        phase = s("phase"), detail = s("detail"), offline = b("offline") ?: false,
+        exitCode = l("exitCode")?.toInt(), durationMs = l("durationMs"), timedOut = b("timedOut"), cancelled = b("cancelled"),
+        logBytes = l("logBytes") ?: 0, log = s("log"),
+        artifacts = art, copy = copy, notes = notes, error = s("error").orEmpty(), tail = s("tail"),
+    )
 }
 
 /** A subagent or background task bubble under a chat. */
@@ -325,6 +388,10 @@ data class ChatState(
     val recap: ChatRecap? = null,
     val pendingInjections: List<PendingInjection> = emptyList(),
     val factory: FactoryRole? = null,
+    /** "" here, "worker:<id>" when Claude runs on a PC. */
+    val where: String = "",
+    /** That PC: its name and whether it is connected (meta events keep it current). */
+    val pc: ChatPc? = null,
     /** Set when the Claude process ended (exit code). */
     val exitCode: Int? = null,
     /**
@@ -335,6 +402,8 @@ data class ChatState(
     val voiceSays: List<VoiceSay> = emptyList(),
 ) {
     val busy get() = state == AgentState.Working || pendingInjections.isNotEmpty()
+    /** The PC this chat runs on, when it runs on one. */
+    val runsOn: ChatPc? get() = chatPcOf(where, pc)
     val exited get() = status == "exited" || exitCode != null
     /** Entries worth drawing (not "gone"). */
     val visible get() = messages.filter { it.kind != "gone" }

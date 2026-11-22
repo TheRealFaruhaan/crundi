@@ -42,6 +42,14 @@
     '.cc-entry{margin-bottom:10px;animation:cc-in .18s ease}',
     // A factory's result card.
     '.cc-fr-sum{margin:6px 0 8px}',
+    // A command on a worker PC (worker_run): live while it runs.
+    '.cc-wj-cmd{font-family:var(--mono);font-size:.86em;word-break:break-all;margin:4px 0}',
+    '.cc-wj-meta{font-size:.82em;color:var(--text-secondary);margin:2px 0 6px}',
+    '.cc-wj-st{display:inline-block;font-size:.78em;padding:0 7px;border-radius:999px;margin-left:6px;background:var(--bg-tertiary);color:var(--text-secondary)}',
+    '.cc-wj-st.run{background:var(--yellow-dim,rgba(250,204,21,.15));color:var(--yellow,#facc15)}',
+    '.cc-wj-st.ok{background:var(--green-dim,rgba(74,222,128,.15));color:var(--green,#4ade80)}',
+    '.cc-wj-st.bad{background:var(--red-dim,rgba(248,113,113,.15));color:var(--red,#f87171)}',
+    '.cc-wj-log{font-family:var(--mono);font-size:.78em;line-height:1.45;background:#0d1117;color:#d6deeb;border-radius:6px;padding:8px;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:6px 0}',
     '.cc-fr-fu{font-size:.92em;line-height:1.45}',
     '.cc-fr-use{font-size:.85em;color:var(--text-secondary);margin:2px 0 6px}',
     '.cc-fr-files{margin:4px 0 8px;font-size:.92em}',
@@ -1783,6 +1791,7 @@
         }
         case 'permission': node.appendChild(permissionNode(e)); break;
         case 'factory-result': node.appendChild(factoryResultNode(e)); break;
+        case 'worker-job': node.appendChild(workerJobNode(e)); break;
         case 'question':   node.appendChild(questionNode(e)); break;
         case 'result': {
           if (e.subtype && e.subtype !== 'success') {
@@ -2032,6 +2041,41 @@
     // updated in place as the person decides. The buttons call the run's API;
     // the server patches this entry with the outcome, so every open copy of
     // the chat (desktop, phone) shows the same state.
+    // A command a chat runs on one of the owner's PCs (worker_run), updated
+    // live by the server as its output arrives.
+    function workerJobNode(e) {
+      var box = el('div', 'cc-ask cc-wj');
+      var running = !!e.running;
+      var bad = ['failed', 'lost', 'error', 'refused'].indexOf(e.state) >= 0;
+      var word = running ? (e.offline ? 'PC away' : (e.phase || e.state || 'starting')) : e.state === 'failed' ? 'failed (exit ' + e.exitCode + ')' : (e.state || '');
+      var secs = e.durationMs != null ? Math.round(e.durationMs / 1000) : null;
+      var dur = secs == null ? '' : secs < 60 ? secs + ' s' : Math.floor(secs / 60) + ' min ' + (secs % 60) + ' s';
+      box.appendChild(el('div', 'cc-ask-title', 'On ' + esc(e.worker || 'a PC') + '<span class="cc-wj-st ' + (running ? 'run' : bad ? 'bad' : e.state === 'done' ? 'ok' : '') + '">' + esc(word) + '</span>'));
+      box.appendChild(el('div', 'cc-wj-cmd', esc(e.command || '')));
+      var meta = [];
+      if (e.branch) meta.push(esc(e.branch) + (e.commit ? ' ' + esc(String(e.commit).slice(0, 7)) : ''));
+      else if (e.source) meta.push(esc(e.source));
+      if (e.copy) meta.push(e.copy.sent + ' of ' + e.copy.files + ' files sent');
+      if (dur) meta.push(dur);
+      if (e.artifacts && e.artifacts.count) meta.push(e.artifacts.count + ' file' + (e.artifacts.count === 1 ? '' : 's') + ' back (' + (Math.round(e.artifacts.bytes / 104857.6) / 10) + ' MB)');
+      if (meta.length) box.appendChild(el('div', 'cc-wj-meta', meta.join(' \u00b7 ')));
+      if (e.error) box.appendChild(el('div', 'cc-error', esc(e.error)));
+      var log = el('pre', 'cc-wj-log');
+      log.textContent = e.tail || (running ? 'Waiting for output\u2026' : '(no output)');
+      box.appendChild(log);
+      setTimeout(function () { log.scrollTop = log.scrollHeight; }, 0);
+      if (e.artifacts && e.artifacts.count && e.artifacts.path) box.appendChild(el('div', 'cc-ask-sub', 'Saved on the server: <code>' + esc(e.artifacts.path) + '</code>'));
+      if (running && e.job) {
+        var cancel = el('button', 'cc-btn', 'Cancel');
+        cancel.addEventListener('click', function () {
+          cancel.disabled = true;
+          apiFetch('/api/workers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'job-cancel', job: e.job }) }).catch(function () { cancel.disabled = false; });
+        });
+        box.appendChild(cancel);
+      }
+      return box;
+    }
+
     function factoryResultNode(e) {
       var box = el('div', 'cc-ask cc-fr');
       var d = e.diff || {};

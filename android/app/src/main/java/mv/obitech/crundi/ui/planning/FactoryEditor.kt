@@ -73,6 +73,7 @@ import mv.obitech.crundi.ui.components.TopBar
 import mv.obitech.crundi.ui.components.errorText
 import mv.obitech.crundi.ui.icons.CrundiIcon
 import mv.obitech.crundi.ui.nav.LocalNavigator
+import mv.obitech.crundi.ui.operations.CheckRow
 import mv.obitech.crundi.ui.shell.LocalAppServices
 import mv.obitech.crundi.ui.theme.CrundiColors
 import mv.obitech.crundi.ui.theme.CrundiType
@@ -107,6 +108,8 @@ class FactoryEditorState(
     detail: FactoryDetail, val skills: List<SkillBrief> = emptyList(), val data: FactoryEditorData = FactoryEditorData.bundled,
     /** The machine's secrets by name (never values), when the server can pre-authorise them ([FactorySecrets]); null: the picker is hidden. */
     val secretList: List<mv.obitech.crundi.api.model.Secret>? = null,
+    /** The owner's worker PCs, offered in the Runs on fields; null: none offered (not the owner, or an older server). */
+    val workers: List<mv.obitech.crundi.api.model.Worker>? = null,
 ) {
     var factory by mutableStateOf(detail.factory)
         private set
@@ -159,7 +162,11 @@ class FactoryEditorState(
 
     /** Fields of the settings an older server does not have are hidden. */
     fun has(setting: String): Boolean = (raw?.get("settings") as? JsonObject)?.containsKey(setting) ?: true
+    /** A usage limit an older server does not have (it drops it): hidden. */
+    fun hasLimit(key: String): Boolean = (((raw?.get("settings") as? JsonObject)?.get("limits")) as? JsonObject)?.containsKey(key) ?: true
     /** Per-person presets (newer servers). */
+    /** Runs on (worker PCs, newer servers): the server sends it on every person. */
+    val hasRunsOn: Boolean get() = (raw?.get("roster") as? kotlinx.serialization.json.JsonArray)?.firstOrNull()?.let { (it as? JsonObject)?.containsKey("runsOn") } ?: true
     val hasMemberPresets: Boolean get() = (raw?.get("roster") as? kotlinx.serialization.json.JsonArray)?.firstOrNull()?.let { (it as? JsonObject)?.containsKey("presets") } ?: true
 
     /** Select, and open the sheet; a step is brought into view above it. */
@@ -255,7 +262,8 @@ fun FactoryEditRoute(id: String, focus: String = "") {
             val d = api.factories.get(id)
             val skills = runCatching { api.factories.skills() }.getOrDefault(emptyList())
             val secretList = if (FactorySecrets.supported(services.shell.state.value.capabilities)) runCatching { api.secrets.list().secrets }.getOrNull() else null
-            Load.Ready(FactoryEditorState(d, skills, secretList = secretList).apply { focusOn(focus) })
+            val workers = if (mv.obitech.crundi.api.WorkersApi.supported(services.shell.state.value.capabilities)) runCatching { api.workers.list().workers }.getOrNull() else null
+            Load.Ready(FactoryEditorState(d, skills, secretList = secretList, workers = workers).apply { focusOn(focus) })
         } catch (e: ApiException) { Load.Failed(errorText(e)) }
     }
     val st = load.valueOrNull
@@ -542,9 +550,21 @@ private fun ColumnScope.NodePanel(st: FactoryEditorState, node: FactoryNode) {
                     if (v == "__new") { st.rosterAddTo = node.id; st.rosterSel = null; st.tab = EditorTab.Team } else set { it.copy(employeeId = v) }
                 }
             }
+            if (st.hasRunsOn) {
+                val who = f.roster.firstOrNull { it.id == node.employeeId }?.runsOn.orEmpty()
+                RunsOnField("ro:" + node.id, node.runsOn.orEmpty(), st.workers, "As the person: " + who.ifEmpty { "this server" },
+                    "Leave empty to run where the person runs (their Team setting). A worker PC's name runs this step there.") { v -> set("ro:" + node.id) { it.copy(runsOn = v.take(80)) } }
+            }
             if (!node.employeeId.isNullOrEmpty() && f.roster.any { it.id == node.employeeId }) CrundiButton("Edit their persona", { st.rosterSel = node.employeeId; st.tab = EditorTab.Team }, kind = ButtonKind.Ghost, icon = "user")
         }
-        "manager" -> CrundiButton("Edit the Manager's persona", { st.rosterSel = FactoryEdit.MANAGER_ID; st.tab = EditorTab.Team }, kind = ButtonKind.Ghost, icon = "crown")
+        "manager" -> {
+            if (st.hasRunsOn) {
+                val who = f.roster.firstOrNull { it.id == FactoryEdit.MANAGER_ID }?.runsOn.orEmpty()
+                RunsOnField("ro:" + node.id, node.runsOn.orEmpty(), st.workers, "As the Manager: " + who.ifEmpty { "this server" },
+                    "Leave empty to run where the Manager runs (its Team setting).") { v -> set("ro:" + node.id) { it.copy(runsOn = v.take(80)) } }
+            }
+            CrundiButton("Edit the Manager's persona", { st.rosterSel = FactoryEdit.MANAGER_ID; st.tab = EditorTab.Team }, kind = ButtonKind.Ghost, icon = "crown")
+        }
         "decision" -> {
             val d = node.decision ?: mv.obitech.crundi.api.model.FactoryDecision()
             Field("Question", "Answered at handoff. You can name skills with /skill-name.") {
@@ -762,6 +782,16 @@ private fun ColumnScope.SettingsPanel(st: FactoryEditorState) {
     ) {
         NumField("tick", s.tickMinutes, 0, 1440, placeholder = "The Manager chooses", blankZero = true) { v -> set("tick") { it.copy(tickMinutes = if (v > 0) v.coerceIn(5, 1440) else 0) } }
     }
+    if (st.has("workerOfflineMinutes")) {
+        val off = s.workerOfflineMinutes ?: 30
+        Field(
+            "PC offline, move to server after (minutes)",
+            if (off == 0) "0: wait for the PC however long it takes."
+            else "When a PC holding steps has been offline this long, you are told and can move its steps to this server.",
+        ) {
+            NumField("pcoff", off, 0, 1440) { v -> set("pcoff") { it.copy(workerOfflineMinutes = v.coerceIn(0, 1440)) } }
+        }
+    }
     if (st.has("limits")) {
         Subtitle("Usage")
         Hint("Your Claude usage is shared with your own chats. These keep a run inside what you choose; each can also be changed on a running run.")
@@ -769,6 +799,14 @@ private fun ColumnScope.SettingsPanel(st: FactoryEditorState) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Field("5-hour, pause at %", modifier = Modifier.weight(1f)) { NumField("lim1", l.pauseAt5h, 50, 100) { v -> set("lim1") { it.copy(limits = it.limits.copy(pauseAt5h = if (v == 0) 100 else v)) } } }
             Field("Weekly, pause at %", modifier = Modifier.weight(1f)) { NumField("lim2", l.pauseAtWeek, 50, 100) { v -> set("lim2") { it.copy(limits = it.limits.copy(pauseAtWeek = if (v == 0) 100 else v)) } } }
+        }
+        if (st.hasLimit("paceOnly")) CheckRow("Pause only when ahead of pace", l.paceOnly == true) { v -> set("lim5") { it.copy(limits = it.limits.copy(paceOnly = v)) } }
+        if (l.paceOnly == true && st.hasLimit("paceOnly")) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Field("Always pause at %", "The hard ceiling, whatever the pace", modifier = Modifier.weight(1f)) { NumField("lim6", l.paceCeiling ?: 100, 50, 100) { v -> set("lim6") { it.copy(limits = it.limits.copy(paceCeiling = if (v == 0) 100 else v)) } } }
+                Field("Resume when behind pace by", "Points. 0: wait for the reset", modifier = Modifier.weight(1f)) { NumField("lim7", l.paceResumeBehind ?: 0, 0, 50) { v -> set("lim7") { it.copy(limits = it.limits.copy(paceResumeBehind = v)) } } }
+            }
+            Hint("Past the line above, it keeps going while the window's use is behind the time passed in it (say 85% used with 90% of the 5 hours gone), and pauses once it gets ahead. Paused that way, it carries on at the reset, or sooner once it is as many points behind pace as you set.")
         }
         Hint(if (l.pauseAt5h < 100 || l.pauseAtWeek < 100) "It pauses there and carries on by itself after the window resets, leaving the rest for you." else "At 100% it pauses only when a window is full, and carries on by itself after the reset.")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -834,7 +872,7 @@ private fun ColumnScope.TeamPanel(st: FactoryEditorState) {
             ) {
                 CrundiIcon(if (x.id == FactoryEdit.MANAGER_ID) "crown" else "user", size = 15.dp, tint = if (x.id == FactoryEdit.MANAGER_ID) CrundiColors.Yellow else CrundiColors.TextSecondary)
                 Text(x.name.ifEmpty { "Unnamed" }, style = CrundiType.Body.copy(fontWeight = FontWeight.Medium), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text((if (x.id == FactoryEdit.MANAGER_ID) "Manager" else "$steps step${if (steps == 1) "" else "s"}") + if (iss > 0) " · $iss to check" else "", style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans, color = if (iss > 0) CrundiColors.Yellow else CrundiColors.TextMuted))
+                Text((if (x.id == FactoryEdit.MANAGER_ID) "Manager" else "$steps step${if (steps == 1) "" else "s"}") + (if (!x.runsOn.isNullOrEmpty()) " · on ${x.runsOn}" else "") + if (iss > 0) " · $iss to check" else "", style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans, color = if (iss > 0) CrundiColors.Yellow else CrundiColors.TextMuted))
             }
         }
         Subtitle(if (st.rosterAddTo != null) "Add someone for this step" else "Add someone")
@@ -862,6 +900,8 @@ private fun ColumnScope.TeamPanel(st: FactoryEditorState) {
         }
         Toggle(FactoryEdit.canEditFiles(r), "Can edit files") { v -> set { FactoryEdit.setCanEditFiles(it, v) } }
     }
+    if (st.hasRunsOn) RunsOnField("ro:" + r.id, r.runsOn.orEmpty(), st.workers, "This server",
+        if (isManager) "Empty: this server. On a PC, the run pauses while that PC is offline." else "Empty: this server. On a PC, their steps wait while it is offline; a step can name its own.") { v -> set("ro:" + r.id) { it.copy(runsOn = v.take(80)) } }
     Field("Pinned skills", "Comma separated. Same as naming them in the persona.") {
         TextListField("rs:" + r.id, r.skills, "frontend-design, run", stripSlash = true) { v -> set("rs:" + r.id) { it.copy(skills = v) } }
         val offer = st.skills.map { it.name }.distinct().filter { it !in r.skills }
@@ -957,6 +997,28 @@ private fun NumField(key: String, value: Int, min: Int, max: Int, placeholder: S
         shown, { v -> text = v.filter { it.isDigit() }.take(6); onChange(if (text.isEmpty()) 0 else text.toInt().coerceIn(min, max)) },
         Modifier.width(120.dp), placeholder = placeholder, mono = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
     )
+}
+
+/**
+ * Where a chat runs, as the web's RunsOnField: a PC's name typed, or one of
+ * the owner's PCs tapped ([workers], when known); '' = this server (or, on a
+ * step, as its person).
+ */
+@Composable
+private fun RunsOnField(key: String, value: String, workers: List<mv.obitech.crundi.api.model.Worker>?, placeholder: String, hint: String, onChange: (String) -> Unit) {
+    val known = workers?.firstOrNull { value.isNotEmpty() && (it.id == value || it.name.equals(value, ignoreCase = true)) }
+    val note = when {
+        value.isNotEmpty() && workers != null && known == null -> " No PC of yours is called that; it runs on this server until one is."
+        known != null && !known.online -> " ${known.name} is offline now; its steps wait for it."
+        else -> ""
+    }
+    Field("Runs on", hint + note) {
+        CrundiTextField(value, { v -> onChange(v.take(80)) }, Modifier.fillMaxWidth(), placeholder = placeholder)
+        if (!workers.isNullOrEmpty()) {
+            val chosen = known?.name?.ifEmpty { known.id } ?: if (value.isEmpty()) "" else "\u0000"
+            ChipRow(listOf("" to placeholder) + workers.map { w -> w.name.ifEmpty { w.id }.let { n -> n to n + if (w.online) "" else " (offline)" } }, chosen) { v -> onChange(v) }
+        }
+    }
 }
 
 /** A comma separated list (skills, tool rules). */

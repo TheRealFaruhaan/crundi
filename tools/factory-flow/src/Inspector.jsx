@@ -4,6 +4,28 @@ import { Icon } from './icons.jsx';
 import { handleLabel } from './convert.js';
 import { CrTemplateEditor } from './CrTemplate.jsx';
 
+/**
+ * Where someone's chat runs: '' = this server, or a worker PC by name (or
+ * id). workers: [{ id, name, online }] offered as suggestions, null when the
+ * editor was given none (not the owner, or an older server).
+ */
+export function RunsOnField({ value, onChange, workers, hint, placeholder = 'This server', listId }) {
+  const known = (workers || []).find(w => value && (w.id === value || w.name.toLowerCase() === String(value).toLowerCase()));
+  const note = value && workers && !known ? 'No PC of yours is called that; it runs on this server until one is.'
+    : known && !known.online ? `${known.name} is offline now; its steps wait for it.` : '';
+  return (
+    <Field label="Runs on" hint={[hint, note].filter(Boolean).join(' ')}>
+      <input className="ff-input" list={workers ? listId : undefined} value={value || ''} placeholder={placeholder} maxLength={80}
+        onChange={e => onChange(e.target.value)} />
+      {workers && (
+        <datalist id={listId}>
+          {workers.map(w => <option key={w.id} value={w.name}>{w.online ? 'online' : 'offline'}</option>)}
+        </datalist>
+      )}
+    </Field>
+  );
+}
+
 const KIND_LABEL = { start: 'Start', manager: 'Manager', employee: 'Employee', decision: 'Decision', join: 'Join', ask: 'Ask me', wait: 'Wait', end: 'End' };
 
 function IssueList({ issues, onPick }) {
@@ -20,7 +42,7 @@ function IssueList({ issues, onPick }) {
   );
 }
 
-export function NodeInspector({ f, node, issues, skills, mutate, remove, openRoster }) {
+export function NodeInspector({ f, node, issues, skills, mutate, remove, openRoster, workers = null }) {
   const set = (fn, key) => mutate(d => { const n = d.nodes.find(x => x.id === node.id); if (n) fn(n, d); }, key);
   const employees = f.roster.filter(r => r.id !== MANAGER_ID);
   const forks = f.nodes.filter(n => n.type === 'decision' && n.decision.kind === 'many');
@@ -41,6 +63,15 @@ export function NodeInspector({ f, node, issues, skills, mutate, remove, openRos
             options={[{ value: '', label: 'Choose someone…' }, ...employees.map(r => ({ value: r.id, label: r.name || 'Unnamed' })), { value: '__new', label: '+ Add someone to the team…' }]} />
         </Field>
       )}
+      {(node.type === 'employee' || node.type === 'manager') && (() => {
+        const who = f.roster.find(r => r.id === (node.type === 'manager' ? MANAGER_ID : node.employeeId));
+        return (
+          <RunsOnField value={node.runsOn || ''} workers={workers} listId={'ff-pcs-' + node.id}
+            placeholder={who && who.runsOn ? `As the person: ${who.runsOn}` : 'As the person: this server'}
+            hint="Leave empty to run where the person runs (their Team setting). A worker PC's name runs this step there."
+            onChange={v => set(n => { n.runsOn = v.slice(0, 80); }, 'ro:' + node.id)} />
+        );
+      })()}
       {node.type === 'employee' && node.employeeId && <button className="ff-btn ghost" onClick={() => openRoster(node.employeeId)}><Icon name="user" size={14} />Edit their persona</button>}
       {node.type === 'manager' && <button className="ff-btn ghost" onClick={() => openRoster(MANAGER_ID)}><Icon name="crown" size={14} />Edit the Manager's persona</button>}
 
@@ -263,12 +294,23 @@ export function FactorySettings({ f, mutate, skills, secretList = null }) {
       <Field label="Manager check-in every (minutes)" hint={s.tickMinutes ? `A wake-up every ${s.tickMinutes} minutes, only while the Manager is idle; skipped otherwise. Each one is a short Manager turn.` : 'Blank: the Manager chooses at the start of each run (5 minutes to 24 hours). A wake-up only while it is idle, so it can check on things.'}>
         <Num value={s.tickMinutes || ''} min={0} max={1440} placeholder="The Manager chooses" onChange={v => set(d => { d.settings.tickMinutes = v ? Math.min(1440, Math.max(5, v)) : 0; }, 'tick')} />
       </Field>
+      <Field label="PC offline: offer to move to this server after (minutes)" hint={(s.workerOfflineMinutes ?? 30) === 0 ? '0: steps on a PC that goes offline wait for it however long it takes.' : `When a PC holding steps has been offline ${s.workerOfflineMinutes ?? 30} minutes, you are told and can move its steps to this server (the run's Details). Only matters for people who run on a PC.`}>
+        <Num value={s.workerOfflineMinutes ?? 30} min={0} max={1440} onChange={v => set(d => { d.settings.workerOfflineMinutes = Math.min(1440, Math.max(0, v || 0)); }, 'pcAway')} />
+      </Field>
       <div className="ff-subtitle">Usage</div>
       <p className="ff-hint">Your Claude usage is shared with your own chats. These keep a run inside what you choose; each can also be changed on a running run.</p>
       <div className="ff-grid2">
         <Field label="5-hour, pause at %"><Num value={s.limits.pauseAt5h} min={50} max={100} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, pauseAt5h: v || 100 }; }, 'lim1')} /></Field>
         <Field label="Weekly, pause at %"><Num value={s.limits.pauseAtWeek} min={50} max={100} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, pauseAtWeek: v || 100 }; }, 'lim2')} /></Field>
       </div>
+      <Toggle checked={!!s.limits.paceOnly} label="Pause only when ahead of pace" onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, paceOnly: v }; }, 'lim5')} />
+      {s.limits.paceOnly ? (
+        <div className="ff-grid2">
+          <Field label="Always pause at %" hint="The hard ceiling, whatever the pace"><Num value={s.limits.paceCeiling ?? 100} min={50} max={100} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, paceCeiling: v || 100 }; }, 'lim6')} /></Field>
+          <Field label="Resume when behind pace by" hint="Points. 0: wait for the reset"><Num value={s.limits.paceResumeBehind || 0} min={0} max={50} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, paceResumeBehind: v || 0 }; }, 'lim7')} /></Field>
+        </div>
+      ) : null}
+      {s.limits.paceOnly ? <p className="ff-hint">Past the line above, it keeps going while the window's use is behind the time passed in it (say 85% used with 90% of the 5 hours gone), and pauses once it gets ahead. Paused that way, it carries on at the reset, or sooner once it is as many points behind pace as you set.</p> : null}
       <p className="ff-hint">{s.limits.pauseAt5h < 100 || s.limits.pauseAtWeek < 100 ? 'It pauses there and carries on by itself after the window resets, leaving the rest for you.' : 'At 100% it pauses only when a window is full, and carries on by itself after the reset.'}</p>
       <div className="ff-grid2">
         <Field label="People at once" hint="0: no limit"><Num value={s.limits.maxParallel} min={0} max={20} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, maxParallel: v || 0 }; }, 'lim3')} /></Field>

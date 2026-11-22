@@ -23,3 +23,6 @@ Temppushdata*/
 
 # Bundled browser (fetched by CI / the installer, never committed)
 chrome/
+
+# The worker binary the release jobs put inside the PC client (worker/, Rust)
+build/worker/

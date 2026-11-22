@@ -1,6 +1,7 @@
 package mv.obitech.crundi.api
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.transformWhile
@@ -87,6 +88,32 @@ class DockerShell internal constructor(private val socket: LiveSocket, val conta
     fun input(data: String) = socket.send(msg("type" to "docker-shell-input", "ref" to ref, "data" to data))
     fun resize(cols: Int, rows: Int) = socket.send(msg("type" to "docker-shell-resize", "ref" to ref, "cols" to cols, "rows" to rows))
 }
+
+/**
+ * A shell on a worker PC, over the UI websocket (worker-term-* messages,
+ * specs/workers-protocol.md), the same way as [DockerShell]. Collect
+ * [events] to open it; cancelling closes it.
+ */
+class WorkerTerminal internal constructor(private val socket: LiveSocket, val workerId: String, cols: Int, rows: Int) {
+    val ref = newRef("w")
+    val events: Flow<DockerShellEvent> = socket.messages("wterm:$ref", msg("type" to "worker-term-open", "ref" to ref, "worker" to workerId, "cols" to cols, "rows" to rows), msg("type" to "worker-term-close", "ref" to ref)) {
+        it.type().startsWith("worker-term") && (it["ref"] as? JsonPrimitive)?.contentOrNull == ref
+    }.mapNotNull { m ->
+        when (m.type()) {
+            "worker-term-data" -> DockerShellEvent.Data((m["data"] as? JsonPrimitive)?.contentOrNull ?: "")
+            "worker-term-exit" -> DockerShellEvent.Exited((m["code"] as? JsonPrimitive)?.intOrNull ?: 0)
+            "worker-term-error" -> DockerShellEvent.Failed((m["error"] as? JsonPrimitive)?.contentOrNull ?: "The terminal could not open")
+            else -> null
+        }
+    }.transformWhile { emit(it); it is DockerShellEvent.Data }
+
+    fun input(data: String) = socket.send(msg("type" to "worker-term-input", "ref" to ref, "data" to data))
+    fun resize(cols: Int, rows: Int) = socket.send(msg("type" to "worker-term-resize", "ref" to ref, "cols" to cols, "rows" to rows))
+}
+
+/** `{type:"workers"}` pushes on the UI websocket: something about the workers changed. */
+internal fun workerChanges(socket: LiveSocket): Flow<Unit> =
+    socket.messages(null, null, null) { it.type() == "workers" }.map { }
 
 /** Live server log lines (after [SystemApi.logs] for the backlog). */
 internal fun serverLogs(socket: LiveSocket): Flow<ServerLog> =

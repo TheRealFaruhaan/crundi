@@ -106,6 +106,12 @@ data class TerminalUi(
     val upload: TermUpload? = null,
     /** The workbench is in swipe columns (lights Layout); null outside the workbench (no Layout button). */
     val columns: Boolean? = null,
+    /** The PC this terminal's Claude runs on (as a chat's); null when it runs here. */
+    val pc: mv.obitech.crundi.api.model.ChatPc? = null,
+    /** Bringing its changes back from the PC now. */
+    val pulling: Boolean = false,
+    /** The last notice the PC sent about it. */
+    val notice: String = "",
 )
 
 /**
@@ -131,6 +137,7 @@ fun TerminalScreen(
     onAttach: (() -> Unit)? = null,
     onLayout: (() -> Unit)? = null,
     onSize: (Int, Int) -> Unit = { _, _ -> },
+    onPull: () -> Unit = {},
     radialAt: androidx.compose.ui.geometry.Offset? = null,
     startAtTop: Boolean = false,
     modifier: Modifier = Modifier,
@@ -142,6 +149,8 @@ fun TerminalScreen(
             CrundiIconButton("plus", { onFont(1) }, contentDescription = "Larger text", size = 16.dp)
             CrundiIconButton("pencil", onRename, contentDescription = "Rename terminal", size = 16.dp)
         }
+        ui.pc?.let { mv.obitech.crundi.ui.chats.PcBar(it, ui.pulling, onPull) }
+        if (ui.notice.isNotEmpty()) Banner(ui.notice, Modifier.fillMaxWidth().padding(8.dp))
         if (ui.exited != null) Banner("The process ended (code ${ui.exited}). Close this terminal or open a new one.", Modifier.fillMaxWidth().padding(8.dp), kind = BadgeKind.Warn, icon = "alert-triangle")
         else if (!ui.connected) Banner("Reconnecting to the server", Modifier.fillMaxWidth().padding(8.dp), kind = BadgeKind.Warn, icon = "refresh")
         val appCursor = emu.appCursorKeys
@@ -187,6 +196,7 @@ fun TerminalRoute(id: String) {
     var selecting by remember { mutableStateOf(false) }
     var upload by remember { mutableStateOf<TermUpload?>(null) }
     var renaming by remember { mutableStateOf(false) }
+    var pulling by remember { mutableStateOf(false) }
     val live by remember(api, id) { api.events.state.map { s -> s?.terminals?.firstOrNull { it.id == id } } }.collectAsState(initial = null)
     val status by remember(api) { api.socket.status }.collectAsState(initial = null)
     val project = live?.project ?: services.shell.state.collectAsState().value.currentProject
@@ -237,6 +247,7 @@ fun TerminalRoute(id: String) {
             connected = status != LiveStatus.Reconnecting && status != LiveStatus.Offline,
             tools = tools && !chatFocused, selecting = selecting, upload = upload,
             columns = if (pane != null && wb != null) wb.layout == WbLayout.Columns else null,
+            pc = live?.runsOn, pulling = pulling, notice = live?.notice.orEmpty(),
         ),
         emu, version,
         inPane = pane != null && !pane.full,
@@ -257,6 +268,21 @@ fun TerminalRoute(id: String) {
         onAttach = if (project != null) pick else null,
         onLayout = wb?.let { { it.toggleLayout() } },
         onSize = { c, r -> emu.resize(c, r); version = emu.version; stream.resize(c, r) },
+        onPull = {
+            // A terminal on a PC: bring its changes back, as a chat's (POST /api/workers chat-pull).
+            if (!pulling) {
+                pulling = true
+                scope.launch {
+                    runCatching { api.workers.pullChat(id) }
+                        .onSuccess { toast(it.words) }
+                        .onFailure { e ->
+                            val m = errorText(e)
+                            toast(if (m == mv.obitech.crundi.ui.components.ErrorWords.NOT_SUPPORTED) m else "Could not bring the changes back: $m")
+                        }
+                    pulling = false
+                }
+            }
+        },
         modifier = Modifier.paneDropTarget("term:$id", DropKind.Terminal)
             .then(if (PaneDrop.hovered("term:$id")) Modifier.border(2.dp, CrundiColors.Accent) else Modifier),
     )

@@ -497,29 +497,39 @@ fun AreaChart(series: List<Pair<List<Float>, Color>>, max: Float?, modifier: Mod
 @Composable
 private fun ShellTab(c: Container, shell: ShellView, events: ContainerEvents) {
     if (!c.running) { Text("Start the container to open a shell in it.", style = CrundiType.Small, modifier = Modifier.padding(Dimens.ScreenPad)); return }
+    ShellPane("A shell inside ${c.name} (bash when the image has it, else sh)", shell, events.onShellInput, events.onShellRestart)
+}
+
+/**
+ * A line-mode terminal: the output folded through [Ansi], a row of the keys a
+ * phone keyboard does not have, and a line to type into. Used by a
+ * container's shell and a worker's terminal.
+ */
+@Composable
+fun ShellPane(caption: String, shell: ShellView, onInput: (String) -> Unit, onRestart: () -> Unit, modifier: Modifier = Modifier, opening: String = "Opening a shell…") {
     var line by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().imePadding()) {
+    Column(modifier.fillMaxSize().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(start = Dimens.ScreenPad, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("A shell inside ${c.name} (bash when the image has it, else sh)", style = CrundiType.Small, modifier = Modifier.weight(1f))
-            CrundiButton("New shell", events.onShellRestart, kind = ButtonKind.Ghost, icon = "refresh")
+            Text(caption, style = CrundiType.Small, modifier = Modifier.weight(1f))
+            CrundiButton("New shell", onRestart, kind = ButtonKind.Ghost, icon = "refresh")
         }
         val list = rememberLazyListState()
         LaunchedEffect(shell.lines.size) { if (shell.lines.isNotEmpty()) list.scrollToItem(shell.lines.size - 1) }
         LazyColumn(Modifier.weight(1f).fillMaxWidth().background(CrundiColors.BgPrimary), state = list, contentPadding = PaddingValues(10.dp)) {
             items(shell.lines) { l -> Text(Ansi.render(l, CrundiColors.TextPrimary), style = CrundiType.Code.copy(fontSize = 12.sp, lineHeight = 16.sp)) }
             shell.ended?.let { e -> item { Text(e, style = CrundiType.Meta.copy(fontStyle = FontStyle.Italic, color = CrundiColors.Yellow), modifier = Modifier.padding(top = 6.dp)) } }
-            if (!shell.open && shell.ended == null && shell.lines.isEmpty()) item { Text("Opening a shell…", style = CrundiType.Meta) }
+            if (!shell.open && shell.ended == null && shell.lines.isEmpty()) item { Text(opening, style = CrundiType.Meta) }
         }
-        if (shell.ended != null) Row(Modifier.padding(8.dp)) { CrundiButton("Open again", events.onShellRestart, kind = ButtonKind.Primary, icon = "terminal") }
+        if (shell.ended != null) Row(Modifier.padding(8.dp)) { CrundiButton("Open again", onRestart, kind = ButtonKind.Primary, icon = "terminal") }
         // The keys a phone keyboard does not have.
         Row(Modifier.fillMaxWidth().background(CrundiColors.BgSecondary).horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             for ((label, seq) in listOf("Esc" to "\u001b", "Tab" to "\t", "Ctrl-C" to "\u0003", "Ctrl-D" to "\u0004", "\u2190" to "\u001b[D", "\u2191" to "\u001b[A", "\u2193" to "\u001b[B", "\u2192" to "\u001b[C"))
-                CrundiChip(label, false, { events.onShellInput(seq) })
+                CrundiChip(label, false, { onInput(seq) })
         }
         Row(Modifier.fillMaxWidth().background(CrundiColors.BgSecondary).padding(start = 8.dp, end = 4.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             CrundiTextField(line, { line = it }, Modifier.weight(1f), placeholder = "Type a command", mono = true, enabled = shell.open,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { events.onShellInput(line + "\r"); line = "" }))
-            CrundiIconButton("send", { events.onShellInput(line + "\r"); line = "" }, contentDescription = "Send", tint = CrundiColors.AccentHover, enabled = shell.open)
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { onInput(line + "\r"); line = "" }))
+            CrundiIconButton("send", { onInput(line + "\r"); line = "" }, contentDescription = "Send", tint = CrundiColors.AccentHover, enabled = shell.open)
         }
     }
 }

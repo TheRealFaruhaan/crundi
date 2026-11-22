@@ -136,6 +136,7 @@ import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.
 import { transfer as transferFiles, listableDir } from './file-transfer.js';
 import { createTunnelEndpoint } from './net-tunnel.js';
 import { createHomepoolService, HOMEPOOL_MCP_TOOLS } from './homepool-service.js';
+import { createWorkersService } from './workers.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1024,6 +1025,56 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     send: (b) => browserMod.sendParentTunnel(b),
     connectVia: (spec) => homepool.browserConnect({ ...spec, deviceId: process.env.CRUNDI_DEVICE_ID || '' }),
   }));
+  // ─── Workers: PCs that join as workers (src/workers.js, specs/workers-protocol.md) ───
+  // Owner only. Every change is pushed to the owner's pages (SSE "workers",
+  // and {type:"workers"} on their websockets) so they refetch.
+  const ownerSockets = new Set();
+  // A job a chat started (worker_run) shows as a live card in that chat:
+  // job id -> { chatId, entryId, last, timer }. Updated at most once a second;
+  // its end at once.
+  const jobCards = new Map();
+  function jobCardView(id) {
+    const v = workers && workers.jobs.view(id, 4096);
+    return v ? { ...v, kind: 'worker-job' } : null;
+  }
+  function onJobUpdate(id, final) {
+    const c = jobCards.get(id);
+    if (!c || !claudeUi) return;
+    const put = () => {
+      c.timer = null; c.last = Date.now();
+      const v = jobCardView(id);
+      if (v) { const { kind, ...patch } = v; claudeUi.patchCard(c.chatId, c.entryId, patch); }
+      if (final) jobCards.delete(id);
+    };
+    if (final) { clearTimeout(c.timer); put(); return; }
+    if (c.timer) return;
+    c.timer = setTimeout(put, Math.max(0, 1000 - (Date.now() - (c.last || 0))));
+    c.timer.unref?.();
+  }
+  const workers = createWorkersService({
+    dataDir: config.dataDir,
+    serverVersion: APP_VERSION,
+    log: (m) => console.log(m),
+    onJob: (id, final) => onJobUpdate(id, final),
+    // A chat on a PC calls its tools here, as that chat (src/workers-chats.js).
+    mcpApi: () => ({ url: (claudeUi && claudeUi.apiUrl) || '', key: internalApiKey }),
+    onChange: () => {
+      try { broadcastOwnerSSE('workers', {}); } catch { /* not up yet */ }
+      for (const s of ownerSockets) { try { if (s.readyState === 1) s.send('{"type":"workers"}'); } catch { /* closing */ } }
+      // A chat on a PC shows when its PC comes and goes ("PC offline").
+      try { if (claudeUi?.remoteChanged?.()) broadcastState(); } catch { /* best effort */ }
+      // And a terminal on a PC, the same way.
+      try { if (claudeTerminals?.remoteChanged?.()) broadcastState(); } catch { /* best effort */ }
+    },
+  });
+  // Chats on a PC (where: 'worker:<id>'): claude-ui starts them through the
+  // worker launcher, and their work comes back at each turn end.
+  claudeUi?.setRemote?.({ launch: (where, o) => workers.chats.launch(where, o), status: (where, id) => workers.chats.status(where, id) });
+  claudeUi?.onTurnEnd?.((id) => workers.chats.onTurnEnd(id));
+  // Terminal mode on a PC (and an Empty Shell there): the same chats underneath,
+  // in a pseudo-terminal; brought back on demand only (chat-pull).
+  claudeTerminals?.setRemote?.({ launch: (where, o) => workers.chats.launchPty(where, o), status: (where, id) => workers.chats.status(where, id) });
+
   let homepoolStarted = false;
   function startHomepool() {
     if (homepoolStarted || process.env.HOMEPOOL_DISABLE === '1') return;
@@ -1103,6 +1154,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   const factoryRunner = claudeUi ? createFactoryRunner({
     dataDir: config.dataDir,
     agents: claudeUiAgents(claudeUi, { dataDir: config.dataDir }),
+    // Steps on a PC (phase 5): pull a chat's work, find a PC, hear it come and go.
+    workersApi: workers.workersApi,
     getProject: (alias) => getProjectUnscoped(alias),
     getFactory: (id) => factoryStore.getFactory(id),
     // The factory's secrets: a PIN typed at the start is checked here and its
@@ -1129,6 +1182,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const id = run && run.managerChatId;
         const meta = id ? { url: `/chat/${id}`, title: `Factory: ${run.factoryName}`, chat: { id, title: `Factory: ${run.factoryName}`, project: run.project || '', mark: markOf(run.project || '', run.factoryName) } } : {};
         notifyEvent('factory', text, meta);
+        // A PC away too long holding a run's steps needs the owner's choice
+        // (move them here, or wait): in the inbox even with factory pings off.
+        if (kind === 'worker-away' && notifyPrefs.factory === 'never') ownerMsg.post({ kind: 'system', text, channelText: text, project: (run && run.project) || '', meta: { tag: 'factory-worker-away', ...(id ? { url: `/chat/${id}` } : {}) } });
       } catch { /* best effort */ }
       // A run started from a kanban card: the card follows the work.
       try {
@@ -2164,6 +2220,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   });
   // A Claude terminal pane takes the title Claude Code shows for its session.
   if (claudeTerminals && claudeTerminals.onAutoTitle) claudeTerminals.onAutoTitle(() => { broadcastState(); retitleLiveCards(); });
+  // A terminal on a PC: no hooks reach from there, so its state comes from its
+  // output (claude-terminals.js), and a notice from its PC shows in its bar.
+  if (claudeTerminals && claudeTerminals.onRemoteState) claudeTerminals.onRemoteState((id, state) => handleAgentState(id, state, Date.now()));
+  if (claudeTerminals && claudeTerminals.onMeta) claudeTerminals.onMeta(() => broadcastState());
   // Titles follow the work, mid-chat. At the end of a turn, in the
   // background (nothing waits for it), the chat is titled again from the
   // person's latest requests, and renamed only when its Claude Code judges
@@ -2314,9 +2374,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // Always fetch (so the usage HISTORY / graph keeps updating even with no
   // viewer); getUsage is cached (~1 real Anthropic call per minute). Push to SSE
   // clients only when some are connected.
+  // A stale reading says so in words, for voice and the MCP tool.
+  function withUsageNote(u) {
+    if (!u || !u.stale) return u;
+    const why = `The live usage could not be read (${u.error || 'unavailable'})`;
+    return { ...u, note: u.fromClaude ? `${why}; these figures are from Claude Code's own report at ${u.fetchedAt}.` : `${why}; these are the last figures, from ${u.fetchedAt}.` };
+  }
   async function broadcastUsage(force = false) {
     try {
-      const u = await usage.getUsage({ force });
+      // The freshest known reading: a 429 pushes the last good one (marked
+      // stale, with its real time) rather than nothing, so a client that has
+      // just reconnected doesn't keep the figures it had hours ago.
+      const u = await usage.getUsageView({ force });
       // Owners only. This is the ACCOUNT's 5-hour and weekly usage, and it was
       // reaching collaborators' topbars too.
       if (sseClients.size) {
@@ -2820,20 +2889,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     schedules: (project) => schedule.listSchedules(project),
     // Live when it can be had; otherwise the last good reading (what the top
     // bar shows), so a rate-limited usage API never leaves voice with nothing.
-    usage: async () => {
-      const live = await usage.getUsage();
-      if (live && live.ok) return live;
-      const last = usage.getLatestStored();
-      // Claude Code's own report (rate_limit_event) when it is newer than the last API reading.
-      const cc = usage.getLatestReading();
-      const lastAt = last.ok ? Date.parse(last.fetchedAt) || 0 : 0;
-      if (cc.at > lastAt && (cc.fiveHour || cc.week)) {
-        const pick = (w, old) => (w ? { utilization: w.utilization, resetsAt: w.resetsAt } : old || null);
-        const at = new Date(cc.at).toISOString();
-        return { ok: true, fromClaude: true, fetchedAt: at, fiveHour: pick(cc.fiveHour, last.fiveHour), week: pick(cc.week, last.week), note: `The usage API could not be read (${live?.error || 'unavailable'}); these figures are from Claude Code's own report at ${at}.` };
-      }
-      return last.ok ? { ...last, note: `The live usage could not be read (${live?.error || 'unavailable'}); these are the last figures, from ${last.fetchedAt}.` } : live;
-    },
+    usage: async () => withUsageNote(await usage.getUsageView()),
     secrets: () => secrets.listSecrets(),
     chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
     // Parked (sleeping) chats: no process, so claudeUi does not list them.
@@ -3059,6 +3115,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // rate_limit_event from any chat or Cru turn, which keeps coming while the
   // API answers 429. Pushed, not polled: a crossing wakes Cru at once.
   usage.onUsageReading((r) => { try { wakeEngine.usage(r); } catch (err) { console.warn('[voice] usage trigger check failed:', err.message); } });
+  // Claude Code's report reaches the meters too, so they move with every
+  // chat turn while the API is rate limited (at most every 15 s; an API
+  // reading is already being broadcast by whoever fetched it).
+  let ccUsagePushAt = 0;
+  usage.onUsageReading((r) => {
+    if (!r || r.source !== 'claude' || Date.now() - ccUsagePushAt < 15_000) return;
+    ccUsagePushAt = Date.now();
+    broadcastUsage();
+  });
   // What chats do, for the chat_finished / chat_waiting / collaborator triggers.
   const wakeTold = new Map();   // chat id -> pending card ids already told
   if (claudeUi && claudeUi.onTurnEnd) claudeUi.onTurnEnd((id) => {
@@ -4710,6 +4775,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // The standalone homepool node's code: public, it is code and no data.
     if (homepool.handlePublic(req, res, path)) return;
+    // A PC joining as a worker with a one-time code (the code is the credential).
+    if (await workers.handlePublic(req, res, path)) return;
 
     // All other API routes require auth
     if (!path.startsWith('/api/')) return json(res, { error: 'Not found' }, 404);
@@ -4759,6 +4826,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // ─── Homepool (owner only; src/homepool-service.js) ───
     if (path.startsWith('/api/homepool') && await homepool.handleApi(req, res, path, {
+      principal, readBody, json,
+      isOwner: (p) => !!p && p.role === ROLE_OWNER && !isConfined(p),
+    })) return;
+
+    // ─── Workers (owner only; src/workers.js) ───
+    if (path === '/api/workers' && await workers.handleApi(req, res, path, {
       principal, readBody, json,
       isOwner: (p) => !!p && p.role === ROLE_OWNER && !isConfined(p),
     })) return;
@@ -5106,7 +5179,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // With the skills every project can see, so the editor can flag the rest.
       let known = null;
       try { known = new Set((skills.list().skills || []).filter(x => x.scope === 'global' || x.scope === 'synced').map(x => x.name)); } catch { known = null; }
-      return json(res, { ok: true, factory: r.factory, validation: validateFactory(r.factory, { skills: known }) });
+      // And the worker PCs, so a "Runs on" naming none of them is flagged.
+      let knownWorkers = null;
+      try { knownWorkers = workers.list().workers.map(w => ({ id: w.id, name: w.name })); } catch { knownWorkers = null; }
+      return json(res, { ok: true, factory: r.factory, validation: validateFactory(r.factory, { skills: known, knownWorkers }) });
     }
     if (path === '/api/factories/export' && req.method === 'GET') {
       return json(res, factoryStore.exportFactory(url.searchParams.get('id')));
@@ -5219,6 +5295,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         case 'recover': result = await factoryRunner.recover(body.id, { note: body.note || '' }); break;
         case 'ask': result = await factoryRunner.askReply(body.id, body.tokenId, body.replyId, body.note || ''); break;
         case 'limits': result = await factoryRunner.setLimits(body.id, body.limits || {}); break;
+        // A PC holding steps stayed away: run them here instead (the run's Details).
+        case 'moveToServer': result = await factoryRunner.moveToServer(body.id, { worker: String(body.worker || '') }); break;
         case 'endWait': result = await factoryRunner.endWait(body.id, body.tokenId, { outcome: body.outcome, note: body.note || '' }); break;
         case 'managerMode': result = await factoryRunner.setManagerMode(body.id, body.mode); break;
         case 'teamMode': result = await factoryRunner.setTeamMode(body.id, body.mode); break;
@@ -5952,7 +6030,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     if (path === '/api/usage' && req.method === 'GET') {
       const force = url.searchParams.get('force') === '1';
-      return json(res, await usage.getUsage({ force }));
+      return json(res, await usage.getUsageView({ force }));
     }
     // Last stored sample — instant, no network call (shown on load).
     if (path === '/api/usage/latest' && req.method === 'GET') {
@@ -6305,12 +6383,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!body.project) return json(res, { ok: false, error: 'project is required' }, 400);
       // Only a parked pane coming back picks its own id and slot (panes.js).
       delete body.id; delete body.order;
+      // On a PC: the owner's only (as a chat there).
+      if (body.where && body.where !== 'server' && isConfined(principal)) return json(res, { ok: false, error: 'Terminals on a PC are the owner\'s only.' }, 403);
       const result = await claudeTerminals.create(body.project, body);
       // A terminal continues the same conversation somewhere we can't observe,
       // so the transcript we stored for UI replay is about to become a stale
       // prefix. Drop it — a later UI message rewrites it. Shell-only terminals
       // don't run Claude, so they leave it alone.
-      if (result?.ok && !body.shell && claudeUi?.clearHistory) claudeUi.clearHistory(body.project);
+      // (Not one on a PC: its conversation is the PC's, not this server's.)
+      if (result?.ok && !body.shell && !(body.where && body.where !== 'server') && claudeUi?.clearHistory) claudeUi.clearHistory(body.project);
       broadcastState();
       return json(res, result);
     }
@@ -8279,6 +8360,25 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!body.tool) return json(res, { ok: false, error: 'Missing tool name' }, 400);
       const a = body.args = (body.args || {});
 
+      // Workers: the owner's chats only, never a collaborator's.
+      if (body.tool === 'worker_list' || body.tool === 'worker_run' || body.tool === 'worker_job') {
+        if (mcpCollabKey) return json(res, { ok: false, error: 'Workers are not available to collaborator chats.' }, 403);
+        if (body.tool === 'worker_list') return json(res, workers.mcpList());
+        if (body.tool === 'worker_job') return json(res, await workers.mcpJob(a));
+        const proj = a.alias ? getProjectUnscoped(String(a.alias)) : null;
+        if (!proj || !proj.path) return json(res, { ok: false, error: 'worker_run needs a chat in a project.' });
+        const chatId = String(a.sessionId || '');
+        // The card goes in as soon as the job has an id, before worker_run waits.
+        const onStarted = (jobId) => {
+          if (!chatId || !claudeUi || !claudeUi.has || !claudeUi.has(chatId)) return;
+          const v = jobCardView(jobId);
+          const r = v && claudeUi.addCard(chatId, v);
+          if (r && r.ok) jobCards.set(jobId, { chatId, entryId: r.entryId, last: 0, timer: null });
+        };
+        try { return json(res, await workers.mcpRun(a, { projectPath: proj.path, chatId, onStarted })); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+
       // Homepool: the owner's chats only, each within the key the owner gave
       // it (or approved). Which chat is asking is proven by its chat token.
       if (HOMEPOOL_MCP_TOOLS.includes(body.tool)) {
@@ -8507,7 +8607,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
       if (body.tool === 'factory_control') {
         if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
-        try { return json(res, await factoryRunner.controlFromManager(String(a.sessionId || ''), { action: a.action, reason: a.reason || '', limits: a.limits || null, mode: a.mode === 'now' ? 'now' : '', resumeOnReset: !!a.resumeOnReset })); }
+        try { return json(res, await factoryRunner.controlFromManager(String(a.sessionId || ''), { action: a.action, reason: a.reason || '', limits: a.limits || null, mode: a.mode === 'now' ? 'now' : '', resumeOnReset: !!a.resumeOnReset, worker: String(a.worker || '') })); }
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
       if (body.tool === 'factory_status') {
@@ -8539,7 +8639,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
             }
             case 'factory_validate': {
               if (!a.definition || typeof a.definition !== 'object') return json(res, { ok: false, error: 'Give the definition (see factory_guide).' });
-              const v = validateFactory(a.definition);
+              let knownWorkers = null;
+              try { knownWorkers = workers.list().workers.map(w => ({ id: w.id, name: w.name })); } catch { knownWorkers = null; }
+              const v = validateFactory(a.definition, { knownWorkers });
               return json(res, { ok: true, runnable: v.ok, errors: v.errors, warnings: v.warnings });
             }
             case 'factory_save': {
@@ -8735,7 +8837,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
       // ─── Claude usage (real, account-wide limits) ───
       if (body.tool === 'get_usage') {
-        return json(res, await usage.getUsage({ force: !!a.force }));
+        return json(res, withUsageNote(await usage.getUsageView({ force: !!a.force })));
       }
 
       // ─── Secret search (no approval — metadata only, never the value) ───
@@ -9050,6 +9152,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
       // A homepool node (signed in with its node key, not a Crundi login).
       if (homepool.handleUpgrade(req, socket, head)) return;
+      // A worker's link (signed in with its worker key).
+      if (workers.handleUpgrade(req, socket, head)) return;
 
       const url = new URL(req.url, 'http://localhost');
       // Live speech to text (voice/stream.js): the owner only.
@@ -9125,6 +9229,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // whole server log.
       const principal = req ? validateToken(req) : null;
       const confined = isConfined(principal);
+      // The owner's pages hear about workers changing, and may open a
+      // terminal on one of his PCs (relayed by src/workers.js).
+      const workerTerms = confined ? null : workers.uiTerminals((m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); });
+      if (!confined) { ownerSockets.add(ws); ws.on('close', () => { ownerSockets.delete(ws); workerTerms.closeAll(); }); }
       // The owner's PC app: its connection is always open, so Cru can speak there unasked.
       if (!confined && req && clientVersion.identifyClient(req).kind === 'desktop') {
         desktopSockets.add(ws);
@@ -9201,6 +9309,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Set when this socket is acting as the server's native host (a desktop
       // app lending us its GUI for the browser panel).
       let detachHost = null;
+      let hostRec = null;   // { id, deviceId } of that host, once registered
       // Its browser tabs on this server's network: streams carried as binary
       // frames on this same socket (see net-tunnel.js). Exists only once the
       // app has registered as a native host, which a collaborator cannot.
@@ -9219,19 +9328,27 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         if (msg.type === 'register-native-host') {
           if (confined) return;                         // not a collaborator's to offer
           if (detachHost) return;                       // already registered
+          // One of possibly several desktop apps: each keeps its own pages,
+          // tunnel and homepool endpoint (all per socket, below).
+          hostRec = { deviceId: typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 80) : '' };
           detachHost = browserMod.setRemoteHost({
             send: (m) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'native-host', payload: m })); },
             // What this app version can do. Absent from older clients, which is
             // exactly what it is here to tell us.
             capabilities: Array.isArray(msg.capabilities) ? msg.capabilities : [],
             // This app's device (as its homepool node knows it), if it says.
-            deviceId: typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 80) : '',
+            deviceId: hostRec.deviceId,
+            // Newer clients say who they are (all optional; older ones do not).
+            name: typeof msg.name === 'string' ? msg.name : '',
+            kind: typeof msg.clientKind === 'string' ? msg.clientKind : '',
+            version: typeof msg.version === 'string' ? msg.version : '',
           });
+          hostRec.id = detachHost.hostId || null;
           hostTunnel = createTunnelEndpoint({
             send: (b) => { if (ws.readyState === 1) ws.send(b, { binary: true }); },
             buffered: () => ws.bufferedAmount,
             // Drawer tabs on a homepool network: through the PC browser key.
-            connectVia: (spec) => homepool.browserConnect({ ...spec, deviceId: typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 80) : '' }),
+            connectVia: (spec) => homepool.browserConnect({ ...spec, deviceId: hostRec.deviceId }),
           });
           console.log('[crundi] Desktop app attached as native host');
           // features: what this server offers the app (absent on older servers).
@@ -9240,7 +9357,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         }
         // A reply coming back from that desktop app.
         if (msg.type === 'native-host-result') {
-          browserMod.handleHostMessage(msg.payload);
+          if (detachHost) browserMod.handleHostMessage(msg.payload, hostRec && hostRec.id);
+          return;
+        }
+        // The person brought this desktop app to the front: new pages go to it.
+        // Sent by newer clients only; with older ones the latest to connect wins.
+        if (msg.type === 'native-host-active') {
+          if (detachHost && hostRec && hostRec.id) browserMod.markHostUsed(hostRec.id);
           return;
         }
 
@@ -9297,6 +9420,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         // ─── Docker: live logs and a shell inside a container ───
         // Owner-only, like the routes: the daemon is shared and a shell in a
         // container is root on whatever it mounts.
+        // ─── A terminal on one of the owner's worker PCs ───
+        if (typeof msg.type === 'string' && msg.type.startsWith('worker-term-')) {
+          if (!workerTerms) return;
+          const op = msg.type.slice('worker-term-'.length);
+          if (['open', 'input', 'resize', 'close'].includes(op)) workerTerms[op](msg);
+          return;
+        }
+
         if (typeof msg.type === 'string' && msg.type.startsWith('docker-')) {
           if (confined) return;
           handleDockerMessage(msg);
@@ -9561,6 +9692,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       sseClients.clear();
       if (wss) { wss.close(); wss = null; }
       if (homepoolStarted) { try { homepool.stop(); } catch { /* shutting down anyway */ } homepoolStarted = false; }
+      try { workers.dispose(); } catch { /* shutting down anyway */ }
       stopTunnel(TUNNEL_KEY);
       if (server) { server.close(); server = null; }
       if (localServer) { try { localServer.close(); } catch { /* ignore */ } localServer = null; }

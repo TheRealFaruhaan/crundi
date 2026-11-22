@@ -1,0 +1,15 @@
+<div class="wna a-fpa">
+  <div class="card"><div class="t">Run: drawer fix</div><div class="row"><span class="dot"></span>farhan-RP-15 offline for over 30 min: Frontend dev waits</div><div class="btn">Move to this server</div></div>
+  <div class="ok">Frontend dev carries on here, from the run's worktree</div>
+  <style>
+    .a-fpa{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:13px}
+    .a-fpa .card{position:absolute;left:90px;top:80px;width:460px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);padding:14px}
+    .a-fpa .t{font-weight:600;margin-bottom:10px}
+    .a-fpa .row{color:var(--text-muted);margin-bottom:12px}
+    .a-fpa .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--text-muted);margin-right:7px}
+    .a-fpa .btn{display:inline-block;padding:7px 14px;border-radius:8px;border:1px solid var(--accent);animation:afpaB 9s infinite}
+    .a-fpa .ok{position:absolute;left:90px;top:220px;width:460px;padding:10px 14px;border-radius:10px;background:var(--accent-dim);opacity:0;animation:afpaO 9s infinite}
+    @keyframes afpaB{0%,30%{background:transparent}36%,44%{background:var(--accent);color:#fff}50%,100%{background:transparent}}
+    @keyframes afpaO{0%,44%{opacity:0}52%,94%{opacity:1}100%{opacity:0}}
+  </style>
+</div>

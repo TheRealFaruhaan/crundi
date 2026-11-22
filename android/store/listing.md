@@ -61,6 +61,24 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.4-dev.1 (en-US)
+
+Version code 74. Internal track. Since 1.1.3 (code 73): Workers (your PCs
+joined to the server: list, Add a PC, a PC's page with its terminal, jobs,
+switches, "only when away" and "not on battery", versions); live job cards
+in chats; chats, Terminal and Empty Shell on a PC (Runs on in the
+launcher, PC badge, Bring changes back); factory Runs on, PC offline time
+limit and Move to this server; factory pacing limits. Server 1.21.8-dev.6.
+
+```
+<en-US>
+- Workers: your PCs joined to your server, with their specs, a terminal, and their jobs.
+- Run a chat, a terminal or a shell on one of your PCs: pick it in Runs on.
+- Builds on your PC show live in the chat, with Cancel and the files that come back.
+- Factory steps can run on a PC; factories can pause only when ahead of your usage pace.
+</en-US>
+```
+
 ## Release notes, 1.1.3 (en-US)
 
 Version code 73. Production (first on the Internal track, promoted to

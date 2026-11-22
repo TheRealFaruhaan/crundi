@@ -254,9 +254,9 @@ if [ "$PREBUILT" -eq 1 ]; then
 else
 say "Installing dependencies (production only) — this compiles node-pty, so give it a minute"
 NPM_LOG="$(mktemp)"
-if ! ( cd "$PREFIX" && npm ci --omit=dev --no-audit --no-fund ) >"$NPM_LOG" 2>&1; then
+if ! ( cd "$PREFIX" && npm_config_onnxruntime_node_install_cuda=skip npm ci --omit=dev --no-audit --no-fund ) >"$NPM_LOG" 2>&1; then
   # ci insists the lockfile match exactly; fall back before giving up.
-  if ! ( cd "$PREFIX" && npm install --omit=dev --no-audit --no-fund ) >>"$NPM_LOG" 2>&1; then
+  if ! ( cd "$PREFIX" && npm_config_onnxruntime_node_install_cuda=skip npm install --omit=dev --no-audit --no-fund ) >>"$NPM_LOG" 2>&1; then
     warn "Dependency install failed. The last of the output:"
     tail -25 "$NPM_LOG" >&2
     die "Full log: ${NPM_LOG}"

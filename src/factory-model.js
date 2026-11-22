@@ -13,8 +13,8 @@
  *
  *   { id, name, description, version, createdAt, updatedAt,
  *     settings: { managerMode, mergeMode, setupCommand, secrets:[secretId], caps:{ maxHandoffs, maxMinutes, tokenBudget } },
- *     roster:   [ { id, name, persona, model, effort, memory, tools:{ allow, deny }, skills } ],
- *     nodes:    [ { id, type, label, position:{x,y}, employeeId?, decision?, ask?, join? } ],
+ *     roster:   [ { id, name, persona, model, effort, memory, tools:{ allow, deny }, skills, runsOn } ],
+ *     nodes:    [ { id, type, label, position:{x,y}, employeeId?, runsOn?, decision?, ask?, join? } ],
  *     edges:    [ { id, kind, source, sourceHandle, target, requireNote, noteLabel, maxRounds } ] }
  *
  * Node types and their outputs (sourceHandle of the edges leaving them):
@@ -190,6 +190,9 @@ export function normalizeFactory(input) {
       // The Manager's check-in ticker, in minutes (5 to 1440). 0: the Manager
       // chooses it at the start of each run (factory_tick).
       tickMinutes: (() => { const n = Math.round(Number(s.tickMinutes)); return Number.isFinite(n) && n > 0 ? Math.min(1440, Math.max(5, n)) : 0; })(),
+      // A worker PC holding steps offline this long (minutes): the person is
+      // told and may move those steps to this server. 0: wait however long.
+      workerOfflineMinutes: s.workerOfflineMinutes == null || s.workerOfflineMinutes === '' ? 30 : intIn(s.workerOfflineMinutes, 0, 1440, 30),
       // Secrets the run may use without the person typing a PIN at each use
       // (factory-secrets.js): ids only, never a value or a PIN. The PINs are
       // asked when a run starts and kept in memory for that run.
@@ -227,6 +230,9 @@ export function normalizeFactory(input) {
       skills: strList(r.skills, 50, 100),
       // Permission presets for this person only (the factory's apply to everyone).
       presets: Array.isArray(r.presets) ? r.presets.filter(k => Object.prototype.hasOwnProperty.call(PERMISSION_PRESETS, k)) : [],
+      // Where this person's chats run: '' = this server, or a worker PC's id
+      // or name (workers-protocol.md, phase 5).
+      runsOn: str(r.runsOn, 80).trim(),
     });
   }
 
@@ -244,6 +250,8 @@ export function normalizeFactory(input) {
       position: { x: Number.isFinite(+pos.x) ? +pos.x : 0, y: Number.isFinite(+pos.y) ? +pos.y : 0 },
     };
     if (node.type === 'employee') node.employeeId = typeof n.employeeId === 'string' ? n.employeeId : '';
+    // A step's own PC, overriding its person's runsOn ('' = the person's).
+    if (node.type === 'employee' || node.type === 'manager') node.runsOn = str(n.runsOn, 80).trim();
     if (node.type === 'decision') {
       const d = n.decision && typeof n.decision === 'object' ? n.decision : {};
       node.decision = {
@@ -324,6 +332,13 @@ function normalizeChoices(list) {
  *   pauseAt5h, pauseAtWeek  pause when the 5-hour / weekly window reaches this % (50-100)
  *   maxParallel             at most this many people working at once (0: no limit)
  *   oneAtATimeAbove         above this % of the 5-hour window, one at a time (0: off)
+ *   paceOnly                reaching pauseAt pauses only when ahead of pace: the
+ *                           window's used % above the % of its time passed (off:
+ *                           today's behaviour, pause as soon as it is reached)
+ *   paceCeiling             with paceOnly, always pause at this % (50-100, default 100)
+ *   paceResumeBehind        with paceOnly, a run paused for being ahead resumes before
+ *                           the reset once every window is this many points behind
+ *                           pace (1-50); 0 (default): it waits for the reset
  */
 export function normalizeLimits(l) {
   const x = l && typeof l === 'object' ? l : {};
@@ -334,7 +349,62 @@ export function normalizeLimits(l) {
     pauseAtWeek: pct(x.pauseAtWeek, 50, 100),
     maxParallel: Number.isFinite(n) && n > 0 ? Math.min(20, n) : 0,
     oneAtATimeAbove: pct(x.oneAtATimeAbove, 10, 0),
+    paceOnly: x.paceOnly === true,
+    paceCeiling: pct(x.paceCeiling, 50, 100),
+    paceResumeBehind: (() => { const r = Math.round(Number(x.paceResumeBehind)); return Number.isFinite(r) && r > 0 ? Math.min(50, r) : 0; })(),
   };
+}
+
+/** How long each usage window is, in ms. */
+export const USAGE_WINDOW_MS = { fiveHour: 5 * 3600e3, week: 7 * 86400e3 };
+
+/**
+ * The % of a usage window's time that has passed, from when it resets
+ * (null when that is not known).
+ */
+export function windowTimePct(w, kind, now = Date.now()) {
+  const len = USAGE_WINDOW_MS[kind];
+  const at = Date.parse(w?.resetsAt || '');
+  if (!len || !Number.isFinite(at)) return null;
+  return Math.min(100, Math.max(0, (1 - (at - now) / len) * 100));
+}
+
+/**
+ * Whether a usage window is over a run's line. Without paceOnly: at or past
+ * the pause line. With it: past the line and ahead of pace (used % above the
+ * % of time passed), or at the ceiling whatever the pace; past the line with
+ * no reset time to judge pace by, it pauses as before.
+ */
+export function usageOver(w, kind, limits, now = Date.now()) {
+  if (!w || !Number.isFinite(Number(w.utilization))) return false;
+  const L = normalizeLimits(limits);
+  const at = kind === 'week' ? L.pauseAtWeek : L.pauseAt5h;
+  const used = Number(w.utilization);
+  if (used < at) return false;
+  if (!L.paceOnly) return true;
+  if (used >= Math.max(at, L.paceCeiling)) return true;
+  const t = windowTimePct(w, kind, now);
+  return t === null ? true : used > t;
+}
+
+/**
+ * May a run paused by the usage limit resume before the reset? Only with
+ * paceOnly and paceResumeBehind set, and only when every window is either
+ * under its line or, below the ceiling, at least paceResumeBehind points
+ * behind pace. The gap between pausing (ahead of pace) and resuming (that far
+ * behind) is what keeps it from pausing and resuming on every reading.
+ */
+export function usageResumable(u, limits, now = Date.now()) {
+  const L = normalizeLimits(limits);
+  if (!L.paceOnly || !L.paceResumeBehind || !u) return false;
+  return [['fiveHour', u.fiveHour, L.pauseAt5h], ['week', u.week, L.pauseAtWeek]].every(([kind, w, at]) => {
+    if (!w || !Number.isFinite(Number(w.utilization))) return true;
+    const used = Number(w.utilization);
+    if (used < at) return true;
+    if (used >= Math.max(at, L.paceCeiling)) return false;
+    const t = windowTimePct(w, kind, now);
+    return t !== null && used <= t - L.paceResumeBehind;
+  });
 }
 
 export function skeletonFactory(name = 'New factory') {
@@ -476,8 +546,11 @@ export function forkRegion(f, graph, forkNode, joinId) {
  * Pass { skills: Set<string> } (the names known on this machine) to be warned
  * about mentioned skills that are not among them. Only a warning: factories
  * are global and a project may bring the skill itself.
+ * Pass { knownWorkers: [{ id, name }] | string[] } (the PCs this server knows)
+ * to be warned about a runsOn naming none of them. A warning, not an error:
+ * a PC may be away while the factory is edited.
  */
-export function validateFactory(input, { skills = null } = {}) {
+export function validateFactory(input, { skills = null, knownWorkers = null } = {}) {
   const f = normalizeFactory(input);
   const errors = [], warnings = [];
   const err = (code, message, fix, at = {}) => errors.push({ code, message, fix, ...at });
@@ -710,6 +783,21 @@ export function validateFactory(input, { skills = null } = {}) {
     const origins = answerOrigins(g, nodes, n.id);
     if (origins.has('?')) {
       err('decision-needs-answerer', `"${label(n)}" does not follow an employee, so nobody is there to answer it.`, 'Choose who answers this decision.', { nodeId: n.id });
+    }
+  }
+
+  if (knownWorkers) {
+    const known = new Set();
+    for (const w of knownWorkers) {
+      if (typeof w === 'string') known.add(w.toLowerCase());
+      else if (w && typeof w === 'object') { if (w.id) known.add(String(w.id).toLowerCase()); if (w.name) known.add(String(w.name).toLowerCase()); }
+    }
+    const unknownPc = v => v && !known.has(v.toLowerCase());
+    for (const r of f.roster) {
+      if (unknownPc(r.runsOn)) warn('worker-unknown', `"${r.name || 'An employee'}" runs on "${r.runsOn}", a PC this server does not know.`, 'Join that PC as a worker, fix the name, or clear "Runs on" to run on this server.', { employeeId: r.id, worker: r.runsOn });
+    }
+    for (const n of f.nodes) {
+      if (unknownPc(n.runsOn)) warn('worker-unknown', `"${label(n)}" runs on "${n.runsOn}", a PC this server does not know.`, 'Join that PC as a worker, fix the name, or clear "Runs on" to use the person\'s own setting.', { nodeId: n.id, worker: n.runsOn });
     }
   }
 
