@@ -813,6 +813,8 @@ impl T {
     pub const KID_DOT: Pixels = px(14.);
     pub const KID_DOTS_GAP: Pixels = px(10.);
     pub const KID_DOTS_H: Pixels = px(18.);
+    /// How far they bob up (cvkdots: translateY(-5px) at the top).
+    pub const KID_DOTS_RISE: f32 = 5.;
     /// Cru's reply line under the screen (20 px lines).
     pub const CRU_REPLY_LH: Pixels = px(20.);
     pub fn cru_note_shadow() -> Hsla { rgba(0x00000073).into() }

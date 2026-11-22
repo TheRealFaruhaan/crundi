@@ -173,9 +173,11 @@ export async function run(T, t) {
     await T.ui('tab', 'inbox');
     await t.sleep(1500);
     await T.settle(); // (F70)
+    const r0 = (await T.state()).renders;
     const m = T.frames.mark();
     await t.sleep(2000);
-    t.check('closed: no frames', T.frames.since(m).frames === 0, T.frames.since(m));
+    const f = T.frames.since(m);
+    t.check('closed: no frames', f.frames === 0, { f, drawn: delta(r0, (await T.state()).renders) });
     await T.ui('tab', 'workbench');
   }
   await key('Space', ['ctrl'], 'down');

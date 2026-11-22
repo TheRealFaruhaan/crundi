@@ -96,7 +96,7 @@ fn ui(r: &Request, stores: &Stores, window: &mut Window, cx: &mut App) -> Value 
         // The window's × (or the system's close), as a click on it.
         "window-close" => crundi_shell::close_window(window, cx),
         // The top bar's minute tick held ("off") or let go ("on"), F122.
-        "usage-clock" => stores.usage.update(cx, |u, _| u.held = a(0) == "off"),
+        "usage-clock" => stores.usage.update(cx, |u, cx| u.hold(a(0) == "off", cx)),
         "toast" => { let k = match a(0).as_str() { "error" => crundi_widgets::Toast::Error, "success" => crundi_widgets::Toast::Success, _ => crundi_widgets::Toast::Info }; crundi_widgets::toast(window, cx, a(1), k); }
         _ => {
             let (area, short) = match name.split_once(':') { Some((a, n)) => (Some(a.to_string()), n.to_string()), None => (None, name.clone()) };
