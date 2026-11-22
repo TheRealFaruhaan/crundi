@@ -6,9 +6,7 @@
 //! pane when the pane is built).
 
 use crundi_core::store;
-use crundi_theme::{IconName, T};
-use gpui::prelude::FluentBuilder as _;
-use gpui_component::Icon;
+use crundi_theme::IconName;
 use crundi_widgets as w;
 use gpui::*;
 
@@ -43,29 +41,14 @@ pub fn placeholder(ctrl: bool, narrow: bool, exited: bool) -> &'static str {
     else { "Message Claude…  (Enter to send, Shift+Enter for newline)" }
 }
 
-/// The switch: [ ⏎ | ⌃⏎ ] and "sends"; a click anywhere on it swaps (the
-/// web's .cc-toggle is one button: either side, or the word) and puts the
-/// focus back in the box (`refocus`).
-pub fn switch(ctrl: bool, refocus: impl Fn(&mut Window, &mut App) + 'static) -> AnyElement {
+/// The switch: [ ⏎ | ⌃⏎ ] and "sends" (w::icon_switch); a click anywhere
+/// on it swaps (the web's .cc-toggle is one button: either side, or the
+/// word) and puts the focus back in the box (`refocus`). `hover`: the
+/// composer's (it observes it; the driver's state shows it).
+pub fn switch(ctrl: bool, refocus: impl Fn(&mut Window, &mut App) + 'static, hover: Entity<bool>, cx: &App) -> AnyElement {
     let tip = if ctrl { "Enter makes a newline, Ctrl+Enter sends — click to swap" } else { "Enter sends, Shift+Enter makes a newline — click to swap" };
-    w::tip(icon_switch(if ctrl { 1 } else { 0 })
+    let opts: [&[IconName]; 2] = [&[IconName::CornerDownLeft], &[IconName::ChevronUp, IconName::CornerDownLeft]];
+    w::tip(w::icon_switch("enter-switch", &opts, if ctrl { 1 } else { 0 }, Some("sends".into()), hover, cx)
         .on_click(move |_, window, cx| { set(cx, !ctrl); refocus(window, cx); }), tip)
         .into_any_element()
-}
-
-/// w::icon_switch's look, with the web's hover (.cc-toggle:hover): the word
-/// and the option not in use brighten to the primary text (F213).
-fn icon_switch(on: usize) -> Stateful<Div> {
-    let opts: [&[IconName]; 2] = [&[IconName::CornerDownLeft], &[IconName::ChevronUp, IconName::CornerDownLeft]];
-    let mut track = div().flex().items_center().p(T::SP_2).gap(T::SP_2).rounded(T::R_PILL).bg(T::bg_card()).border_1().border_color(T::border());
-    for (i, icons) in opts.iter().enumerate() {
-        let mut o = div().flex().items_center().px(T::SP_6).py(T::SP_2).rounded(T::R_PILL)
-            .when(i == on, |d| d.bg(T::accent_dim()).text_color(T::accent_hover()))
-            .when(i != on, |d| d.text_color(T::text_secondary()).group_hover("enter-switch", |d| d.text_color(T::text())));
-        for ic in icons.iter() { o = o.child(Icon::new(*ic).size(T::ICON_SM)); }
-        track = track.child(o);
-    }
-    div().id("enter-switch").group("enter-switch").flex().items_center().gap(T::SP_4).cursor_pointer().text_color(T::text_secondary()).hover(|d| d.text_color(T::text()))
-        .child(track)
-        .child("sends")
 }

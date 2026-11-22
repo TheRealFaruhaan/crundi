@@ -48,6 +48,10 @@ pub struct Term {
     alt: Option<Screen>,
     pub scrollback: Vec<Line>,
     pub max_scrollback: usize,
+    /// The lines dropped off the scrollback's top so far: a line's place
+    /// counted from the first ever (`trimmed` + its index) stays the same
+    /// while the view scrolls and output comes (a selection holds to it).
+    pub trimmed: usize,
     st: Style,
     mode: Mode,
     params: String,
@@ -87,7 +91,7 @@ impl Term {
     pub fn new(cols: usize, rows: usize) -> Term {
         let (cols, rows) = (cols.max(2), rows.max(1));
         let scr = Screen { rows: vec![blank_row(cols); rows], cx: 0, cy: 0, saved: (0, 0, Style::default()), top: 0, bottom: rows - 1 };
-        Term { cols, rows, main: scr, alt: None, scrollback: vec![], max_scrollback: 5000, st: Style::default(), mode: Mode::Ground,
+        Term { cols, rows, main: scr, alt: None, scrollback: vec![], max_scrollback: 5000, trimmed: 0, st: Style::default(), mode: Mode::Ground,
             params: String::new(), osc: String::new(), cursor_on: true, app_cursor: false, bracketed: false, autowrap: true, wrap_next: false,
             replies: vec![], title: String::new(), generation: 0 }
     }
@@ -196,7 +200,7 @@ impl Term {
             s.rows.insert(bottom, blank_row(cols));
             if !alt && top == 0 {
                 self.scrollback.push(row);
-                if self.scrollback.len() > self.max_scrollback { let over = self.scrollback.len() - self.max_scrollback; self.scrollback.drain(..over); }
+                if self.scrollback.len() > self.max_scrollback { let over = self.scrollback.len() - self.max_scrollback; self.scrollback.drain(..over); self.trimmed += over; }
             }
         }
     }
@@ -257,7 +261,7 @@ impl Term {
                     0 => { self.erase(cy, cx, cols); for y in cy + 1..rows { self.erase(y, 0, cols); } }
                     1 => { for y in 0..cy { self.erase(y, 0, cols); } self.erase(cy, 0, cx + 1); }
                     2 => { for y in 0..rows { self.erase(y, 0, cols); } }
-                    3 => { self.scrollback.clear(); }
+                    3 => { self.trimmed += self.scrollback.len(); self.scrollback.clear(); }
                     _ => {}
                 }
             }
@@ -356,6 +360,21 @@ impl Term {
 
 
     /// The `rows` lines on show when scrolled `back` lines up from the bottom.
+    /// The place (counted as `trimmed` is) of the view's first row: the
+    /// alternate screen's rows are 0.. (it has no scrollback).
+    pub fn view_top(&self, back: usize) -> usize {
+        if self.alt.is_some() { return 0; }
+        self.trimmed + self.scrollback.len() - back.min(self.scrollback.len())
+    }
+
+    /// The lines at places `from..=to` (as `view_top` counts), those still held.
+    pub fn lines_at(&self, from: usize, to: usize) -> Vec<&Line> {
+        let scr = self.scr_ref();
+        let all: Box<dyn Iterator<Item = &Line>> = if self.alt.is_some() { Box::new(scr.rows.iter()) } else { Box::new(self.scrollback.iter().chain(scr.rows.iter())) };
+        let base = if self.alt.is_some() { 0 } else { self.trimmed };
+        all.enumerate().filter(|(i, _)| (from..=to).contains(&(base + i))).map(|(_, l)| l).collect()
+    }
+
     pub fn view(&self, back: usize) -> Vec<&Line> {
         let scr = self.scr_ref();
         if self.alt.is_some() { return scr.rows.iter().collect(); }
@@ -429,6 +448,24 @@ pub fn key_bytes(text: &str, ctrl: bool, alt: bool, shift: bool, app_cursor: boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A line's place holds while output scrolls it up and lines drop off
+    /// the scrollback's top (F251: a selection keeps to its text).
+    #[test]
+    fn places_hold_while_it_scrolls() {
+        let mut t = Term::new(6, 2);
+        t.max_scrollback = 4;
+        t.feed("a\r\nb\r\n");
+        let at = t.view_top(0);
+        let text = |l: &Line| l.iter().map(|c| c.ch).collect::<String>().trim_end().to_string();
+        assert_eq!(text(t.lines_at(at, at)[0]), "b");
+        t.feed("c\r\nd\r\ne\r\nf\r\n");
+        assert_eq!(t.view_top(0), at + 4);
+        assert_eq!(text(t.lines_at(at, at)[0]), "b");
+        assert_eq!(t.trimmed, 1);
+        assert!(t.lines_at(at - 1, at - 1).is_empty(), "a dropped off");
+        assert_eq!(t.view_top(2), at + 2);
+    }
 
     #[test]
     fn colour_keeps_pending_wrap() {
