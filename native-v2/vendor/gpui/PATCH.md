@@ -1,8 +1,8 @@
 # gpui-pre 0.3.12, patched for native-v2
 
 This is the published `gpui-pre` 0.3.12 (crates.io; a snapshot of Zed's gpui
-at d2a4fb6) with two changes to how cached views are reused and one to what a click
-redraws. The owner chose
+at d2a4fb6) with two changes to how cached views are reused, one to what a click
+redraws and one to how a replayed view enters the scene (d). The owner chose
 this on 21 Nov 2026 (shared/OWNER-DECISIONS.md, F146): patch GPUI until
 upstream has an equivalent fix.
 
@@ -14,7 +14,8 @@ Trimmed from the published crate: `examples/`, `benches/`, `tests/` and their
 `[[example]]`, `[[bench]]` and `[[test]]` tables in `Cargo.toml`. Only gpui's
 own unit tests used them, and they don't run here: `vendor/` is excluded from
 the workspace. Everything else is byte for byte the published crate, except
-the lines marked `crundi patch (a)`, `crundi patch (b)` or `crundi patch (c)` in:
+the lines marked `crundi patch (a)` to `crundi patch (d)` (and the
+`crundi_phases` diagnostic) in:
 
 - `src/view.rs`: `prepaint_view`, `paint_view`, `ViewElementState`,
   `view_state_type`, `view_state`, `shift_prepaint`, `shift_paint` and
@@ -26,7 +27,12 @@ the lines marked `crundi patch (a)`, `crundi patch (b)` or `crundi patch (c)` in
   `reuse_paint_at` (`reuse_paint` calls it); `frame_seq` counts up where
   the frames are swapped in `draw`
 - `src/text_system/line_layout.rs`: `LineLayoutIndex::shifted`
-- `src/scene.rs`: `can_offset`, `extent` and `replay_offset`
+- `src/scene.rs`: `can_offset`, `extent` and `replay_offset`; (d)
+  `replay_shifted` (`replay` and `replay_offset` call it) and
+  `Primitive::order`
+- `src/bounds_tree.rs` (d): `BoundsTree::insert_span`
+- `src/window.rs` (d): `crundi_scene_batches` (tests only); the
+  `crundi_phases` module and its calls in `draw_roots`, `draw` and `present`
 - `src/key_dispatch.rs`: `DispatchTree::focus_in`
 - (b) in `src/view.rs` also `reveals_nothing`, `outside` and
   `ViewElementState::skipped`; in `src/window.rs` `painted_extent`,
@@ -188,6 +194,49 @@ upstream (they are rare and outside any scroll or drag). A GPUI drag
 (`on_drag`, `cx.active_drag`) still redraws the window on every move,
 as upstream.
 
+## (d) A replayed view keeps its draw orders (F245)
+
+**Upstream.** `Scene::replay` copies a cached view's last scene operations
+into the new frame through `insert_primitive`, one by one, as if they were
+painted fresh: each primitive's clipped bounds go into the frame's
+`BoundsTree` (an R-tree) to find its draw order (one above the highest order
+it overlaps), and leave a leaf there. With the panes, heads and shell views
+cached, most of a frame is replay: every primitive of every pane (each glyph
+a sprite) went through the tree on every frame, and the tree held a leaf for
+each of them.
+
+**The change.** `replay_shifted` replays a range without the tree per
+primitive. One pass reads the range's lowest and highest order and its
+extent (the union of its primitives' clipped bounds and its layers' bounds,
+moved and cut to the current mask when it is replayed moved). One
+`insert_span` then finds the highest order the extent overlaps, and puts one
+leaf over the extent holding the range's highest new order. Each primitive
+keeps the order it had, shifted by the same amount: `order - lowest + base`,
+where `base` is one above what the extent overlaps. Its path id is given
+anew; a moved replay moves and clips it as `replay_offset` did.
+
+**What makes it sound.** Draw order matters only between primitives that
+overlap. Inside the range, every pair keeps its relative order, so what
+overlapped draws as it did (and batches as it did). Everything drawn before
+the range that overlaps any of it overlaps the extent, so it is below
+`base`. Everything drawn after over any of it overlaps the extent's leaf,
+so the tree puts it above the range's highest. Orders may be higher than
+upstream would give (the extent is coarser than each primitive), which
+changes no overlap's outcome. A range replayed inside an open layer
+(`push_layer`) takes the plain path, as upstream: there, every primitive
+takes the layer's order anyway, and the tree isn't touched.
+`crates/shell/tests/gpui_patch.rs` (`replayed_views_draw_in_the_same_order`)
+checks that a frame replaying a cached view, in place and moved, twice in a
+row, batches exactly as the frame that rendered it.
+
+## The `crundi_phases` diagnostic
+
+With `CRUNDI_FRAME_PHASES=1`, each window prints on stderr, every 2 s that
+drew, the mean time of the frames' phases (request layout; layout and
+prepaint; paint; finishing the frame, where the scene is sorted; present)
+and the scene's mean primitive and operation counts. Unset, each phase reads
+one cached flag. It changes nothing drawn.
+
 ## The upstream fix to watch for
 
 Zed's gpui, `crates/gpui/src/view.rs`, `prepaint_view`:
@@ -200,7 +249,10 @@ Zed's gpui, `crates/gpui/src/view.rs`, `prepaint_view`:
 For (c), a click's or a tooltip's state change notifying its view rather
 than `window.refresh()`.
 
-When a `gpui-pre` release (the snapshot gpui-component pins) has all three,
+For (d), a replay that keeps draw orders (or a scene that refers to the
+previous frame's primitives instead of copying them).
+
+When a `gpui-pre` release (the snapshot gpui-component pins) has all four,
 delete the patch: the cached views here are written for the published
 semantics plus these two. When it has only one, keep the other here, and
 re-measure with `tools/measure-pc.mjs` on the owner's display either way.

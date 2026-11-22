@@ -145,3 +145,70 @@ fn partly_clipped_moves_replay_and_hidden_views_skip(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(leaf_n.get(), n + 1, "and is cached again after");
 }
+
+/// Overlapping quads and shadows in a cached leaf, and a quad of its parent's
+/// over it: the draw order decides how they batch.
+struct Stack { renders: Rc<Cell<u32>> }
+impl Render for Stack {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.set(self.renders.get() + 1);
+        div().relative().size_full().bg(rgb(0x202020))
+            .child(div().absolute().top(px(5.)).left(px(5.)).w(px(60.)).h(px(30.)).bg(rgb(0x404040)).shadow_md())
+            .child(div().absolute().top(px(10.)).left(px(10.)).w(px(30.)).h(px(10.)).bg(rgb(0x606060)))
+            .child(div().absolute().top(px(70.)).left(px(70.)).w(px(10.)).h(px(10.)).bg(rgb(0x808080)).shadow_sm())
+    }
+}
+struct StackParent { leaf: Entity<Stack>, top: Pixels, over: bool }
+impl Render for StackParent {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().relative().size_full().bg(rgb(0x101010))
+            .child(div().absolute().top(self.top).left(px(10.)).w(px(100.)).h(px(100.))
+                .child(self.leaf.clone().cached(StyleRefinement::default().size_full())))
+            .when(self.over, |d| d.child(div().absolute().top(px(0.)).left(px(0.)).w(px(300.)).h(px(300.)).bg(rgb(0xa0a0a0)).shadow_sm()))
+    }
+}
+struct StackRoot { p: Entity<StackParent> }
+impl Render for StackRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(self.p.clone().cached(StyleRefinement::default().size_full()))
+    }
+}
+
+/// (d) A replayed range keeps its draw orders, shifted: a frame that replays
+/// a cached view (in place or moved) batches exactly as one that renders it.
+#[gpui::test]
+fn replayed_views_draw_in_the_same_order(cx: &mut TestAppContext) {
+    let n = Rc::new(Cell::new(0));
+    let l = n.clone();
+    let (root, cx) = cx.add_window_view(move |_, cx| {
+        let leaf = cx.new(|_| Stack { renders: l });
+        StackRoot { p: cx.new(|_| StackParent { leaf, top: px(20.), over: true }) }
+    });
+    let (p, leaf) = root.read_with(cx, |r, cx| (r.p.clone(), r.p.read(cx).leaf.clone()));
+    // The change, the draw and the read in one update: a test window draws
+    // when an update's effects are flushed, so a draw between them would be
+    // a replay of the frame to compare with.
+    let frame = |cx: &mut VisualTestContext, top: f32, over: bool, leaf_too: bool| {
+        let (p, leaf) = (p.clone(), leaf.clone());
+        cx.update(move |window, cx| {
+            p.update(cx, |p, cx| { p.top = px(top); p.over = over; cx.notify(); });
+            if leaf_too { leaf.update(cx, |_, cx| cx.notify()); }
+            window.draw(cx).clear(cx);
+            window.crundi_scene_batches()
+        })
+    };
+    for over in [true, false] {
+        let r0 = n.get();
+        let fresh = frame(cx, 20., over, true);
+        assert_eq!(n.get(), r0 + 1, "the leaf renders");
+        assert!(fresh.len() >= 3, "kinds interleave by order: {fresh:?}");
+        // In place: the parent renders, the leaf is replayed.
+        assert_eq!(frame(cx, 20., over, false), fresh, "a replay batches as the render did (over: {over})");
+        // Moved: replayed at an offset (patch b), the same batches.
+        assert_eq!(frame(cx, 31., over, false), fresh, "a moved replay batches as the render did (over: {over})");
+        // And again (orders shifted from shifted orders).
+        assert_eq!(frame(cx, 40., over, false), fresh, "a second moved replay batches the same (over: {over})");
+        assert_eq!(n.get(), r0 + 1, "the leaf was replayed each time");
+        settle(cx);
+    }
+}

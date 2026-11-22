@@ -139,6 +139,8 @@ impl Scene {
     }
 
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
+        // crundi patch (d), PATCH.md: the orders kept, shifted.
+        if self.replay_shifted(range.clone(), prev_scene, None) { return; }
         for operation in &prev_scene.paint_operations[range] {
             match operation {
                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
@@ -182,6 +184,7 @@ impl Scene {
             let moved = Bounds { origin: m.bounds.origin + delta, size: m.bounds.size };
             m.bounds = moved.intersect(mask);
         };
+        if self.replay_shifted(range.clone(), prev_scene, Some((delta, *mask))) { return; }
         for operation in &prev_scene.paint_operations[range] {
             match operation {
                 PaintOperation::Primitive(primitive) => {
@@ -205,6 +208,115 @@ impl Scene {
                 PaintOperation::EndLayer => self.pop_layer(),
             }
         }
+    }
+
+    /// crundi patch (d), PATCH.md: replay a range without putting each
+    /// primitive in the bounds tree. Each keeps the draw order it had,
+    /// shifted so the range's lowest lands one above whatever the range's
+    /// extent overlaps now; one leaf over the extent holds the highest.
+    /// Relative orders inside the range are as they were, so what overlapped
+    /// draws as it did; what comes after over the extent draws above.
+    /// `false` (nothing done): inside an open layer, where every primitive
+    /// takes the layer's order (the plain path does that cheaply).
+    fn replay_shifted(
+        &mut self,
+        range: Range<usize>,
+        prev: &Scene,
+        offset: Option<(Point<ScaledPixels>, Bounds<ScaledPixels>)>,
+    ) -> bool {
+        if !self.layer_stack.is_empty() { return false; }
+        let ops = &prev.paint_operations[range];
+        let (mut lo, mut hi) = (u32::MAX, 0u32);
+        let mut ext: Option<Bounds<ScaledPixels>> = None;
+        for op in ops {
+            let b = match op {
+                PaintOperation::Primitive(p) => {
+                    let o = p.order();
+                    lo = lo.min(o); hi = hi.max(o);
+                    p.bounds().intersect(&p.content_mask().bounds)
+                }
+                PaintOperation::StartLayer(b) => *b,
+                PaintOperation::EndLayer => continue,
+            };
+            ext = Some(ext.map_or(b, |e| e.union(&b)));
+        }
+        let Some(mut ext) = ext else {
+            // Only layer ends (or nothing): keep the operations as they are.
+            self.paint_operations.extend(ops.iter().filter_map(|op| match op {
+                PaintOperation::EndLayer => Some(PaintOperation::EndLayer),
+                _ => None,
+            }));
+            return true;
+        };
+        if lo == u32::MAX { lo = 0; hi = 0; }
+        if let Some((d, mask)) = offset {
+            ext.origin = ext.origin + d;
+            ext = ext.intersect(&mask);
+        }
+        if ext.is_empty() {
+            // Nothing of it is in view: keep the layer marks so the ranges
+            // nested in it still line up (no primitive is recorded).
+            for op in ops {
+                match op {
+                    PaintOperation::StartLayer(b) => self.paint_operations.push(PaintOperation::StartLayer(*b)),
+                    PaintOperation::EndLayer => self.paint_operations.push(PaintOperation::EndLayer),
+                    PaintOperation::Primitive(_) => {}
+                }
+            }
+            return true;
+        }
+        let base = self.primitive_bounds.insert_span(ext, hi - lo);
+        let shift = |o: DrawOrder| o - lo + base;
+        for op in ops {
+            match op {
+                PaintOperation::Primitive(primitive) => {
+                    let mut p = primitive.clone();
+                    if let Some((d, mask)) = offset {
+                        let mv = |b: &mut Bounds<ScaledPixels>| b.origin = b.origin + d;
+                        let clip = |m: &mut ContentMask<ScaledPixels>| {
+                            let moved = Bounds { origin: m.bounds.origin + d, size: m.bounds.size };
+                            m.bounds = moved.intersect(&mask);
+                        };
+                        match &mut p {
+                            Primitive::Shadow(s) => { mv(&mut s.bounds); mv(&mut s.element_bounds); clip(&mut s.content_mask); }
+                            Primitive::Quad(q) => { mv(&mut q.bounds); clip(&mut q.content_mask); }
+                            Primitive::Path(path) => {
+                                mv(&mut path.bounds); clip(&mut path.content_mask);
+                                for v in &mut path.vertices { v.xy_position = v.xy_position + d; clip(&mut v.content_mask); }
+                            }
+                            Primitive::Underline(u) => { mv(&mut u.bounds); clip(&mut u.content_mask); }
+                            Primitive::MonochromeSprite(s) => { mv(&mut s.bounds); clip(&mut s.content_mask); }
+                            Primitive::SubpixelSprite(s) => { mv(&mut s.bounds); clip(&mut s.content_mask); }
+                            Primitive::PolychromeSprite(s) => { mv(&mut s.bounds); clip(&mut s.content_mask); }
+                            Primitive::Surface(s) => { mv(&mut s.bounds); clip(&mut s.content_mask); }
+                        }
+                        if p.bounds().intersect(&p.content_mask().bounds).is_empty() { continue; }
+                    }
+                    match &mut p {
+                        Primitive::Shadow(x) => { x.order = shift(x.order); self.shadows.push(*x); }
+                        Primitive::Quad(x) => { x.order = shift(x.order); self.quads.push(*x); }
+                        Primitive::Path(x) => {
+                            x.order = shift(x.order);
+                            x.id = PathId(self.paths.len());
+                            self.paths.push(x.clone());
+                        }
+                        Primitive::Underline(x) => { x.order = shift(x.order); self.underlines.push(*x); }
+                        Primitive::MonochromeSprite(x) => { x.order = shift(x.order); self.monochrome_sprites.push(*x); }
+                        Primitive::SubpixelSprite(x) => { x.order = shift(x.order); self.subpixel_sprites.push(*x); }
+                        Primitive::PolychromeSprite(x) => { x.order = shift(x.order); self.polychrome_sprites.push(*x); }
+                        Primitive::Surface(x) => { x.order = shift(x.order); self.surfaces.push(x.clone()); }
+                    }
+                    self.paint_operations.push(PaintOperation::Primitive(p));
+                }
+                PaintOperation::StartLayer(b) => {
+                    let mut b = *b;
+                    if let Some((d, mask)) = offset { b.origin = b.origin + d; b = b.intersect(&mask); }
+                    self.paint_operations.push(PaintOperation::StartLayer(b));
+                }
+                PaintOperation::EndLayer => self.paint_operations.push(PaintOperation::EndLayer),
+            }
+        }
+        true
     }
 
     pub fn finish(&mut self) {
@@ -301,6 +413,20 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+        }
+    }
+
+    /// crundi patch (d): the draw order the scene gave it.
+    pub(crate) fn order(&self) -> DrawOrder {
+        match self {
+            Primitive::Shadow(x) => x.order,
+            Primitive::Quad(x) => x.order,
+            Primitive::Path(x) => x.order,
+            Primitive::Underline(x) => x.order,
+            Primitive::MonochromeSprite(x) => x.order,
+            Primitive::SubpixelSprite(x) => x.order,
+            Primitive::PolychromeSprite(x) => x.order,
+            Primitive::Surface(x) => x.order,
         }
     }
 

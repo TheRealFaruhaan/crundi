@@ -16,7 +16,8 @@ controls); `PLAN.md` is where every screen stands.
 GPUI is `gpui-pre =0.3.12` (a snapshot of Zed's gpui, imported as `gpui`),
 patched in `vendor/gpui` (`PATCH.md`, the owner's call of 21 Nov) so a
 cached view keeps its clean cached children and a cached view that only
-moved is replayed at an offset, with `gpui-component` / `gpui-kit-assets =0.10.0`; CEF `=156.4.0` only in
+moved is replayed at an offset (and a replayed view keeps its draw
+orders instead of going back through the scene's bounds tree), with `gpui-component` / `gpui-kit-assets =0.10.0`; CEF `=156.4.0` only in
 the browser host (`crates/browser-host`), started lazily in a process of
 its own.
 
@@ -377,10 +378,11 @@ inside theirs.
 - **Caching was one level deep in GPUI 0.3.12** (perf/pc-2026-11-21-architect-bisect.md):
   a notify dirties the view and every view above it, and a cached view
   that re-renders drew every cached view inside it again
-  (`window.refreshing`). The patch in `vendor/gpui` (PATCH.md (a), (b),
-  (c)) keeps clean nested caches, replays a view that only moved, and
-  keeps a click's press, its release and a tooltip from redrawing the
-  whole window. The dirty chain (the Shell, the tab's root, the Workbench)
+  (`window.refreshing`). The patch in `vendor/gpui` (PATCH.md (a) to
+  (d)) keeps clean nested caches, replays a view that only moved, keeps
+  a click's press, its release and a tooltip from redrawing the whole
+  window, and replays a clean view's scene with its draw orders shifted
+  rather than one bounds-tree insert per primitive (F245). The dirty chain (the Shell, the tab's root, the Workbench)
   still renders with each change below it, so it stays cheap; the
   leaves (heads, logs, composers, the panels' views) are where the work is
   cached. A pane made a cached view of its own would draw its log, its

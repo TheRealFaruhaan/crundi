@@ -3786,9 +3786,11 @@ impl Window {
                 });
         }
 
+        let ph_fin = crundi_phases::on().then(std::time::Instant::now);
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
+        if let Some(t) = ph_fin { crundi_phases::finish(t.elapsed(), &self.next_frame.scene); }
 
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
@@ -3889,7 +3891,9 @@ impl Window {
         let _foreground_turn = profiler::journal::foreground_turn();
         #[cfg(feature = "profiler")]
         let present_start = Instant::now();
+        let ph = crundi_phases::on().then(std::time::Instant::now);
         self.platform_window.draw(&self.rendered_frame.scene);
+        if let Some(t) = ph { crundi_phases::present(t.elapsed()); }
         #[cfg(feature = "profiler")]
         self.window_profiler.record_present(
             present_start,
@@ -3982,8 +3986,10 @@ impl Window {
         let scale_factor = self.scale_factor();
         #[cfg(feature = "profiler")]
         let request_layout_start = Instant::now();
+        let ph = crundi_phases::on().then(std::time::Instant::now);
         let mut root_element = self.root.as_ref().unwrap().clone().into_any_element();
         let root_layout_id = root_element.request_layout(self, cx);
+        let ph_layout = ph.map(|_| std::time::Instant::now());
         #[cfg(feature = "profiler")]
         let prepaint_start = Instant::now();
         self.layout_engine
@@ -4021,6 +4027,7 @@ impl Window {
         }
 
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
+        let ph_prepaint = ph.map(|_| std::time::Instant::now());
 
         // Now actually paint the elements.
         #[cfg(feature = "profiler")]
@@ -4043,6 +4050,9 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
+        if let (Some(a), Some(b), Some(c)) = (ph, ph_layout, ph_prepaint) {
+            crundi_phases::roots(b - a, c - b, c.elapsed());
+        }
 
         #[cfg(feature = "profiler")]
         self.window_profiler
@@ -4369,6 +4379,13 @@ impl Window {
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
         }
+    }
+
+    /// crundi patch (d), tests only: the last drawn scene's batches, in draw
+    /// order (each its label: kind and count).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn crundi_scene_batches(&self) -> Vec<String> {
+        self.rendered_frame.scene.batches().map(|b| b.label()).collect()
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
@@ -10838,5 +10855,45 @@ mod inspector_tests {
             }
         })
         .expect("closed inspector has no bookkeeping and no style overrides");
+    }
+}
+
+
+/// crundi diagnostic (PATCH.md): with `CRUNDI_FRAME_PHASES=1`, the mean time
+/// of each phase of the frames drawn, and the scene's size, on stderr every
+/// 2 s that drew. Off: one cached flag read per phase.
+pub(crate) mod crundi_phases {
+    use std::{cell::RefCell, sync::OnceLock, time::{Duration, Instant}};
+    #[derive(Default)]
+    struct P { n: u32, layout: f64, prepaint: f64, paint: f64, finish: f64, present: f64, prims: usize, ops: usize, since: Option<Instant> }
+    thread_local! { static S: RefCell<P> = RefCell::new(P::default()); }
+    pub(crate) fn on() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var("CRUNDI_FRAME_PHASES").is_ok_and(|v| v == "1"))
+    }
+    fn ms(d: Duration) -> f64 { d.as_secs_f64() * 1000. }
+    pub(crate) fn roots(layout: Duration, prepaint: Duration, paint: Duration) {
+        S.with(|s| { let mut s = s.borrow_mut(); s.n += 1; s.layout += ms(layout); s.prepaint += ms(prepaint); s.paint += ms(paint); });
+    }
+    pub(crate) fn finish(d: Duration, scene: &crate::Scene) {
+        S.with(|s| {
+            let mut s = s.borrow_mut();
+            s.finish += ms(d);
+            s.ops += scene.len();
+            s.prims += scene.quads.len() + scene.monochrome_sprites.len() + scene.subpixel_sprites.len() + scene.polychrome_sprites.len() + scene.paths.len() + scene.shadows.len() + scene.underlines.len();
+        });
+    }
+    pub(crate) fn present(d: Duration) {
+        S.with(|s| {
+            let mut s = s.borrow_mut();
+            s.present += ms(d);
+            let since = *s.since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= Duration::from_secs(2) && s.n > 0 {
+                let n = s.n as f64;
+                eprintln!("crundi-phases n={} layout={:.3} prepaint={:.3} paint={:.3} finish={:.3} present={:.3} prims={} ops={}",
+                    s.n, s.layout / n, s.prepaint / n, s.paint / n, s.finish / n, s.present / n, s.prims / s.n as usize, s.ops / s.n as usize);
+                *s = P { since: Some(Instant::now()), ..P::default() };
+            }
+        });
     }
 }

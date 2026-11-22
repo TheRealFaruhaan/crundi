@@ -135,6 +135,22 @@ where
         ordering
     }
 
+    /// crundi patch (d), PATCH.md: one leaf for a replayed range of `span + 1`
+    /// orders. Returns the range's first order (one above every bounds the
+    /// range's extent intersects); the leaf holds the last, so whatever is
+    /// inserted later over the extent lands above all of the range.
+    pub fn insert_span(&mut self, extent: Bounds<U>, span: u32) -> u32 {
+        let base = self.find_max_ordering(&extent) + 1;
+        let top = base + span;
+        let leaf = self.insert_leaf(extent, top);
+        self.max_leaf = match self.max_leaf {
+            None => Some(leaf),
+            Some(old) if self.nodes[old].max_order < top => Some(leaf),
+            some => some,
+        };
+        base
+    }
+
     /// Finds the maximum ordering among all bounds that intersect with the query.
     fn find_max_ordering(&mut self, query: &Bounds<U>) -> u32 {
         let Some(root_idx) = self.root else {
