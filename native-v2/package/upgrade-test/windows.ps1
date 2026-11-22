@@ -168,3 +168,4 @@ $size = (Get-Item $New).Length; $osize = (Get-Item $Old).Length
 Write-Host ("size: native {0:N1} MB, Electron {1:N1} MB" -f ($size / 1MB), ($osize / 1MB))
 if ($failures.Count) { Write-Host "`n$($failures.Count) FAILED:"; $failures | ForEach-Object { Write-Host "  $_" }; exit 1 }
 Write-Host "`nWindows upgrade test passed ($Edition)"
+exit 0

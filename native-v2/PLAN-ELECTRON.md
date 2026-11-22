@@ -25,6 +25,8 @@ Rules: `package/CONTRACT.md`. Gap list: `PARITY-ELECTRON.md` (mark each line don
 | Every PARITY-ELECTRON.md line done and tested | all | | |
 | UI review approves | reviewer | | |
 | Owner has tried it | owner | | |
+| Owner: a Mindmap idea dropped on a chat's box left its drag picture floating there | pack | yes: the map takes the release outside it in the capture phase (the chat's drop stops the bubble) (mindmap/draw.rs) | yes: test/planning/drops.mjs drags an idea onto a chat's box with the pointer, checks the reference goes in and no idea is left in hand; fails without the fix |
+| Owner: a long idea hovered opened up see-through, its neighbour's words over it | pack | yes: the opened idea is a paint layer of its own over the map's (in one layer every card is under every word) (mindmap/draw.rs) | yes: test/planning/mindmap-look.mjs pictures the opened idea over its neighbour, changes the neighbour's words, the pixels there stay the same; fails without the fix |
 
 ## Packaging sizes (Linux, against Electron v1.21.7)
 | Package | Native | Electron |
