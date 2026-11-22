@@ -1,0 +1,93 @@
+samples 400: busy 73, idle 327
+
+stage:
+    22 render
+    20 paint
+    20 layout
+    11 other
+
+owner x stage:
+    17 crundi_v2::main::  [layout]
+     9 crundi_v2::main::  [other]
+     7 crundi_v2::main::  [render]
+     7 crundi_v2::main::  [paint]
+     4 crundi_planning::mindmap::render::  [render]
+     3 crundi_workbench::head::PaneHead  [paint]
+     2 crundi_workbench::Workbench  [render]
+     2 crundi_workbench::head::PaneHead  [render]
+     2 crundi_chat::log::LogView  [paint]
+     2 crundi_chat::log::LogView  [render]
+     2 crundi_planning::mindmap::draw::  [render]
+     1 crundi_chat::log::BlockEl  [paint]
+     1 crundi_shell::views::ProjectBar  [paint]
+     1 crundi_widgets::ask::AskLayer  [render]
+     1 crundi_workspace::terms::TermState  [other]
+     1 crundi_workspace::terms::  [paint]
+     1 crundi_planning::kanban::board::columns::  [other]
+     1 crundi_planning::mindmap::draw::MapView  [layout]
+     1 crundi_workspace::terms::TermInput  [paint]
+     1 crundi_planning::mindmap::draw::Toolbar  [paint]
+     1 crundi_planning::kanban::view::Toolbar  [paint]
+     1 crundi_planning::mindmap::draw::Dots  [paint]
+     1 crundi_chat::pane::Composer  [paint]
+     1 crundi_core::mosaic::flex_lens::  [render]
+     1 crundi_shell::nav::Nav  [render]
+
+leaf function:
+    31 ?
+     3 ??
+     3 eq
+     3 is_hovered
+     2 syscall3_readonly
+     2 _int_malloc
+     1 body
+     1 __memcpy_avx_unaligned_erms
+     1 set_client_inset
+     1 alloc::string::{impl#63}::write_str
+     1 {closure#0}<gpui::view::AnyView>
+     1 cancel_mouse_gesture<gpui_base::input::kind::TextareaMode>
+     1 ground
+     1 write<gpui::scene::SubpixelSprite>
+     1 _mm_movemask_epi8
+
+functions on the stack (inclusive):
+    73 crundi_v2::main::
+    67 gpui::app::
+    55 gpui::platform::RequestFrameOptions
+    54 gpui::window::
+    54 gpui::app::async_context::AsyncApp
+    47 gpui::view::ViewElement
+    38 gpui::view::AnyView
+    37 gpui_component::window_border::WindowBorder
+    36 gpui::elements::div::
+    36 gpui::elements::div::InteractiveElementState
+    36 gpui::elements::div::Div
+    36 gpui::elements::div::Stateful
+    28 gpui::element::AnyElement
+    20 gpui::window::ElementId
+    18 gpui::taffy::LayoutId
+    16 gpui::view::ViewElementState
+    16 gpui::app::entity_map::Entity
+    14 gpui::taffy::NodeContext
+    12 gpui::window::Hitbox
+    12 gpui::window::FocusHandle
+    11 taffy::tree::taffy_tree::TaffyView
+     8 gpui::view::paint_view::
+     6 crundi_workbench::Workbench
+     6 gpui::window::DispatchPhase
+     5 crundi_core::api::ApiError
+     5 crundi_shell::run::
+     4 crundi_planning::mindmap::render::
+     4 crundi_planning::mindmap::M
+     4 crundi_planning::mindmap::load_from::
+     4 crundi_planning::util::in_window::
+     4 gpui::geometry::ScaledPixels
+     4 gpui::interactive::MouseMoveEvent
+     3 gpui::element::Drawable
+     3 taffy::tree::taffy_tree::NodeData
+     3 gpui::element::GlobalElementId
+     3 taffy::tree::node::NodeId
+     3 taffy::tree::taffy_tree::TaffyTreeChildIter
+     3 gpui::geometry::Pixels
+     2 gpui::elements::list::List
+     2 gpui::scene::SubpixelSprite

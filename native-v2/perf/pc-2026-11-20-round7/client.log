@@ -1,0 +1,86 @@
+[2026-11-20T13:05:55Z INFO  tracing::span] read_command;
+[2026-11-20T13:05:55Z INFO  tracing::span] read_command;
+[2026-11-20T13:05:55Z INFO  gpui_linux::linux::platform] Compositor GPU hint: vendor=0x1002, device=0x1636 (from dev 226:129)
+[2026-11-20T13:05:55Z INFO  tracing::span] read_command;
+[2026-11-20T13:05:55Z WARN  gpui::text_system] failed to load font Font { family: ".SystemUIFont", features: FontFeatures, fallbacks: None, weight: FontWeight(400.0), style: Normal }: requested font family contains no font matching the other parameters: no font found
+[2026-11-20T13:05:55Z INFO  gpui_component::theme::system_font] UI font ".SystemUIFont" resolves to "Ubuntu", naming it on the theme.
+[2026-11-20T13:05:55Z INFO  tracing::span] perform;
+[2026-11-20T13:05:55Z INFO  tracing::span] authenticate;
+[2026-11-20T13:05:55Z INFO  tracing::span] read_command;
+[2026-11-20T13:05:55Z INFO  tracing::span] read_command;
+[2026-11-20T13:05:55Z INFO  tracing::span] obj_server_task;
+[2026-11-20T13:05:55Z INFO  tracing::span] socket reader;
+[2026-11-20T13:05:56Z INFO  gpui_wgpu::wgpu_context] Found 4 GPU adapter(s):
+[2026-11-20T13:05:56Z INFO  gpui_wgpu::wgpu_context]   - AMD Radeon Graphics (RADV RENOIR) (vendor=0x1002, device=0x1636, backend=Vulkan, type=IntegratedGpu)
+[2026-11-20T13:05:56Z INFO  gpui_wgpu::wgpu_context]   - NVIDIA GeForce RTX 2060 (vendor=0x10de, device=0x1f15, backend=Vulkan, type=DiscreteGpu)
+[2026-11-20T13:05:56Z INFO  gpui_wgpu::wgpu_context]   - AMD Radeon Graphics (radeonsi, renoir, ACO, DRM 3.64, 7.0.0-43-generic) (vendor=0x1002, device=0x0000, backend=Gl, type=Other)
+[2026-11-20T13:05:56Z INFO  gpui_wgpu::wgpu_context]   - llvmpipe (LLVM 21.1.8, 256 bits) (vendor=0x10005, device=0x0000, backend=Vulkan, type=Cpu)
+[2026-11-20T13:05:56Z INFO  gpui_wgpu::wgpu_context] Testing adapter: AMD Radeon Graphics (RADV RENOIR) (Vulkan)...
+[2026-11-20T13:05:56Z INFO  gpui_wgpu::wgpu_context] Selected GPU (passed configuration test): AMD Radeon Graphics (RADV RENOIR) (Vulkan)
+[2026-11-20T13:05:56Z INFO  gpui_wgpu::wgpu_context] Selected GPU adapter: "AMD Radeon Graphics (RADV RENOIR)" (Vulkan)
+[2026-11-20T13:05:56Z INFO  tracing::span] read_command;
+[native] test driver on 127.0.0.1:4885
+[notify] could not show: Usage:
+  gdbus call [OPTION…]
+
+Invoke a method on a remote object.
+
+Connection Endpoint Options:
+  -y, --system              Connect to the system bus
+  -e, --session             Connect to the session bus
+  -a, --address=ADDRESS     Connect to given D-Bus address
+
+Application Options:
+  -d, --dest                Destination name to invoke method on
+  -o, --object-path         Object path to invoke method on
+  -m, --method              Method and interface name
+  -t, --timeout             Timeout in seconds
+  -i, --interactive         Allow interactive authorization
+[notify] could not show: Usage:
+  gdbus call [OPTION…]
+
+Invoke a method on a remote object.
+
+Connection Endpoint Options:
+  -y, --system              Connect to the system bus
+  -e, --session             Connect to the session bus
+  -a, --address=ADDRESS     Connect to given D-Bus address
+
+Application Options:
+  -d, --dest                Destination name to invoke method on
+  -o, --object-path         Object path to invoke method on
+  -m, --method              Method and interface name
+  -t, --timeout             Timeout in seconds
+  -i, --interactive         Allow interactive authorization
+[notify] could not show: Usage:
+  gdbus call [OPTION…]
+
+Invoke a method on a remote object.
+
+Connection Endpoint Options:
+  -y, --system              Connect to the system bus
+  -e, --session             Connect to the session bus
+  -a, --address=ADDRESS     Connect to given D-Bus address
+
+Application Options:
+  -d, --dest                Destination name to invoke method on
+  -o, --object-path         Object path to invoke method on
+  -m, --method              Method and interface name
+  -t, --timeout             Timeout in seconds
+  -i, --interactive         Allow interactive authorization
+[notify] could not show: Usage:
+  gdbus call [OPTION…]
+
+Invoke a method on a remote object.
+
+Connection Endpoint Options:
+  -y, --system              Connect to the system bus
+  -e, --session             Connect to the session bus
+  -a, --address=ADDRESS     Connect to given D-Bus address
+
+Application Options:
+  -d, --dest                Destination name to invoke method on
+  -o, --object-path         Object path to invoke method on
+  -m, --method              Method and interface name
+  -t, --timeout             Timeout in seconds
+  -i, --interactive         Allow interactive authorization

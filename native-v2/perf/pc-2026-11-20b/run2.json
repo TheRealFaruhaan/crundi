@@ -1,0 +1,129 @@
+{
+ "setup": {
+  "server": "http://localhost:4884",
+  "project": "demo",
+  "panes": [
+   "live:9d0dc2706ca7ca91",
+   "live:849f5631f97eb9b8",
+   "live:302663d803d042bb",
+   "live:0409816e76840313"
+  ],
+  "chats": 4,
+  "window": "1920x1040",
+  "focused": "0409816e76840313",
+  "focusedRows": 138,
+  "streamChat": "9f182b581059ce6e",
+  "panesWhileStreaming": 5,
+  "batches": 349,
+  "spliced": 687,
+  "rows": 303,
+  "replyChars": 6088
+ },
+ "idle-open": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8
+ },
+ "scroll-panes": {
+  "frames": 547,
+  "p50": 5.94,
+  "p95": 9.43,
+  "max": 11.43,
+  "share7": 0.79,
+  "over7": 113,
+  "over16": 0,
+  "seconds": 8.3,
+  "wheelEvents": 740,
+  "renders": {
+   "workbench": 547,
+   "top-bar": 0,
+   "sidebar": 0,
+   "project-bar": 0,
+   "head": 4,
+   "log": 552,
+   "composer": 4
+  }
+ },
+ "scroll-chat": {
+  "frames": 542,
+  "p50": 6.12,
+  "p95": 8.7,
+  "max": 10.53,
+  "share7": 0.63,
+  "over7": 199,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "workbench": 542,
+   "top-bar": 1,
+   "log": 542
+  }
+ },
+ "stream+scroll": {
+  "frames": 513,
+  "p50": 6.56,
+  "p95": 11.08,
+  "max": 15.87,
+  "share7": 0.59,
+  "over7": 208,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 729
+ },
+ "stream": {
+  "frames": 181,
+  "p50": 6.48,
+  "p95": 9.14,
+  "max": 13.74,
+  "share7": 0.61,
+  "over7": 71,
+  "over16": 0,
+  "seconds": 9.1,
+  "renders": {
+   "workbench": 694,
+   "top-bar": 1,
+   "sidebar": 1,
+   "project-bar": 0,
+   "head": 1,
+   "log": 825,
+   "composer": 1
+  }
+ },
+ "idle-end": {
+  "frames": 2,
+  "p50": 4.18,
+  "p95": 8.21,
+  "max": 8.21,
+  "share7": 0.5,
+  "over7": 1,
+  "over16": 0,
+  "seconds": 8,
+  "renders": {
+   "workbench": 2,
+   "top-bar": 2,
+   "sidebar": 1,
+   "head": 1,
+   "composer": 1
+  },
+  "batches": 0,
+  "head": {
+   "before": {
+    "title": "Chat (new)",
+    "long": "",
+    "state": "idle"
+   },
+   "after": {
+    "title": "Numbers one to three",
+    "long": "Numbers one to three hundred",
+    "state": "idle"
+   }
+  }
+ },
+ "allFrames": 1815,
+ "ranSeconds": 152
+}

@@ -1,0 +1,148 @@
+# The native PC client v2 (native-v2/, ARCHITECTURE.md): the no-refresh
+# check (rule 2), then build the workspace on Linux, Windows and macOS, run
+# its unit tests, start the client on each and check it answers its test
+# driver and draws no frames while idle, and keep a picture of the window,
+# the logs and a Linux package (as native-gpui's are built). Nothing here
+# builds or releases Crundi itself.
+name: native-v2
+
+on:
+  push:
+    paths: ['native-v2/**', '.github/workflows/native-v2.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+      RUST_LOG: "info,wgpu_core=warn,wgpu_hal=warn,naga=warn,zbus=off"
+    steps:
+      - uses: actions/checkout@v4
+
+      # Rule 2: no cx.refresh_windows() and no window.refresh() anywhere.
+      - name: No window refresh
+        run: native-v2/tools/check.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      # GPUI's X11 and Wayland windows, ALSA for voice, CEF's libraries, and
+      # Mesa's software Vulkan (lavapipe) to draw on a machine with no GPU.
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb x11-apps imagemagick mesa-vulkan-drivers \
+            libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libfontconfig1-dev libfreetype-dev \
+            libasound2-dev libnss3 libgbm1 libasound2t64 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 libxrandr2 libpango-1.0-0
+
+      - name: Cache CEF
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cef
+          key: cef-156.0.26-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-v2/target
+          key: v2-cargo-${{ runner.os }}-${{ hashFiles('native-v2/Cargo.lock') }}
+          restore-keys: v2-cargo-${{ runner.os }}-
+
+      - name: Fetch CEF
+        run: |
+          CEF=$(node native-gpui/scripts/fetch-cef.mjs "$RUNNER_TEMP/cef")
+          echo "CEF_PATH=$CEF" >> "$GITHUB_ENV"
+
+      - name: Build
+        working-directory: native-v2
+        run: cargo build --release --workspace
+
+      # The app (crundi-v2, no CEF) and its browser host (crundi-browser-host,
+      # the only binary that links CEF) side by side, CEF's files with them; on
+      # macOS the host in the bundle's Contents/MacOS and CEF's helpers copies of it.
+      - name: Stage CEF next to the binaries
+        working-directory: native-v2
+        run: |
+          BIN=$(STAGE_NAME=crundi-v2 STAGE_HOST=crundi-browser-host node ../native-gpui/scripts/stage-cef.mjs target/release)
+          echo "GPUI_BIN=$BIN" >> "$GITHUB_ENV"
+
+      # A ready-to-run Linux build to download and try (the app, its browser
+      # host and CEF's files, real copies of the staged symlinks), kept a week.
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        working-directory: native-v2
+        run: |
+          PKG="$RUNNER_TEMP/crundi-v2-linux-x86_64"
+          rm -rf "$PKG" && mkdir -p "$PKG"
+          cp target/release/crundi-v2 target/release/crundi-browser-host "$PKG/"
+          # Crundi's icon, and the script that adds it to the desktop's apps.
+          cp crates/app/assets/icon-256.png "$PKG/crundi.png"
+          cp ../native-gpui/scripts/install-desktop-entry.sh "$PKG/"
+          for f in "$CEF_PATH"/*; do
+            case "$(basename "$f")" in include|cmake|libcef_dll|CMakeLists.txt|CREDITS.html|archive.json|cef_sandbox*|*.lib) continue ;; esac
+            cp -rL "$f" "$PKG/"
+          done
+          printf '%s\n' 'Crundi native PC client v2 (GPUI), a CI build to try.' \
+            'Run ./crundi-v2 from this folder (Ubuntu 24.04 or newer, x86_64).' \
+            'For Crundi in the dock and the app grid with its icon, run ./install-desktop-entry.sh once.' \
+            'Needs: libnss3 libgbm1 libasound2t64 libxkbcommon-x11-0 and a Vulkan driver (mesa-vulkan-drivers, or your GPU vendor'"'"'s).' > "$PKG/README.txt"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/crundi-v2-linux-x86_64.tar.gz" crundi-v2-linux-x86_64
+
+      - name: Upload the Linux build
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crundi-v2-linux-x86_64
+          path: ${{ runner.temp }}/crundi-v2-linux-x86_64.tar.gz
+          retention-days: 7
+          compression-level: 0
+
+      - name: Unit tests
+        working-directory: native-v2
+        run: |
+          case "$RUNNER_OS" in
+            Windows) export PATH="$PWD/target/release:$PATH" ;;
+            Linux) export LD_LIBRARY_PATH="$PWD/target/release:$LD_LIBRARY_PATH" ;;
+          esac
+          cargo test --release --workspace
+
+      # Start the client with its test driver, ask it what it shows (the
+      # sign-in page: no server), take a picture of the window (Linux), stop it.
+      - name: Run it
+        env:
+          OUT: ${{ runner.temp }}/run
+          CRUNDI_TEST_PORT: '7622'
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+        run: |
+          mkdir -p "$OUT"
+          export CRUNDI_CONFIG_DIR="$OUT/config" CRUNDI_CEF_CACHE="$OUT/cef"
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a -s "-screen 0 1440x900x24" node native-v2/tools/smoke.mjs "$GPUI_BIN" "$OUT"
+          else
+            node native-v2/tools/smoke.mjs "$GPUI_BIN" "$OUT"
+          fi
+
+      - name: Pictures and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-${{ matrix.os }}
+          path: ${{ runner.temp }}/run
+          if-no-files-found: ignore

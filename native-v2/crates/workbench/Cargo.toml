@@ -1,0 +1,16 @@
+[package]
+name = "crundi-workbench"
+description = "The pane host: the mosaic's layout, pane kinds, the pane heads, gutters, empty panes"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+serde_json.workspace = true
+log.workspace = true
+crundi-core.workspace = true
+crundi-theme.workspace = true
+crundi-widgets.workspace = true
+crundi-shell.workspace = true

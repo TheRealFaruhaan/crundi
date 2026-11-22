@@ -1,0 +1,256 @@
+{
+ "setup": {
+  "server": "http://localhost:4884",
+  "project": "demo",
+  "panes": [
+   "live:56ef7cf94eba0cef",
+   "live:56c4d15127b92bd1",
+   "live:4c5dba64369b18c1",
+   "live:bbfe9044648d6f91"
+  ],
+  "chats": 4,
+  "window": "1920x1040",
+  "focused": "bbfe9044648d6f91",
+  "focusedRows": 98,
+  "streamChat": "a37f66a7a9523fe8",
+  "panesWhileStreaming": 5,
+  "batches": 289,
+  "spliced": 600,
+  "rows": 302,
+  "replyChars": 6880,
+  "kanban": {
+   "columns": 4,
+   "cards": 80
+  },
+  "mindmap": {
+   "ideas": 133,
+   "drawn": 20,
+   "view": [
+    1638,
+    873
+   ]
+  },
+  "planningPanes": [
+   "panel:kanban",
+   "live:56ef7cf94eba0cef",
+   "panel:mindmap",
+   "live:56c4d15127b92bd1",
+   "live:a37f66a7a9523fe8",
+   "live:4c5dba64369b18c1",
+   "live:bbfe9044648d6f91"
+  ],
+  "planningInView": {
+   "focused": "a37f66a7a9523fe8",
+   "kanbanCols": 1,
+   "mindmapCanvas": [
+    737,
+    179
+   ],
+   "mindmapView": [
+    460,
+    378
+   ]
+  },
+  "planningStream": {
+   "chat": "a37f66a7a9523fe8",
+   "state": "working"
+  }
+ },
+ "idle-open": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8
+ },
+ "scroll-panes": {
+  "frames": 605,
+  "p50": 4.42,
+  "p95": 5.45,
+  "max": 7.78,
+  "share7": 1,
+  "over7": 1,
+  "over16": 0,
+  "seconds": 8.3,
+  "wheelEvents": 902,
+  "renders": {
+   "workbench": 605,
+   "top-bar": 0,
+   "sidebar": 0,
+   "project-bar": 0,
+   "wins": 0,
+   "head": 4,
+   "log": 608,
+   "composer": 4
+  }
+ },
+ "scroll-chat": {
+  "frames": 610,
+  "p50": 3.68,
+  "p95": 5.27,
+  "max": 5.95,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "workbench": 610,
+   "log": 610
+  }
+ },
+ "stream+scroll": {
+  "frames": 589,
+  "p50": 4.91,
+  "p95": 5.81,
+  "max": 6.72,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 870
+ },
+ "stream": {
+  "frames": 86,
+  "p50": 4.7,
+  "p95": 5.4,
+  "max": 8.89,
+  "share7": 0.99,
+  "over7": 1,
+  "over16": 0,
+  "seconds": 3.5,
+  "renders": {
+   "workbench": 675,
+   "top-bar": 2,
+   "sidebar": 1,
+   "project-bar": 0,
+   "wins": 0,
+   "head": 1,
+   "log": 852,
+   "composer": 1
+  }
+ },
+ "idle-end": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8,
+  "renders": {},
+  "batches": 0,
+  "head": {
+   "before": {
+    "title": "Number list in words",
+    "long": "",
+    "state": "idle"
+   },
+   "after": {
+    "title": "Number list in words",
+    "long": "",
+    "state": "idle"
+   }
+  }
+ },
+ "scroll-kanban": {
+  "frames": 654,
+  "p50": 2.66,
+  "p95": 3.71,
+  "max": 6.08,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "top-bar": 1,
+   "kanban-col": 665
+  }
+ },
+ "pan-mindmap": {
+  "frames": 320,
+  "p50": 3.96,
+  "p95": 4.71,
+  "max": 6.21,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "mindmap-map": 320
+  },
+  "drawnAtEnd": 20,
+  "relayouts": 0
+ },
+ "idle-planning": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 6
+ },
+ "planning+stream+scroll": {
+  "frames": 528,
+  "p50": 4.89,
+  "p95": 5.93,
+  "max": 7.46,
+  "share7": 1,
+  "over7": 1,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 878,
+  "renders": {
+   "workbench": 529,
+   "log": 428,
+   "mindmap-map": 80,
+   "kanban-stack": 160
+  },
+  "panes": [
+   "panel:kanban",
+   "live:56ef7cf94eba0cef",
+   "panel:mindmap",
+   "live:56c4d15127b92bd1",
+   "live:a37f66a7a9523fe8",
+   "live:4c5dba64369b18c1",
+   "live:bbfe9044648d6f91"
+  ]
+ },
+ "region:kanban": {
+  "frames": 142,
+  "p50": 4.22,
+  "p95": 6.17,
+  "max": 7.93,
+  "share7": 0.99,
+  "over7": 1,
+  "over16": 0,
+  "seconds": 2,
+  "renders": {
+   "workbench": 143,
+   "log": 50,
+   "kanban-stack": 142
+  }
+ },
+ "region:mindmap": {
+  "frames": 145,
+  "p50": 3.93,
+  "p95": 5.42,
+  "max": 6.41,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 2,
+  "renders": {
+   "workbench": 145,
+   "log": 49,
+   "mindmap-map": 145
+  }
+ },
+ "allFrames": 3901,
+ "ranSeconds": 124
+}

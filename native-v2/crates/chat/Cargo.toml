@@ -1,0 +1,27 @@
+[package]
+name = "crundi-chat"
+description = "The chat area: every open chat's store, the chat pane (virtualised log, composer), the streaming path"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+serde_json.workspace = true
+log.workspace = true
+crundi-core.workspace = true
+crundi-theme.workspace = true
+crundi-widgets.workspace = true
+crundi-shell.workspace = true
+crundi-workbench.workspace = true
+# The composer: attachments (base64, the file picker), the schedule's times, voice's channel.
+base64.workspace = true
+image.workspace = true
+chrono.workspace = true
+rfd.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

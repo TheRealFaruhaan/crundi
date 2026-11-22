@@ -1,0 +1,154 @@
+{
+ "bin": "/home/farhan/.cache/crundi-native-target/release/crundi-v2-floor",
+ "when": "2026-11-19T21:13:05.782Z",
+ "modes": {
+  "empty": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 101,
+    "p50": 68,
+    "p95": 69.76,
+    "max": 88.56,
+    "share7": 0,
+    "over7": 101,
+    "over16": 101,
+    "wheelEvents": 199,
+    "renders": {
+     "empty": 101
+    }
+   }
+  },
+  "list": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 101,
+    "p50": 69.86,
+    "p95": 71.81,
+    "max": 93.42,
+    "share7": 0,
+    "over7": 101,
+    "over16": 101,
+    "wheelEvents": 196,
+    "renders": {
+     "rows": 101
+    }
+   }
+  },
+  "uniform": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 101,
+    "p50": 69.72,
+    "p95": 74.99,
+    "max": 90.83,
+    "share7": 0,
+    "over7": 101,
+    "over16": 101,
+    "wheelEvents": 197,
+    "renders": {
+     "rows": 101
+    }
+   }
+  },
+  "workbench": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 101,
+    "p50": 72.88,
+    "p95": 74.39,
+    "max": 77.18,
+    "share7": 0,
+    "over7": 101,
+    "over16": 101,
+    "wheelEvents": 109,
+    "renders": {
+     "workbench": 101,
+     "head": 5,
+     "rows": 101
+    }
+   }
+  },
+  "chatlog": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 101,
+    "p50": 75.45,
+    "p95": 77.65,
+    "max": 102.64,
+    "share7": 0,
+    "over7": 101,
+    "over16": 101,
+    "wheelEvents": 103,
+    "renders": {
+     "workbench": 101,
+     "log": 101
+    }
+   }
+  },
+  "chatlog5": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 100,
+    "p50": 77.25,
+    "p95": 80.03,
+    "max": 102.09,
+    "share7": 0,
+    "over7": 100,
+    "over16": 100,
+    "wheelEvents": 108,
+    "renders": {
+     "workbench": 100,
+     "log": 100
+    }
+   }
+  }
+ }
+}

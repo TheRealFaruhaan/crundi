@@ -1,0 +1,82 @@
+#!/bin/bash
+# The one build entry for native-v2 (ARCHITECTURE.md, "Building"): the one
+# shared build folder (CARGO_TARGET_DIR=$HOME/.cache/crundi-native-target),
+# two jobs, one build at a time across everyone (the shared lock), and the
+# kernel kills this build first if memory runs out, never Crundi. The
+# no-refresh check (tools/check.sh) runs first; it fails the build on a
+# cx.refresh_windows() or window.refresh().
+#
+#   tools/build.sh                     the client (crates/app: debug/crundi-v2)
+#   tools/build.sh -p crundi-chat      one crate
+#   tools/build.sh --release           a release build (the frame budget's numbers)
+#   tools/build.sh test --workspace    cargo test, the same way (the same lock and touch)
+#
+#   CRUNDI_BUILD_JOBS=<n>              more jobs where the machine is yours (default 2)
+#
+# The shared folder holds one debug/crundi-v2 for every worktree: the last
+# build's. So a build that made the client links its binaries into this
+# worktree's own native-v2/.bin/<debug|release>/ (with FROM: the worktree,
+# its HEAD, when), and the suites (test/lib.mjs) and measure-pc run that copy
+# by default, never another worktree's (F118).
+#
+# Before cargo runs, sources are touched when the last build came from another
+# worktree (native-gpui's F18: crates of the same name and version in two
+# worktrees share the folder). Never set CARGO_INCREMENTAL=0.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+tools/check.sh
+CMD=build; if [ "${1:-}" = test ]; then CMD=test; shift; fi
+export PATH="$HOME/.cargo/bin:$PATH"
+export CARGO_TARGET_DIR="$HOME/.cache/crundi-native-target"
+JOBS="${CRUNDI_BUILD_JOBS:-2}"
+export CARGO_BUILD_JOBS="$JOBS"
+unset CARGO_INCREMENTAL
+echo 1000 > /proc/self/oom_score_adj 2>/dev/null || true
+mkdir -p "$CARGO_TARGET_DIR"
+# Keep 20 GB free on / (the machine is shared).
+FREE=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+if [ "${FREE:-0}" -lt 20 ]; then echo "only ${FREE} GB free on /: below the 20 GB floor; clean first (tools/clean-build.sh)" >&2; exit 1; fi
+exec 9>"$CARGO_TARGET_DIR/.area-build.lock"
+flock 9
+HERE=$(pwd -P)
+LAST="$CARGO_TARGET_DIR/.v2-last-worktree"
+OTHER=""
+[ -f "$LAST" ] && OTHER=$(find "$CARGO_TARGET_DIR/debug/build" "$CARGO_TARGET_DIR/release/build" -mindepth 2 -maxdepth 2 -path '*/crundi-*' -newer "$LAST" -print -quit 2>/dev/null || true)
+if [ "$(cat "$LAST" 2>/dev/null)" != "$HERE" ] || [ -n "$OTHER" ]; then
+  # (vendor/ too: the patched gpui is a crate of the same name and version
+  # in every worktree, F247.)
+  find crates vendor -name '*.rs' -path '*/src/*' -exec touch {} +
+  find crates vendor -name 'Cargo.toml' -exec touch {} +
+  echo "sources touched: the last build was from $(cat "$LAST" 2>/dev/null || echo nowhere)" >&2
+fi
+# Marked before cargo runs: a build that fails part way has still left this
+# worktree's crates in the folder, so the next build from another worktree
+# touches its own sources (F247: a failed build left a stale client).
+echo "$HERE" > "$LAST"
+PEAKS=/tmp/crundi-v2-peaks-$$.log
+tools/rustc-peak.sh "$PEAKS" & PK=$!
+trap 'kill $PK 2>/dev/null; rm -f "$PEAKS" "$PEAKS.tmp"' EXIT
+S=$(date +%s)
+cargo "$CMD" -j"$JOBS" "$@"
+# (Stamped again once it succeeded: the marker is newer than this build's
+# own outputs, so the next build from here touches nothing.)
+echo "$HERE" > "$LAST"
+# (Only a build of the client: not one crate's, whose client would be stale.)
+APP=1; PREV=""; for a in "$@"; do case "$PREV" in -p|--package) [ "$a" = crundi-app ] || APP=0;; esac; PREV="$a"; done
+if [ "$CMD" = build ] && [ "$APP" = 1 ]; then
+  PROFILE=debug; for a in "$@"; do [ "$a" = --release ] && PROFILE=release; done
+  mkdir -p ".bin/$PROFILE"
+  for b in crundi-v2 crundi-v2-floor; do
+    F="$CARGO_TARGET_DIR/$PROFILE/$b"
+    # (cargo just made it from this worktree's sources: up to date.)
+    if [ -f "$F" ]; then ln -f "$F" ".bin/$PROFILE/$b" 2>/dev/null || cp -f "$F" ".bin/$PROFILE/$b"; fi
+  done
+  # The browser host and CEF's files beside it, as tools/stage-browser.sh put
+  # them beside the shared binary (symlinks; the host as it was last built).
+  T="$CARGO_TARGET_DIR/$PROFILE"
+  [ -f "$T/crundi-browser-host" ] && { ln -f "$T/crundi-browser-host" ".bin/$PROFILE/" 2>/dev/null || cp -f "$T/crundi-browser-host" ".bin/$PROFILE/"; }
+  find "$T" -maxdepth 1 -type l -exec cp -P -f {} ".bin/$PROFILE/" \;
+  printf '%s %s %s\n' "$HERE" "$(git rev-parse --short HEAD 2>/dev/null)" "$(date -Is)" > ".bin/$PROFILE/FROM"
+  echo "this worktree's client: $HERE/.bin/$PROFILE/crundi-v2"
+fi
+echo "build took $(( $(date +%s) - S )) s; top rustc peaks:"; sleep 1.2; head -5 "$PEAKS" 2>/dev/null || true

@@ -1,0 +1,925 @@
+use crate::{
+    AnyElement, AnyEntity, AnyWeakEntity, App, AvailableSpace, Bounds, ContentMask, Context,
+    Element, ElementId, Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement,
+    LayoutId, PaintIndex, Pixels, PrepaintStateIndex, Render, RenderOnce, Size, Style,
+    StyleRefinement, TextStyle, WeakEntity,
+};
+use crate::{Empty, Window};
+use anyhow::Result;
+use collections::FxHashSet;
+use refineable::Refineable;
+use std::mem;
+use std::{
+    any::{TypeId, type_name},
+    fmt,
+    ops::Range,
+};
+
+/// A dynamically-typed view handle that can be downcast to a specific `Entity<V>`.
+///
+/// This is the type-erased counterpart to [`ViewElement`]: it holds an entity plus
+/// a function pointer to its render, and is itself a [`View`], so embedding it as an
+/// element goes through the same [`ViewElement`] machinery as any other view.
+#[derive(Clone, Debug)]
+pub struct AnyView {
+    entity: AnyEntity,
+    render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
+    view_type_name: &'static str,
+}
+
+impl<V: Render> From<Entity<V>> for AnyView {
+    fn from(value: Entity<V>) -> Self {
+        AnyView {
+            entity: value.into_any(),
+            render: any_view::render::<V>,
+            view_type_name: type_name::<V>(),
+        }
+    }
+}
+
+impl AnyView {
+    /// Embed this view as a cached [`ViewElement`] laid out at `style`.
+    ///
+    /// The rendered subtree is recycled from the previous frame unless
+    /// [Context::notify] was called on the backing entity since it was rendered
+    /// (or [Window::refresh] is called, which ignores caching).
+    pub fn cached(self, style: StyleRefinement) -> ViewElement<AnyView> {
+        self.into_element().cached(style)
+    }
+
+    /// Convert this to a weak handle.
+    pub fn downgrade(&self) -> AnyWeakView {
+        AnyWeakView {
+            entity: self.entity.downgrade(),
+            render: self.render,
+            view_type_name: self.view_type_name,
+        }
+    }
+
+    /// Convert this to a [Entity] of a specific type.
+    /// If this handle does not contain a view of the specified type, returns itself in an `Err` variant.
+    pub fn downcast<T: 'static>(self) -> Result<Entity<T>, Self> {
+        match self.entity.downcast() {
+            Ok(entity) => Ok(entity),
+            Err(entity) => Err(Self {
+                entity,
+                render: self.render,
+                view_type_name: self.view_type_name,
+            }),
+        }
+    }
+
+    /// Gets the [TypeId] of the underlying view.
+    pub fn entity_type(&self) -> TypeId {
+        self.entity.entity_type
+    }
+
+    /// The [`EntityId`] of this view.
+    pub fn entity_id(&self) -> EntityId {
+        self.entity.entity_id()
+    }
+}
+
+impl PartialEq for AnyView {
+    fn eq(&self, other: &Self) -> bool {
+        self.entity == other.entity
+    }
+}
+
+impl Eq for AnyView {}
+
+/// `AnyView` is the type-erased [`View`]: its `render` is a function pointer rather
+/// than a concrete type, but it participates in the reactive graph exactly like any
+/// other view via [`ViewElement`].
+impl View for AnyView {
+    fn entity_id(&self) -> Option<EntityId> {
+        Some(self.entity.entity_id())
+    }
+
+    #[cfg(not(gpui_hot_reload))]
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        (self.render)(&self, window, cx)
+    }
+
+    // The stored function pointer was captured from the original binary, so it must be looked up
+    // in the jump table to reach the patched render.
+    #[cfg(gpui_hot_reload)]
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        subsecond::HotFn::current(self.render).call((&self, window, cx))
+    }
+}
+
+impl<V: 'static + Render> IntoElement for Entity<V> {
+    type Element = ViewElement<Entity<V>>;
+
+    fn into_element(self) -> Self::Element {
+        ViewElement::with_type_name(self, type_name::<V>())
+    }
+
+    #[inline(never)]
+    fn into_any_element(self) -> AnyElement {
+        self.into_element().into_any()
+    }
+}
+
+impl IntoElement for AnyView {
+    type Element = ViewElement<AnyView>;
+
+    fn into_element(self) -> Self::Element {
+        let view_type_name = self.view_type_name;
+        ViewElement::with_type_name(self, view_type_name)
+    }
+}
+
+/// A weak, dynamically-typed view handle.
+pub struct AnyWeakView {
+    entity: AnyWeakEntity,
+    render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
+    view_type_name: &'static str,
+}
+
+impl AnyWeakView {
+    /// Upgrade to a strong `AnyView` handle, if the view is still alive.
+    pub fn upgrade(&self) -> Option<AnyView> {
+        let entity = self.entity.upgrade()?;
+        Some(AnyView {
+            entity,
+            render: self.render,
+            view_type_name: self.view_type_name,
+        })
+    }
+}
+
+impl<V: 'static + Render> From<WeakEntity<V>> for AnyWeakView {
+    fn from(view: WeakEntity<V>) -> Self {
+        AnyWeakView {
+            entity: view.into(),
+            render: any_view::render::<V>,
+            view_type_name: type_name::<V>(),
+        }
+    }
+}
+
+impl PartialEq for AnyWeakView {
+    fn eq(&self, other: &Self) -> bool {
+        self.entity == other.entity
+    }
+}
+
+impl std::fmt::Debug for AnyWeakView {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AnyWeakView")
+            .field("entity_id", &self.entity.entity_id)
+            .finish_non_exhaustive()
+    }
+}
+
+mod any_view {
+    use crate::{AnyElement, AnyView, App, IntoElement, Render, Window};
+
+    pub(crate) fn render<V: 'static + Render>(
+        view: &AnyView,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let view = view.clone().downcast::<V>().unwrap();
+        // Record the view's Render type name so the accessibility debug dump can
+        // attribute nodes to the view that produced them.
+        #[cfg(debug_assertions)]
+        window
+            .a11y
+            .view_type_names
+            .insert(view.entity_id(), std::any::type_name::<V>());
+        view.update(cx, |view, cx| view.render(window, cx).into_any_element())
+    }
+}
+
+/// A renderable that participates in GPUI's reactive graph — the unifying model
+/// behind [`Render`] and [`RenderOnce`].
+///
+/// When `entity_id()` returns `Some`, that id becomes the view's identity: it gets
+/// a unique element-id space (so internal `use_state` / `.id(..)` never collide
+/// across siblings) and `cx.notify()` on that entity re-renders only this view's
+/// subtree. `None` behaves like a stateless component.
+///
+/// You rarely implement `View` directly. `Entity<T: Render>` and any `T: RenderOnce`
+/// get a blanket impl below; implement it by hand only when a component needs both
+/// parent-supplied props *and* a backing entity for identity.
+pub trait View: 'static + Sized {
+    /// This view's identity, if it has one. A view typically holds the backing
+    /// entity as a field and returns its [`EntityId`] here.
+    ///
+    /// The id becomes this view's [`ElementId`], so two views keyed on the same
+    /// entity must not be rendered at the same position in the element tree
+    /// (e.g. as siblings under the same parent): their internal element state
+    /// (`use_state`, scroll offsets, etc.) would silently collide. Nesting is
+    /// fine — the id is scoped by the parent path.
+    fn entity_id(&self) -> Option<EntityId>;
+
+    /// Render this view into an element tree, consuming `self`.
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
+}
+
+/// A stateless component (`RenderOnce`) is a `View` with no identity.
+impl<T: RenderOnce> View for T {
+    fn entity_id(&self) -> Option<EntityId> {
+        None
+    }
+
+    #[inline]
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        RenderOnce::render(self, window, cx)
+    }
+}
+
+/// An entity that renders itself (`Render`) is a `View` keyed on its own id.
+impl<T: Render> View for Entity<T> {
+    fn entity_id(&self) -> Option<EntityId> {
+        Some(Entity::entity_id(self))
+    }
+
+    #[inline]
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.update(cx, |this, cx| {
+            Render::render(this, window, cx).into_any_element()
+        })
+    }
+}
+
+impl<T: Render> Entity<T> {
+    /// Embed this entity as a cached [`ViewElement`] laid out at `style`.
+    ///
+    /// The rendered subtree is reused until the entity is notified (or the
+    /// cached bounds / text style change). Caching requires a definite size:
+    /// a cached view is laid out from `style` and is *not* measured from its
+    /// contents. Use [`ViewElement::new`] (or `.child(entity)`) for the
+    /// uncached case.
+    #[track_caller]
+    pub fn cached(self, style: StyleRefinement) -> ViewElement<Entity<T>> {
+        ViewElement::with_type_name(self, type_name::<T>()).cached(style)
+    }
+}
+
+/// The element type for [`View`] implementations. Wraps a `View` and hooks it
+/// into layout, prepaint, and paint. Constructed via [`ViewElement::new`].
+#[doc(hidden)]
+pub struct ViewElement<V: View> {
+    view: Option<V>,
+    entity_id: Option<EntityId>,
+    cached_style: Option<StyleRefinement>,
+    #[cfg(feature = "profiler")]
+    view_type_name: &'static str,
+    #[cfg(debug_assertions)]
+    source: &'static core::panic::Location<'static>,
+}
+
+impl<V: View> ViewElement<V> {
+    /// Wrap a [`View`] as an element.
+    #[track_caller]
+    pub fn new(view: V) -> Self {
+        Self::with_type_name(view, type_name::<V>())
+    }
+
+    /// Wraps a view whose draw time profiling attributes to `view_type_name`,
+    /// such as an entity's type rather than [`Entity`]'s.
+    #[track_caller]
+    #[cfg_attr(not(feature = "profiler"), expect(unused_variables))]
+    pub(crate) fn with_type_name(view: V, view_type_name: &'static str) -> Self {
+        let entity_id = view.entity_id();
+        ViewElement {
+            entity_id,
+            cached_style: None,
+            #[cfg(feature = "profiler")]
+            view_type_name,
+            view: Some(view),
+            #[cfg(debug_assertions)]
+            source: core::panic::Location::caller(),
+        }
+    }
+
+    /// Enable caching of this view's rendered subtree, laid out at `style`.
+    /// The composer supplies the layout style because caching skips rendering
+    /// the contents to measure them.
+    ///
+    /// Crate-private on purpose: caching is only sound for entity-backed views,
+    /// where [`Context::notify`] is the contract that busts the cache. A stateless
+    /// view has no such contract, so a frozen subtree could never be invalidated.
+    /// Reach this through [`Entity::cached`] or [`AnyView::cached`], which are
+    /// entity-backed by construction.
+    pub(crate) fn cached(mut self, style: StyleRefinement) -> Self {
+        self.cached_style = Some(style);
+        self
+    }
+}
+
+impl<V: View> IntoElement for ViewElement<V> {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+struct ViewElementState {
+    prepaint_range: Range<PrepaintStateIndex>,
+    paint_range: Range<PaintIndex>,
+    cache_key: ViewElementCacheKey,
+    /// The entities the view accessed while it was last drawn, in any phase,
+    /// restored when its prepaint is reused so the window stays subscribed.
+    accessed_entities: FxHashSet<EntityId>,
+    /// crundi patch (b), PATCH.md: replayed moved since it last rendered (it
+    /// renders again once still), and the move its paint is to replay at.
+    moved: bool,
+    paint_offset: Option<crate::Point<Pixels>>,
+    /// crundi patch (a): the frame the view was last painted in. Its ranges
+    /// index that frame only: a frame that prepainted it without painting it
+    /// (an element that lays a child out but doesn't draw it) leaves them
+    /// stale, so it renders again rather than replay them.
+    painted_in: u64,
+    /// crundi patch (b): neither rendered nor painted, being wholly outside
+    /// its clip; what it last drew, unclipped, relative to its origin. It
+    /// renders when any of that would be in view again.
+    skipped: Option<Bounds<Pixels>>,
+    /// crundi patch (e), PATCH.md: where its last frame's scene is whole,
+    /// in window pixels: the content mask it rendered under (a wide clip's
+    /// wider mask), moved with each replay and cut to the mask there.
+    recorded: Bounds<Pixels>,
+    /// crundi patch (e): its extent (`Window::painted_extent` with its
+    /// bounds), relative to its origin, once a move has needed it.
+    ext_local: Option<Bounds<Pixels>>,
+}
+
+struct ViewElementCacheKey {
+    bounds: Bounds<Pixels>,
+    content_mask: ContentMask<Pixels>,
+    text_style: TextStyle,
+    opacity: f32,
+    /// crundi patch (e): the real clip of the wide clip it is in, and how
+    /// many are open around it.
+    cut: Option<Bounds<Pixels>>,
+    cut_depth: usize,
+}
+
+#[cfg(not(gpui_hot_reload))]
+#[inline]
+fn render_view<V: View>(view: V, window: &mut Window, cx: &mut App) -> AnyElement {
+    view.render(window, cx).into_any_element()
+}
+
+/// Every view and component render passes through this hot-patchable boundary, so the
+/// patched code for that render and everything it calls runs on the next frame.
+#[cfg(gpui_hot_reload)]
+fn render_view<V: View>(view: V, window: &mut Window, cx: &mut App) -> AnyElement {
+    #[inline(never)]
+    fn render_view_impl<V: View>(view: V, window: &mut Window, cx: &mut App) -> AnyElement {
+        view.render(window, cx).into_any_element()
+    }
+
+    subsecond::HotFn::current(render_view_impl::<V>).call((view, window, cx))
+}
+
+impl<V: View> Element for ViewElement<V> {
+    type RequestLayoutState = Option<AnyElement>;
+    type PrepaintState = Option<AnyElement>;
+
+    fn id(&self) -> Option<ElementId> {
+        self.entity_id.map(ElementId::View)
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        #[cfg(debug_assertions)]
+        return Some(self.source);
+
+        #[cfg(not(debug_assertions))]
+        return None;
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        if let Some(entity_id) = self.entity_id {
+            // Stateful path: create a reactive boundary.
+            #[cfg(feature = "profiler")]
+            let start = window.window_profiler.begin_view();
+            let view = &mut self.view;
+            let layout = request_layout_view(
+                entity_id,
+                self.cached_style.as_ref(),
+                window,
+                cx,
+                &mut |window, cx| render_view(view.take().unwrap(), window, cx),
+            );
+            #[cfg(feature = "profiler")]
+            window.window_profiler.end_view(
+                start,
+                self.view_type_name,
+                crate::profiler::ViewPhase::RequestLayout,
+            );
+            layout
+        } else {
+            // Stateless path: isolate subtree via type name (no entity identity).
+            request_layout_component(type_name::<V>(), window, cx, &mut |window, cx| {
+                render_view(self.view.take().unwrap(), window, cx)
+            })
+        }
+    }
+
+    fn prepaint(
+        &mut self,
+        global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        element: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        if let Some(entity_id) = self.entity_id {
+            // Stateful path.
+            #[cfg(feature = "profiler")]
+            let start = window.window_profiler.begin_view();
+            let prepainted = prepaint_view(
+                entity_id,
+                global_id,
+                bounds,
+                element,
+                window,
+                cx,
+                &mut |window, cx| render_view(self.view.take().unwrap(), window, cx),
+            );
+            #[cfg(feature = "profiler")]
+            window.window_profiler.end_view(
+                start,
+                self.view_type_name,
+                crate::profiler::ViewPhase::Prepaint,
+            );
+            prepainted
+        } else {
+            // Stateless path: just prepaint the element.
+            prepaint_component(type_name::<V>(), element, window, cx)
+        }
+    }
+
+    fn paint(
+        &mut self,
+        global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        element: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if let Some(entity_id) = self.entity_id {
+            // Stateful path.
+            #[cfg(feature = "profiler")]
+            let start = window.window_profiler.begin_view();
+            paint_view(
+                entity_id,
+                self.cached_style.is_some(),
+                global_id,
+                element,
+                window,
+                cx,
+            );
+            #[cfg(feature = "profiler")]
+            window.window_profiler.end_view(
+                start,
+                self.view_type_name,
+                crate::profiler::ViewPhase::Paint,
+            );
+        } else {
+            // Stateless path: just paint the element.
+            paint_component(std::any::type_name::<V>(), element, window, cx);
+        }
+    }
+}
+
+/// A view that renders nothing
+pub struct EmptyView;
+
+impl Render for EmptyView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
+#[inline(never)]
+fn request_layout_view(
+    entity_id: EntityId,
+    cached_style: Option<&StyleRefinement>,
+    window: &mut Window,
+    cx: &mut App,
+    render: &mut dyn FnMut(&mut Window, &mut App) -> AnyElement,
+) -> (LayoutId, Option<AnyElement>) {
+    window.with_rendered_view(entity_id, |window| {
+        let caching_disabled = window.is_inspector_picking(cx);
+        match cached_style {
+            Some(style) if !caching_disabled => {
+                let mut root_style = Style::default();
+                root_style.refine(style);
+                let layout_id = window.request_layout(root_style, None, cx);
+                (layout_id, None)
+            }
+            _ => {
+                let mut element = render(window, cx);
+                let layout_id = element.request_layout(window, cx);
+                (layout_id, Some(element))
+            }
+        }
+    })
+}
+
+#[inline(never)]
+fn request_layout_component(
+    name: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+    render: &mut dyn FnMut(&mut Window, &mut App) -> AnyElement,
+) -> (LayoutId, Option<AnyElement>) {
+    window.with_id(ElementId::from(name), |window| {
+        let mut element = render(window, cx);
+        let layout_id = element.request_layout(window, cx);
+        (layout_id, Some(element))
+    })
+}
+
+/// crundi patch (a): the type of a cached view's element state.
+pub(crate) fn view_state_type() -> std::any::TypeId { std::any::TypeId::of::<ViewElementState>() }
+
+/// (The window keeps an element's state as `Option<S>` in its box.)
+fn view_state(state: &mut dyn std::any::Any) -> Option<&mut ViewElementState> { state.downcast_mut::<Option<ViewElementState>>()?.as_mut() }
+
+/// crundi patch (a): a cached view drawn inside a range that is replayed
+/// from `from` to `to` (and, (b), moved by `delta`): its prepaint range follows.
+/// (e) Where its scene is whole moves with it, cut to `mask` (the mask the
+/// range is replayed under).
+pub(crate) fn shift_prepaint(state: &mut dyn std::any::Any, from: &PrepaintStateIndex, to: &PrepaintStateIndex, delta: Option<(crate::Point<Pixels>, Bounds<Pixels>)>) {
+    let Some(s) = view_state(state) else { return };
+    s.prepaint_range = s.prepaint_range.start.shifted(from, to)..s.prepaint_range.end.shifted(from, to);
+    if let Some((d, mask)) = delta {
+        s.cache_key.bounds.origin = s.cache_key.bounds.origin + d;
+        s.recorded = Bounds { origin: s.recorded.origin + d, size: s.recorded.size }.intersect(&mask);
+    }
+}
+
+/// crundi patch (a): its paint range follows, and it counts as painted in this frame.
+pub(crate) fn shift_paint(state: &mut dyn std::any::Any, from: &PaintIndex, to: &PaintIndex, frame: u64) {
+    let Some(s) = view_state(state) else { return };
+    s.paint_range = s.paint_range.start.shifted(from, to)..s.paint_range.end.shifted(from, to);
+    s.painted_in = frame;
+}
+
+/// crundi patch (b): `b` lies wholly inside `mask`.
+fn inside(mask: &Bounds<Pixels>, b: &Bounds<Pixels>) -> bool {
+    b.left() >= mask.left() && b.top() >= mask.top() && b.right() <= mask.right() && b.bottom() <= mask.bottom()
+}
+
+/// crundi patch (b): `ext` (what a view drew, unclipped) moved by `delta`
+/// shows nothing in `shown` that its last scene does not hold: the part of
+/// it now shown, taken back by `delta`, lies where that scene is whole,
+/// `recorded` (tolerance: a hundredth of a pixel). (e) Under a wide clip,
+/// `shown` is the real clip and `recorded` the wider mask (as moved since).
+fn reveals_nothing(shown: &Bounds<Pixels>, recorded: &Bounds<Pixels>, ext: &Bounds<Pixels>, delta: crate::Point<Pixels>) -> bool {
+    let back = Bounds { origin: shown.origin - delta, size: shown.size };
+    let now = ext.intersect(&back);
+    if now.is_empty() { return true; }
+    let e = crate::px(0.01);
+    now.left() >= recorded.left() - e && now.top() >= recorded.top() - e && now.right() <= recorded.right() + e && now.bottom() <= recorded.bottom() + e
+}
+
+/// crundi patch (e): a cached view drawn inside one that is rendering: when
+/// its scene holds less than its bounds, the one around it records only
+/// what is shown.
+fn note_recorded(window: &mut Window, recorded: &Bounds<Pixels>, bounds: &Bounds<Pixels>) {
+    if !inside(recorded, bounds) { window.spoil_recorded(); }
+}
+
+/// crundi patch (b): `b` and `mask` share no area.
+fn outside(mask: &Bounds<Pixels>, b: &Bounds<Pixels>) -> bool { b.intersect(mask).is_empty() }
+
+#[inline(never)]
+fn prepaint_view(
+    entity_id: EntityId,
+    global_id: Option<&GlobalElementId>,
+    bounds: Bounds<Pixels>,
+    element: &mut Option<AnyElement>,
+    window: &mut Window,
+    cx: &mut App,
+    render: &mut dyn FnMut(&mut Window, &mut App) -> AnyElement,
+) -> Option<AnyElement> {
+    window.set_view_id(entity_id);
+    window.with_rendered_view(entity_id, |window| {
+        if let Some(mut element) = element.take() {
+            element.prepaint(window, cx);
+            return Some(element);
+        }
+
+        window.with_element_state::<ViewElementState, _>(
+            global_id.unwrap(),
+            |element_state, window| {
+                let content_mask = window.content_mask();
+                let text_style = window.text_style();
+                let opacity = window.element_opacity();
+                // (crundi patch (e): under a wide clip, what is shown is its
+                // real clip; the content mask is where things are recorded.)
+                let (cut, cut_depth) = (window.current_cut(), window.cut_depth());
+                let shown = cut.map_or(content_mask.bounds, |c| content_mask.bounds.intersect(&c));
+
+                // crundi patch (b), PATCH.md: a view wholly outside its clip (and
+                // all it drew last, its overflow included) is neither rendered
+                // nor painted, dirty or not, unless the window refreshes (a
+                // focus change does) or it holds the focus, drew something
+                // deferred (an anchored popover is placed in window
+                // coordinates) or changed size. It renders once in view again.
+                let mut element_state = element_state;
+                // (Its bounds are part of its extent: only a view whose bounds
+                // are outside its clip is looked at further, so the common
+                // case costs two comparisons.)
+                if let Some(st) = element_state.as_mut()
+                    && !window.refreshing
+                    && st.cache_key.bounds.size == bounds.size
+                    && outside(&shown, &bounds)
+                {
+                    let local = match st.skipped {
+                        Some(local) => Some(local),
+                        None if st.painted_in + 1 == window.frame_seq
+                            && !window.deferred_in(&st.prepaint_range)
+                            && !window.focus_drawn_in(&st.prepaint_range) =>
+                        {
+                            let old = st.cache_key.bounds;
+                            let ext = window.painted_extent(&st.paint_range).map_or(old, |e| e.union(&old));
+                            Some(Bounds { origin: ext.origin - old.origin, size: ext.size })
+                        }
+                        None => None,
+                    };
+                    if let Some(local) = local
+                        && outside(&shown, &Bounds { origin: local.origin + bounds.origin, size: local.size })
+                    {
+                        let at = window.prepaint_index();
+                        st.skipped = Some(local);
+                        st.prepaint_range = at.clone()..at;
+                        st.cache_key.bounds = bounds;
+                        st.cache_key.content_mask = content_mask;
+                        st.cache_key.cut = cut;
+                        st.cache_key.cut_depth = cut_depth;
+                        st.moved = false;
+                        st.paint_offset = None;
+                        window.spoil_recorded();
+                        return (None, element_state.unwrap());
+                    }
+                }
+
+                // crundi patch (e), PATCH.md: a view in the same place whose clip
+                // changed (a wide clip opened or closed around it) but which lies,
+                // all it drew, inside what was shown before and is shown now draws
+                // the same: its key takes the new clip and it is reused (and its
+                // hitboxes take the new real clip below).
+                let mut rekeyed = None;
+                if let Some(st) = element_state.as_mut()
+                    && st.skipped.is_none()
+                    && (st.cache_key.content_mask != content_mask || st.cache_key.cut != cut || st.cache_key.cut_depth != cut_depth)
+                    && st.cache_key.bounds == bounds
+                    && !st.moved
+                    && st.painted_in + 1 == window.frame_seq
+                    && !window.refreshing
+                {
+                    let old = st.cache_key.bounds;
+                    let old_shown = st.cache_key.cut.map_or(st.cache_key.content_mask.bounds, |c| st.cache_key.content_mask.bounds.intersect(&c));
+                    let local = match st.ext_local {
+                        Some(l) => l,
+                        None => {
+                            let e = window.painted_extent(&st.paint_range).map_or(old, |e| e.union(&old));
+                            let l = Bounds { origin: e.origin - old.origin, size: e.size };
+                            st.ext_local = Some(l);
+                            l
+                        }
+                    };
+                    let ext = Bounds { origin: local.origin + old.origin, size: local.size };
+                    if inside(&old_shown, &ext) && inside(&shown, &ext) {
+                        rekeyed = Some(st.cache_key.cut_depth);
+                        st.cache_key.content_mask = content_mask;
+                        st.cache_key.cut = cut;
+                        st.cache_key.cut_depth = cut_depth;
+                        st.recorded = st.recorded.intersect(&content_mask.bounds);
+                    }
+                }
+
+                // Opacity is compared by bits so that a NaN opacity still matches itself
+                // and the view keeps using its cache.
+                if let Some(mut element_state) = element_state
+                    && element_state.skipped.is_none()
+                    && element_state.cache_key.content_mask == content_mask
+                    && element_state.cache_key.text_style == text_style
+                    && element_state.cache_key.opacity.to_bits() == opacity.to_bits()
+                    && element_state.cache_key.cut == cut
+                    && element_state.cache_key.cut_depth == cut_depth
+                    && !window.dirty_views.contains(&entity_id)
+                    && !window.refreshing
+                    && element_state.painted_in + 1 == window.frame_seq
+                {
+                    let old = element_state.cache_key.bounds;
+                    if old == bounds && !element_state.moved {
+                        let prepaint_start = window.prepaint_index();
+                        let first_hitbox = window.next_frame.hitboxes.len();
+                        window.reuse_prepaint(element_state.prepaint_range.clone());
+                        if let Some(old_depth) = rekeyed { window.rekey_hitboxes(first_hitbox, old_depth); }
+                        cx.entities
+                            .extend_accessed(element_state.accessed_entities.iter().copied());
+                        let prepaint_end = window.prepaint_index();
+                        element_state.prepaint_range = prepaint_start..prepaint_end;
+                        note_recorded(window, &element_state.recorded, &bounds);
+
+                        return (None, element_state);
+                    }
+                    // crundi patch (b), PATCH.md: the view only moved (its size,
+                    // clip, text style and opacity as before, by whole device
+                    // pixels, and the move brings into view nothing its clip cut
+                    // off before): its last frame replayed at the offset. It
+                    // renders again once still.
+                    let delta = bounds.origin - old.origin;
+                    let sf = window.scale_factor();
+                    let whole = |v: Pixels| {
+                        let d = f32::from(v) * sf;
+                        (d - d.round()).abs() < 0.001
+                    };
+                    let rec = element_state.recorded;
+                    if old != bounds
+                        && old.size == bounds.size
+                        && whole(delta.x)
+                        && whole(delta.y)
+                        // (The extent holds the bounds: test them alone
+                        // first; a view wholly recorded and wholly shown
+                        // qualifies at once; else its extent is tested,
+                        // scanned from the scene once and kept.)
+                        && reveals_nothing(&shown, &rec, &old, delta)
+                        && ((inside(&rec, &old) && inside(&shown, &bounds)) || {
+                            let local = *element_state.ext_local.get_or_insert_with(|| {
+                                let e = window.painted_extent(&element_state.paint_range).map_or(old, |e| e.union(&old));
+                                Bounds { origin: e.origin - old.origin, size: e.size }
+                            });
+                            reveals_nothing(&shown, &rec, &Bounds { origin: local.origin + old.origin, size: local.size }, delta)
+                        })
+                        && window.offset_reusable(&element_state.prepaint_range, &element_state.paint_range)
+                    {
+                        // (crundi patch (e): a view that registered no mouse
+                        // listener nor input handler captured no position a
+                        // handler would use: it needs no render once still.)
+                        let settle = window.paints_handlers(&element_state.paint_range);
+                        let prepaint_start = window.prepaint_index();
+                        window.reuse_prepaint_at(element_state.prepaint_range.clone(), delta, cut_depth);
+                        cx.entities
+                            .extend_accessed(element_state.accessed_entities.iter().copied());
+                        let prepaint_end = window.prepaint_index();
+                        element_state.prepaint_range = prepaint_start..prepaint_end;
+                        element_state.cache_key.bounds = bounds;
+                        element_state.paint_offset = Some(delta);
+                        element_state.recorded = Bounds { origin: rec.origin + delta, size: rec.size }.intersect(&content_mask.bounds);
+                        element_state.moved = settle;
+                        if settle { window.note_unsettled(entity_id, cx); }
+                        note_recorded(window, &element_state.recorded, &bounds);
+
+                        return (None, element_state);
+                    }
+                }
+
+                // crundi patch (a), PATCH.md: rendering this view again leaves
+                // the window's `refreshing` as it was (upstream sets it, which
+                // made every cached view inside miss its cache too). A clean
+                // cached child keeps its cache; a dirty one is in `dirty_views`.
+                let refreshing = window.refreshing;
+                let prepaint_start = window.prepaint_index();
+                // (crundi patch (e): whether a cached view inside it records
+                // less than its bounds, or was skipped.)
+                window.rec_spoiled.push(false);
+                let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
+                    let mut element = render(window, cx);
+                    element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
+                    element.prepaint_at(bounds.origin, window, cx);
+                    element
+                });
+
+                let prepaint_end = window.prepaint_index();
+                window.refreshing = refreshing;
+                // crundi patch (e), PATCH.md: its scene is whole under its
+                // content mask (a wide clip's wider mask), unless a cached
+                // view inside it was skipped (wholly outside the real clip:
+                // nothing of it recorded) or holds less than its bounds;
+                // then only what is shown is.
+                let spoiled = window.rec_spoiled.pop().unwrap_or(false);
+                let recorded = if spoiled { shown } else { content_mask.bounds };
+                note_recorded(window, &recorded, &bounds);
+
+                (
+                    Some(element),
+                    ViewElementState {
+                        accessed_entities,
+                        prepaint_range: prepaint_start..prepaint_end,
+                        paint_range: PaintIndex::default()..PaintIndex::default(),
+                        moved: false,
+                        paint_offset: None,
+                        painted_in: 0,
+                        skipped: None,
+                        recorded,
+                        ext_local: None,
+                        cache_key: ViewElementCacheKey {
+                            bounds,
+                            content_mask,
+                            text_style,
+                            opacity,
+                            cut,
+                            cut_depth,
+                        },
+                    },
+                )
+            },
+        )
+    })
+}
+
+#[inline(never)]
+fn prepaint_component(
+    name: &'static str,
+    element: &mut Option<AnyElement>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<AnyElement> {
+    window.with_id(ElementId::from(name), |window| {
+        element.as_mut().unwrap().prepaint(window, cx);
+    });
+    Some(element.take().unwrap())
+}
+
+#[inline(never)]
+fn paint_view(
+    entity_id: EntityId,
+    cached: bool,
+    global_id: Option<&GlobalElementId>,
+    element: &mut Option<AnyElement>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window.with_rendered_view(entity_id, |window| {
+        let caching_disabled = window.is_inspector_picking(cx);
+        if cached && !caching_disabled {
+            window.with_element_state::<ViewElementState, _>(
+                global_id.unwrap(),
+                |element_state, window| {
+                    let mut element_state = element_state.unwrap();
+
+                    let paint_start = window.paint_index();
+                    let opacity = window.element_opacity();
+
+                    // Prepaint can only predict the opacity paint applies: an ancestor's
+                    // hover or drag-over style depends on this frame's hit test, which
+                    // isn't known until prepaint finishes. The key records what was
+                    // actually painted, and output replayed under a different opacity is
+                    // redrawn on the next frame.
+                    if let Some(element) = element {
+                        let refreshing = mem::replace(&mut window.refreshing, true);
+                        let ((), accessed_entities) =
+                            cx.detect_accessed_entities(|cx| element.paint(window, cx));
+                        element_state.accessed_entities.extend(accessed_entities);
+                        window.refreshing = refreshing;
+                        element_state.cache_key.opacity = opacity;
+                    } else if element_state.skipped.is_some() {
+                        // (crundi patch (b): outside its clip, nothing is painted,
+                        // and `painted_in` stays behind, so its ranges aren't reused.)
+                        let at = window.paint_index();
+                        element_state.paint_range = at.clone()..at;
+                        return ((), element_state);
+                    } else {
+                        // (crundi patch (b): at the offset its prepaint was replayed at.)
+                        window.reuse_paint_at(element_state.paint_range.clone(), element_state.paint_offset.take());
+                        if element_state.cache_key.opacity.to_bits() != opacity.to_bits() {
+                            window.request_animation_frame();
+                        }
+                    }
+
+                    let paint_end = window.paint_index();
+                    element_state.paint_range = paint_start..paint_end;
+                    element_state.painted_in = window.frame_seq;
+
+                    ((), element_state)
+                },
+            )
+        } else {
+            element.as_mut().unwrap().paint(window, cx);
+        }
+    });
+}
+
+#[inline(never)]
+fn paint_component(
+    name: &'static str,
+    element: &mut Option<AnyElement>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window.with_id(ElementId::Name(name.into()), |window| {
+        element.as_mut().unwrap().paint(window, cx);
+    });
+}

@@ -1,0 +1,122 @@
+{
+ "setup": {
+  "server": "http://localhost:4884",
+  "project": "demo",
+  "panes": [
+   "live:0c40ac1335a2f29c",
+   "live:fb4c7871245f2a1c",
+   "live:93e757d0f179c403",
+   "live:e65dee0eaa1e1d51"
+  ],
+  "chats": 4,
+  "window": "1920x1040",
+  "focused": "e65dee0eaa1e1d51",
+  "focusedRows": 98,
+  "streamChat": "e18cc115a7542213",
+  "panesWhileStreaming": 5,
+  "batches": 289,
+  "spliced": 600,
+  "rows": 302,
+  "replyChars": 6880
+ },
+ "idle-open": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8
+ },
+ "scroll-panes": {
+  "frames": 566,
+  "p50": 4.52,
+  "p95": 6.3,
+  "max": 8.39,
+  "share7": 0.99,
+  "over7": 4,
+  "over16": 0,
+  "seconds": 8.3,
+  "wheelEvents": 850,
+  "renders": {
+   "workbench": 566,
+   "top-bar": 0,
+   "sidebar": 0,
+   "project-bar": 0,
+   "head": 4,
+   "log": 570,
+   "composer": 4
+  }
+ },
+ "scroll-chat": {
+  "frames": 572,
+  "p50": 4.21,
+  "p95": 6.28,
+  "max": 7.54,
+  "share7": 0.99,
+  "over7": 4,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "workbench": 572,
+   "log": 572
+  }
+ },
+ "stream+scroll": {
+  "frames": 559,
+  "p50": 5.14,
+  "p95": 6.78,
+  "max": 8.37,
+  "share7": 0.97,
+  "over7": 16,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 813
+ },
+ "stream": {
+  "frames": 87,
+  "p50": 5.29,
+  "p95": 6.02,
+  "max": 8.33,
+  "share7": 0.98,
+  "over7": 2,
+  "over16": 0,
+  "seconds": 3.6,
+  "renders": {
+   "workbench": 646,
+   "top-bar": 2,
+   "sidebar": 1,
+   "project-bar": 0,
+   "head": 1,
+   "log": 823,
+   "composer": 1
+  }
+ },
+ "idle-end": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8,
+  "renders": {},
+  "batches": 0,
+  "head": {
+   "before": {
+    "title": "Number list in words",
+    "long": "",
+    "state": "idle"
+   },
+   "after": {
+    "title": "Number list in words",
+    "long": "",
+    "state": "idle"
+   }
+  }
+ },
+ "allFrames": 1809,
+ "ranSeconds": 74
+}

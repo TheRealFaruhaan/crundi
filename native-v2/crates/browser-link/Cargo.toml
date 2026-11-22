@@ -1,0 +1,20 @@
+[package]
+name = "crundi-browser-link"
+description = "What the app and its browser host share, with no CEF and no GPUI: the link's protocol, frame segments, the host process's life, GPU frame reading"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Memory", "Win32_System_Threading"] }
+# The GPU path's readback of CEF's shared texture (gpu.rs; the same windows
+# crate GPUI's renderer uses, so nothing more is compiled).
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }

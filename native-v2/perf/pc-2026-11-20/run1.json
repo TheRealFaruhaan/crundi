@@ -1,0 +1,108 @@
+{
+ "setup": {
+  "server": "http://localhost:4884",
+  "project": "demo",
+  "panes": [
+   "live:685d3c39ecdfa366",
+   "live:37c7fd4bb7778c31",
+   "live:127b8fd59ab48e12",
+   "live:ae24033c12cc736d"
+  ],
+  "chats": 4,
+  "window": "1920x1040",
+  "focused": "ae24033c12cc736d",
+  "focusedRows": 125,
+  "streamChat": "c5aa7e93ec953a28",
+  "panesWhileStreaming": 5,
+  "batches": 347,
+  "spliced": 678,
+  "rows": 303,
+  "replyChars": 6088
+ },
+ "idle-open": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8
+ },
+ "scroll-panes": {
+  "frames": 541,
+  "p50": 5.73,
+  "p95": 9.39,
+  "max": 12.27,
+  "share7": 0.74,
+  "over7": 143,
+  "over16": 0,
+  "seconds": 8.3,
+  "wheelEvents": 777,
+  "renders": {
+   "workbench": 541,
+   "top-bar": 0,
+   "sidebar": 0,
+   "project-bar": 0,
+   "launcher": 0,
+   "head": 0,
+   "chat-pane": 2164,
+   "log": 544,
+   "composer": 0
+  }
+ },
+ "scroll-chat": {
+  "frames": 561,
+  "p50": 5.08,
+  "p95": 7.88,
+  "max": 10.02,
+  "share7": 0.75,
+  "over7": 143,
+  "over16": 0,
+  "seconds": 8.3
+ },
+ "stream+scroll": {
+  "frames": 516,
+  "p50": 6.32,
+  "p95": 11.33,
+  "max": 14.93,
+  "share7": 0.61,
+  "over7": 200,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 753
+ },
+ "stream": {
+  "frames": 185,
+  "p50": 7.19,
+  "p95": 9.59,
+  "max": 11.92,
+  "share7": 0.49,
+  "over7": 94,
+  "over16": 0,
+  "seconds": 9.3,
+  "renders": {
+   "workbench": 701,
+   "top-bar": 2,
+   "sidebar": 1,
+   "project-bar": 0,
+   "launcher": 0,
+   "head": 1,
+   "chat-pane": 3505,
+   "log": 835,
+   "composer": 2
+  }
+ },
+ "idle-end": {
+  "frames": 1,
+  "p50": 5.22,
+  "p95": 5.22,
+  "max": 5.22,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8
+ },
+ "allFrames": 1834,
+ "ranSeconds": 138
+}

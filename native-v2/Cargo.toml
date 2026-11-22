@@ -1,0 +1,79 @@
+# Crundi's native PC client v2 (ARCHITECTURE.md, AREAS.md): built for speed
+# on GPUI the way Zed is. One crate per area, each compiled on its own.
+# Versions are pinned here once: GPUI and its kit are republished every week
+# and their API moves.
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+# The app. The browser host (crates/browser-host, the only crate linking
+# libcef) is built on its own, when a browser is needed (README).
+default-members = ["crates/app"]
+# GPUI patched for nested and moved caches (vendor/gpui/PATCH.md): a path
+# dependency, not a member.
+exclude = ["vendor"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[workspace.dependencies]
+# GPUI as gpui-component pins it: gpui-pre is a snapshot of Zed's gpui
+# (named gpui in the code), gpui-pre-platform each OS's window and renderer.
+# X11 and Wayland must be asked for: without them GPUI quietly runs headless.
+gpui = { package = "gpui-pre", version = "=0.3.12" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.12", features = ["x11", "wayland"] }
+gpui-component = { version = "=0.10.0", features = ["syntect"] }
+gpui-kit-assets = "=0.10.0"
+# The browser (off-screen): only in crates/browser-host, started lazily.
+cef = "=156.4.0"
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
+ureq = "3"
+gethostname = "1"
+open = "5"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+cpal = "0.15"
+rodio = { version = "0.20", default-features = false }
+tts = "0.26"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+log = "0.4"
+# The workspace area: file pickers and uploads (as native-gpui).
+base64 = "0.22"
+rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
+# The desktop area: a page's picture (webview's shot.rs).
+png = "0.17"
+# The areas.
+crundi-core = { path = "crates/core" }
+crundi-theme = { path = "crates/theme" }
+crundi-widgets = { path = "crates/widgets" }
+crundi-browser-link = { path = "crates/browser-link" }
+crundi-shell = { path = "crates/shell" }
+crundi-workbench = { path = "crates/workbench" }
+crundi-chat = { path = "crates/chat" }
+crundi-planning = { path = "crates/planning" }
+crundi-workspace = { path = "crates/workspace" }
+crundi-operations = { path = "crates/operations" }
+# The desktop area (the browser bridge, the drawer, the PC extras).
+crundi-webview = { path = "crates/webview" }
+crundi-desktop = { path = "crates/desktop" }
+
+# GPUI 0.3.12 with two cache fixes (vendor/gpui/PATCH.md, the owner's call
+# of 21 Nov): delete this table (and vendor/gpui) to go back to the
+# published crate once upstream has the equivalent.
+[patch.crates-io]
+gpui = { package = "gpui-pre", path = "vendor/gpui" }
+
+# Line numbers only in dev builds, so the shared build folder stays small and
+# links are quick. Release builds are unaffected.
+[profile.dev]
+debug = "line-tables-only"
+[profile.dev.package."*"]
+debug = false
+# The frame budget is measured on release builds (ARCHITECTURE.md).
+[profile.release]
+debug = "line-tables-only"

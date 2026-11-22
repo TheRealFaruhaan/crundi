@@ -1,0 +1,178 @@
+{
+ "bin": "/home/farhan/.cache/crundi-native-target/release/crundi-v2-floor",
+ "when": "2026-11-19T22:04:30.484Z",
+ "modes": {
+  "empty": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 1013,
+    "p50": 1.46,
+    "p95": 1.75,
+    "max": 3.55,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0,
+    "wheelEvents": 1016,
+    "renders": {
+     "empty": 1013
+    }
+   }
+  },
+  "list": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 946,
+    "p50": 3.57,
+    "p95": 4.21,
+    "max": 8.38,
+    "share7": 1,
+    "over7": 1,
+    "over16": 0,
+    "wheelEvents": 984,
+    "renders": {
+     "rows": 946
+    }
+   }
+  },
+  "uniform": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 970,
+    "p50": 2.55,
+    "p95": 3.92,
+    "max": 4.84,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0,
+    "wheelEvents": 1002,
+    "renders": {
+     "rows": 970
+    }
+   }
+  },
+  "workbench": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 706,
+    "p50": 3.67,
+    "p95": 5.12,
+    "max": 6.32,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0,
+    "wheelEvents": 942,
+    "renders": {
+     "workbench": 706,
+     "rows": 708
+    }
+   }
+  },
+  "chatlog": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 744,
+    "p50": 3.14,
+    "p95": 3.81,
+    "max": 4.51,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0,
+    "wheelEvents": 982,
+    "renders": {
+     "workbench": 744,
+     "log": 744
+    }
+   }
+  },
+  "chatlog5": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 622,
+    "p50": 3.75,
+    "p95": 5.88,
+    "max": 8.37,
+    "share7": 1,
+    "over7": 3,
+    "over16": 0,
+    "wheelEvents": 925,
+    "renders": {
+     "workbench": 622,
+     "log": 627
+    }
+   }
+  },
+  "stream5": {
+   "idle": {
+    "frames": 119,
+    "p50": 5.43,
+    "p95": 6.36,
+    "max": 7.13,
+    "share7": 0.98,
+    "over7": 2,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 635,
+    "p50": 3.97,
+    "p95": 6.44,
+    "max": 7.6,
+    "share7": 0.99,
+    "over7": 5,
+    "over16": 0,
+    "wheelEvents": 895,
+    "renders": {
+     "workbench": 635,
+     "log": 827
+    }
+   }
+  }
+ }
+}

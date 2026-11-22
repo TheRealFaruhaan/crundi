@@ -1,0 +1,1191 @@
+// todo("windows"): remove
+#![cfg_attr(windows, allow(dead_code))]
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
+    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+};
+use std::{
+    fmt::Debug,
+    iter::Peekable,
+    ops::{Add, Range, Sub},
+    slice,
+};
+
+#[allow(non_camel_case_types, unused)]
+#[expect(missing_docs)]
+pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
+
+#[expect(missing_docs)]
+pub type DrawOrder = u32;
+
+/// A boolean stored as a `u32` so that GPU-facing structs contain no
+/// compiler-inserted padding bytes, which would be undefined behavior to
+/// reinterpret as `&[u8]` when writing instance buffers. Guaranteed to be
+/// `0` or `1` by construction; shaders read it as a `u32`/`uint`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct PaddedBool32(u32);
+
+impl From<bool> for PaddedBool32 {
+    fn from(value: bool) -> Self {
+        PaddedBool32(value as u32)
+    }
+}
+
+#[derive(Default)]
+#[expect(missing_docs)]
+pub struct Scene {
+    pub(crate) paint_operations: Vec<PaintOperation>,
+    primitive_bounds: BoundsTree<ScaledPixels>,
+    layer_stack: Vec<DrawOrder>,
+    /// crundi patch (e), PATCH.md: the real clips of the wide clips open
+    /// (innermost last). A primitive is recorded under its content mask (a
+    /// wide clip's wider mask) and drawn cut to the innermost of these.
+    cut_stack: Vec<Bounds<ScaledPixels>>,
+    pub shadows: Vec<Shadow>,
+    pub quads: Vec<Quad>,
+    pub paths: Vec<Path<ScaledPixels>>,
+    pub underlines: Vec<Underline>,
+    pub monochrome_sprites: Vec<MonochromeSprite>,
+    pub subpixel_sprites: Vec<SubpixelSprite>,
+    pub polychrome_sprites: Vec<PolychromeSprite>,
+    pub surfaces: Vec<PaintSurface>,
+}
+
+#[expect(missing_docs)]
+impl Scene {
+    pub fn clear(&mut self) {
+        self.paint_operations.clear();
+        self.primitive_bounds.clear();
+        self.layer_stack.clear();
+        self.cut_stack.clear();
+        self.paths.clear();
+        self.shadows.clear();
+        self.quads.clear();
+        self.underlines.clear();
+        self.monochrome_sprites.clear();
+        self.subpixel_sprites.clear();
+        self.polychrome_sprites.clear();
+        self.surfaces.clear();
+    }
+
+    pub fn len(&self) -> usize {
+        self.paint_operations.len()
+    }
+
+    pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
+        let order = self.primitive_bounds.insert(bounds);
+        self.layer_stack.push(order);
+        self.paint_operations
+            .push(PaintOperation::StartLayer(bounds));
+    }
+
+    pub fn pop_layer(&mut self) {
+        self.layer_stack.pop();
+        self.paint_operations.push(PaintOperation::EndLayer);
+    }
+
+    pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
+        let mut primitive = primitive.into();
+        let clipped_bounds = primitive
+            .bounds()
+            .intersect(&primitive.content_mask().bounds);
+
+        if clipped_bounds.is_empty() {
+            return;
+        }
+
+        let order = self
+            .layer_stack
+            .last()
+            .copied()
+            .unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds));
+        primitive.set_order(order);
+        // (crundi patch (e): drawn cut to the open wide clip's real clip;
+        // recorded whole, under its own mask, for a replay that moves it.)
+        self.draw(&primitive, false);
+        self.paint_operations
+            .push(PaintOperation::Primitive(primitive));
+    }
+
+    /// crundi patch (e), PATCH.md: a primitive (its order given) into the
+    /// draw lists, its clip cut to the innermost real clip open; nothing when
+    /// that leaves nothing of it, or (`check`) when its own clip does.
+    fn draw(&mut self, primitive: &Primitive, check: bool) {
+        // (What is cut away is not copied: a wide clip's margin is mostly
+        // that; what is drawn is copied straight into its list.)
+        let cut = self.cut_stack.last().copied();
+        let mask = match cut {
+            Some(c) => primitive.content_mask().bounds.intersect(&c),
+            None => primitive.content_mask().bounds,
+        };
+        if (cut.is_some() || check) && primitive.bounds().intersect(&mask).is_empty() {
+            return;
+        }
+        let m = |x: &mut ContentMask<ScaledPixels>| if cut.is_some() { x.bounds = mask; };
+        match primitive {
+            Primitive::Shadow(x) => { let mut x = *x; m(&mut x.content_mask); self.shadows.push(x); }
+            Primitive::Quad(x) => { let mut x = *x; m(&mut x.content_mask); self.quads.push(x); }
+            Primitive::Path(x) => {
+                let mut x = x.clone();
+                if let Some(c) = cut {
+                    x.content_mask.bounds = mask;
+                    for v in &mut x.vertices { v.content_mask.bounds = v.content_mask.bounds.intersect(&c); }
+                }
+                x.id = PathId(self.paths.len());
+                self.paths.push(x);
+            }
+            Primitive::Underline(x) => { let mut x = *x; m(&mut x.content_mask); self.underlines.push(x); }
+            Primitive::MonochromeSprite(x) => { let mut x = *x; m(&mut x.content_mask); self.monochrome_sprites.push(x); }
+            Primitive::SubpixelSprite(x) => { let mut x = *x; m(&mut x.content_mask); self.subpixel_sprites.push(x); }
+            Primitive::PolychromeSprite(x) => { let mut x = x.clone(); m(&mut x.content_mask); self.polychrome_sprites.push(x); }
+            Primitive::Surface(x) => { let mut x = x.clone(); m(&mut x.content_mask); self.surfaces.push(x); }
+        }
+    }
+
+    /// crundi patch (e), PATCH.md: open a wide clip's real clip (`bounds`,
+    /// kept inside the one open): what is painted until `pop_cut` is drawn
+    /// cut to it, and recorded under its own (wider) mask.
+    pub(crate) fn push_cut(&mut self, bounds: Bounds<ScaledPixels>) {
+        let b = match self.cut_stack.last() {
+            Some(c) => bounds.intersect(c),
+            None => bounds,
+        };
+        self.cut_stack.push(b);
+        self.paint_operations.push(PaintOperation::StartCut(bounds));
+    }
+
+    pub(crate) fn pop_cut(&mut self) {
+        self.cut_stack.pop();
+        self.paint_operations.push(PaintOperation::EndCut);
+    }
+
+    pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
+        // crundi patch (d), PATCH.md: the orders kept, shifted.
+        if self.replay_shifted(range.clone(), prev_scene, None) { return; }
+        for operation in &prev_scene.paint_operations[range] {
+            match operation {
+                PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
+                PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
+                PaintOperation::EndLayer => self.pop_layer(),
+                PaintOperation::StartCut(bounds) => self.push_cut(*bounds),
+                PaintOperation::EndCut => self.pop_cut(),
+            }
+        }
+    }
+
+    /// crundi patch (b), PATCH.md: whether these operations can be replayed
+    /// moved (no sprite drawn through a transformation: its matrix is in
+    /// window coordinates).
+    pub(crate) fn can_offset(&self, range: Range<usize>) -> bool {
+        let unit = TransformationMatrix::unit();
+        self.paint_operations[range].iter().all(|op| match op {
+            PaintOperation::Primitive(Primitive::MonochromeSprite(s)) => s.transformation == unit,
+            PaintOperation::Primitive(Primitive::SubpixelSprite(s)) => s.transformation == unit,
+            _ => true,
+        })
+    }
+
+    /// crundi patch (b), PATCH.md: the union of these operations' primitives'
+    /// bounds before their clip (what they would draw if nothing clipped them).
+    pub(crate) fn extent(&self, range: Range<usize>) -> Option<Bounds<ScaledPixels>> {
+        let mut out: Option<Bounds<ScaledPixels>> = None;
+        for op in &self.paint_operations[range] {
+            if let PaintOperation::Primitive(p) = op {
+                let b = *p.bounds();
+                out = Some(out.map_or(b, |o| o.union(&b)));
+            }
+        }
+        out
+    }
+
+    /// crundi patch (b): `replay`, every primitive moved by `delta` (whole
+    /// device pixels: a glyph keeps its subpixel variant) and its clip kept
+    /// inside `mask` (the current content mask).
+    pub(crate) fn replay_offset(&mut self, range: Range<usize>, prev_scene: &Scene, delta: Point<ScaledPixels>, mask: &Bounds<ScaledPixels>) {
+        let mv = |b: &mut Bounds<ScaledPixels>| b.origin = b.origin + delta;
+        let clip = |m: &mut ContentMask<ScaledPixels>| {
+            let moved = Bounds { origin: m.bounds.origin + delta, size: m.bounds.size };
+            m.bounds = moved.intersect(mask);
+        };
+        if self.replay_shifted(range.clone(), prev_scene, Some((delta, *mask))) { return; }
+        for operation in &prev_scene.paint_operations[range] {
+            match operation {
+                PaintOperation::Primitive(primitive) => {
+                    let mut p = primitive.clone();
+                    match &mut p {
+                        Primitive::Shadow(s) => { mv(&mut s.bounds); mv(&mut s.element_bounds); clip(&mut s.content_mask); }
+                        Primitive::Quad(q) => { mv(&mut q.bounds); clip(&mut q.content_mask); }
+                        Primitive::Path(path) => {
+                            mv(&mut path.bounds); clip(&mut path.content_mask);
+                            for v in &mut path.vertices { v.xy_position = v.xy_position + delta; clip(&mut v.content_mask); }
+                        }
+                        Primitive::Underline(u) => { mv(&mut u.bounds); clip(&mut u.content_mask); }
+                        Primitive::MonochromeSprite(s) => { mv(&mut s.bounds); clip(&mut s.content_mask); }
+                        Primitive::SubpixelSprite(s) => { mv(&mut s.bounds); clip(&mut s.content_mask); }
+                        Primitive::PolychromeSprite(s) => { mv(&mut s.bounds); clip(&mut s.content_mask); }
+                        Primitive::Surface(s) => { mv(&mut s.bounds); clip(&mut s.content_mask); }
+                    }
+                    self.insert_primitive(p);
+                }
+                PaintOperation::StartLayer(bounds) => { let mut b = *bounds; mv(&mut b); self.push_layer(b.intersect(mask)); }
+                PaintOperation::EndLayer => self.pop_layer(),
+                PaintOperation::StartCut(bounds) => { let mut b = *bounds; mv(&mut b); self.push_cut(b); }
+                PaintOperation::EndCut => self.pop_cut(),
+            }
+        }
+    }
+
+    /// crundi patch (d), PATCH.md: replay a range without putting each
+    /// primitive in the bounds tree. Each keeps the draw order it had,
+    /// shifted so the range's lowest lands one above whatever the range's
+    /// extent overlaps now; one leaf over the extent holds the highest.
+    /// Relative orders inside the range are as they were, so what overlapped
+    /// draws as it did; what comes after over the extent draws above.
+    /// `false` (nothing done): inside an open layer, where every primitive
+    /// takes the layer's order (the plain path does that cheaply).
+    fn replay_shifted(
+        &mut self,
+        range: Range<usize>,
+        prev: &Scene,
+        offset: Option<(Point<ScaledPixels>, Bounds<ScaledPixels>)>,
+    ) -> bool {
+        if !self.layer_stack.is_empty() { return false; }
+        let ops = &prev.paint_operations[range];
+        let (mut lo, mut hi) = (u32::MAX, 0u32);
+        let mut ext: Option<Bounds<ScaledPixels>> = None;
+        for op in ops {
+            let b = match op {
+                PaintOperation::Primitive(p) => {
+                    let o = p.order();
+                    lo = lo.min(o); hi = hi.max(o);
+                    p.bounds().intersect(&p.content_mask().bounds)
+                }
+                PaintOperation::StartLayer(b) => *b,
+                PaintOperation::EndLayer | PaintOperation::StartCut(_) | PaintOperation::EndCut => continue,
+            };
+            ext = Some(ext.map_or(b, |e| e.union(&b)));
+        }
+        let Some(mut ext) = ext else {
+            // Only layer ends (or nothing): keep the operations as they are.
+            for op in ops {
+                match op {
+                    PaintOperation::EndLayer => self.paint_operations.push(PaintOperation::EndLayer),
+                    PaintOperation::StartCut(b) => {
+                        let mut b = *b;
+                        if let Some((d, _)) = offset { b.origin = b.origin + d; }
+                        self.push_cut(b);
+                    }
+                    PaintOperation::EndCut => self.pop_cut(),
+                    _ => {}
+                }
+            }
+            return true;
+        };
+        if lo == u32::MAX { lo = 0; hi = 0; }
+        if let Some((d, mask)) = offset {
+            ext.origin = ext.origin + d;
+            ext = ext.intersect(&mask);
+        }
+        if ext.is_empty() {
+            // Nothing of it is in view: keep the layer marks so the ranges
+            // nested in it still line up (no primitive is recorded).
+            for op in ops {
+                match op {
+                    PaintOperation::StartLayer(b) => self.paint_operations.push(PaintOperation::StartLayer(*b)),
+                    PaintOperation::EndLayer => self.paint_operations.push(PaintOperation::EndLayer),
+                    // (crundi patch (e): a wide clip's real clip moves with it.)
+                    PaintOperation::StartCut(b) => {
+                        let mut b = *b;
+                        if let Some((d, _)) = offset { b.origin = b.origin + d; }
+                        self.push_cut(b);
+                    }
+                    PaintOperation::EndCut => self.pop_cut(),
+                    PaintOperation::Primitive(_) => {}
+                }
+            }
+            return true;
+        }
+        let base = self.primitive_bounds.insert_span(ext, hi - lo);
+        let shift = |o: DrawOrder| o - lo + base;
+        for op in ops {
+            match op {
+                PaintOperation::Primitive(primitive) => {
+                    let mut p = primitive.clone();
+                    if let Some((d, mask)) = offset {
+                        let mv = |b: &mut Bounds<ScaledPixels>| b.origin = b.origin + d;
+                        let clip = |m: &mut ContentMask<ScaledPixels>| {
+                            let moved = Bounds { origin: m.bounds.origin + d, size: m.bounds.size };
+                            m.bounds = moved.intersect(&mask);
+                        };
+                        match &mut p {
+                            Primitive::Shadow(s) => { mv(&mut s.bounds); mv(&mut s.element_bounds); clip(&mut s.content_mask); }
+                            Primitive::Quad(q) => { mv(&mut q.bounds); clip(&mut q.content_mask); }
+                            Primitive::Path(path) => {
+                                mv(&mut path.bounds); clip(&mut path.content_mask);
+                                for v in &mut path.vertices { v.xy_position = v.xy_position + d; clip(&mut v.content_mask); }
+                            }
+                            Primitive::Underline(u) => { mv(&mut u.bounds); clip(&mut u.content_mask); }
+                            Primitive::MonochromeSprite(s) => { mv(&mut s.bounds); clip(&mut s.content_mask); }
+                            Primitive::SubpixelSprite(s) => { mv(&mut s.bounds); clip(&mut s.content_mask); }
+                            Primitive::PolychromeSprite(s) => { mv(&mut s.bounds); clip(&mut s.content_mask); }
+                            Primitive::Surface(s) => { mv(&mut s.bounds); clip(&mut s.content_mask); }
+                        }
+                        if p.bounds().intersect(&p.content_mask().bounds).is_empty() { continue; }
+                    }
+                    p.set_order(shift(p.order()));
+                    // (crundi patch (e): drawn cut to the open real clip.)
+                    self.draw(&p, false);
+                    self.paint_operations.push(PaintOperation::Primitive(p));
+                }
+                PaintOperation::StartLayer(b) => {
+                    let mut b = *b;
+                    if let Some((d, mask)) = offset { b.origin = b.origin + d; b = b.intersect(&mask); }
+                    self.paint_operations.push(PaintOperation::StartLayer(b));
+                }
+                PaintOperation::EndLayer => self.paint_operations.push(PaintOperation::EndLayer),
+                PaintOperation::StartCut(b) => {
+                    let mut b = *b;
+                    if let Some((d, _)) = offset { b.origin = b.origin + d; }
+                    self.push_cut(b);
+                }
+                PaintOperation::EndCut => self.pop_cut(),
+            }
+        }
+        true
+    }
+
+    pub fn finish(&mut self) {
+        self.shadows.sort_by_key(|shadow| shadow.order);
+        self.quads.sort_by_key(|quad| quad.order);
+        self.paths.sort_by_key(|path| path.order);
+        self.underlines.sort_by_key(|underline| underline.order);
+        self.monochrome_sprites
+            .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
+        self.subpixel_sprites
+            .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
+        self.polychrome_sprites
+            .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
+        self.surfaces.sort_by_key(|surface| surface.order);
+    }
+
+    #[cfg_attr(
+        all(
+            any(target_os = "linux", target_os = "freebsd"),
+            not(any(feature = "x11", feature = "wayland"))
+        ),
+        allow(dead_code)
+    )]
+    pub fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> + '_ {
+        BatchIterator {
+            shadows_start: 0,
+            shadows_iter: self.shadows.iter().peekable(),
+            quads_start: 0,
+            quads_iter: self.quads.iter().peekable(),
+            paths_start: 0,
+            paths_iter: self.paths.iter().peekable(),
+            underlines_start: 0,
+            underlines_iter: self.underlines.iter().peekable(),
+            monochrome_sprites_start: 0,
+            monochrome_sprites_iter: self.monochrome_sprites.iter().peekable(),
+            subpixel_sprites_start: 0,
+            subpixel_sprites_iter: self.subpixel_sprites.iter().peekable(),
+            polychrome_sprites_start: 0,
+            polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
+            surfaces_start: 0,
+            surfaces_iter: self.surfaces.iter().peekable(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
+#[cfg_attr(
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    ),
+    allow(dead_code)
+)]
+pub(crate) enum PrimitiveKind {
+    Shadow,
+    #[default]
+    Quad,
+    Path,
+    Underline,
+    MonochromeSprite,
+    SubpixelSprite,
+    PolychromeSprite,
+    Surface,
+}
+
+pub(crate) enum PaintOperation {
+    Primitive(Primitive),
+    StartLayer(Bounds<ScaledPixels>),
+    EndLayer,
+    /// crundi patch (e): a wide clip's real clip (`Scene::push_cut`).
+    StartCut(Bounds<ScaledPixels>),
+    EndCut,
+}
+
+#[derive(Clone)]
+#[expect(missing_docs)]
+pub enum Primitive {
+    Shadow(Shadow),
+    Quad(Quad),
+    Path(Path<ScaledPixels>),
+    Underline(Underline),
+    MonochromeSprite(MonochromeSprite),
+    SubpixelSprite(SubpixelSprite),
+    PolychromeSprite(PolychromeSprite),
+    Surface(PaintSurface),
+}
+
+#[expect(missing_docs)]
+impl Primitive {
+    pub fn bounds(&self) -> &Bounds<ScaledPixels> {
+        match self {
+            Primitive::Shadow(shadow) => &shadow.bounds,
+            Primitive::Quad(quad) => &quad.bounds,
+            Primitive::Path(path) => &path.bounds,
+            Primitive::Underline(underline) => &underline.bounds,
+            Primitive::MonochromeSprite(sprite) => &sprite.bounds,
+            Primitive::SubpixelSprite(sprite) => &sprite.bounds,
+            Primitive::PolychromeSprite(sprite) => &sprite.bounds,
+            Primitive::Surface(surface) => &surface.bounds,
+        }
+    }
+
+    /// crundi patch (e): its draw order set.
+    pub(crate) fn set_order(&mut self, order: DrawOrder) {
+        match self {
+            Primitive::Shadow(x) => x.order = order,
+            Primitive::Quad(x) => x.order = order,
+            Primitive::Path(x) => x.order = order,
+            Primitive::Underline(x) => x.order = order,
+            Primitive::MonochromeSprite(x) => x.order = order,
+            Primitive::SubpixelSprite(x) => x.order = order,
+            Primitive::PolychromeSprite(x) => x.order = order,
+            Primitive::Surface(x) => x.order = order,
+        }
+    }
+
+    /// crundi patch (d): the draw order the scene gave it.
+    pub(crate) fn order(&self) -> DrawOrder {
+        match self {
+            Primitive::Shadow(x) => x.order,
+            Primitive::Quad(x) => x.order,
+            Primitive::Path(x) => x.order,
+            Primitive::Underline(x) => x.order,
+            Primitive::MonochromeSprite(x) => x.order,
+            Primitive::SubpixelSprite(x) => x.order,
+            Primitive::PolychromeSprite(x) => x.order,
+            Primitive::Surface(x) => x.order,
+        }
+    }
+
+    pub fn content_mask(&self) -> &ContentMask<ScaledPixels> {
+        match self {
+            Primitive::Shadow(shadow) => &shadow.content_mask,
+            Primitive::Quad(quad) => &quad.content_mask,
+            Primitive::Path(path) => &path.content_mask,
+            Primitive::Underline(underline) => &underline.content_mask,
+            Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
+            Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
+            Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
+            Primitive::Surface(surface) => &surface.content_mask,
+        }
+    }
+}
+
+#[cfg_attr(
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    ),
+    allow(dead_code)
+)]
+struct BatchIterator<'a> {
+    shadows_start: usize,
+    shadows_iter: Peekable<slice::Iter<'a, Shadow>>,
+    quads_start: usize,
+    quads_iter: Peekable<slice::Iter<'a, Quad>>,
+    paths_start: usize,
+    paths_iter: Peekable<slice::Iter<'a, Path<ScaledPixels>>>,
+    underlines_start: usize,
+    underlines_iter: Peekable<slice::Iter<'a, Underline>>,
+    monochrome_sprites_start: usize,
+    monochrome_sprites_iter: Peekable<slice::Iter<'a, MonochromeSprite>>,
+    subpixel_sprites_start: usize,
+    subpixel_sprites_iter: Peekable<slice::Iter<'a, SubpixelSprite>>,
+    polychrome_sprites_start: usize,
+    polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
+    surfaces_start: usize,
+    surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
+}
+
+impl<'a> Iterator for BatchIterator<'a> {
+    type Item = PrimitiveBatch;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut orders_and_kinds = [
+            (
+                self.shadows_iter.peek().map(|s| s.order),
+                PrimitiveKind::Shadow,
+            ),
+            (self.quads_iter.peek().map(|q| q.order), PrimitiveKind::Quad),
+            (self.paths_iter.peek().map(|q| q.order), PrimitiveKind::Path),
+            (
+                self.underlines_iter.peek().map(|u| u.order),
+                PrimitiveKind::Underline,
+            ),
+            (
+                self.monochrome_sprites_iter.peek().map(|s| s.order),
+                PrimitiveKind::MonochromeSprite,
+            ),
+            (
+                self.subpixel_sprites_iter.peek().map(|s| s.order),
+                PrimitiveKind::SubpixelSprite,
+            ),
+            (
+                self.polychrome_sprites_iter.peek().map(|s| s.order),
+                PrimitiveKind::PolychromeSprite,
+            ),
+            (
+                self.surfaces_iter.peek().map(|s| s.order),
+                PrimitiveKind::Surface,
+            ),
+        ];
+        orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
+
+        let first = orders_and_kinds[0];
+        let second = orders_and_kinds[1];
+        let (batch_kind, max_order_and_kind) = if first.0.is_some() {
+            (first.1, (second.0.unwrap_or(u32::MAX), second.1))
+        } else {
+            return None;
+        };
+
+        match batch_kind {
+            PrimitiveKind::Shadow => {
+                let shadows_start = self.shadows_start;
+                let mut shadows_end = shadows_start + 1;
+                self.shadows_iter.next();
+                while self
+                    .shadows_iter
+                    .next_if(|shadow| (shadow.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    shadows_end += 1;
+                }
+                self.shadows_start = shadows_end;
+                Some(PrimitiveBatch::Shadows(shadows_start..shadows_end))
+            }
+            PrimitiveKind::Quad => {
+                let quads_start = self.quads_start;
+                let mut quads_end = quads_start + 1;
+                self.quads_iter.next();
+                while self
+                    .quads_iter
+                    .next_if(|quad| (quad.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    quads_end += 1;
+                }
+                self.quads_start = quads_end;
+                Some(PrimitiveBatch::Quads(quads_start..quads_end))
+            }
+            PrimitiveKind::Path => {
+                let paths_start = self.paths_start;
+                let mut paths_end = paths_start + 1;
+                self.paths_iter.next();
+                while self
+                    .paths_iter
+                    .next_if(|path| (path.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    paths_end += 1;
+                }
+                self.paths_start = paths_end;
+                Some(PrimitiveBatch::Paths(paths_start..paths_end))
+            }
+            PrimitiveKind::Underline => {
+                let underlines_start = self.underlines_start;
+                let mut underlines_end = underlines_start + 1;
+                self.underlines_iter.next();
+                while self
+                    .underlines_iter
+                    .next_if(|underline| (underline.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    underlines_end += 1;
+                }
+                self.underlines_start = underlines_end;
+                Some(PrimitiveBatch::Underlines(underlines_start..underlines_end))
+            }
+            PrimitiveKind::MonochromeSprite => {
+                let texture_id = self.monochrome_sprites_iter.peek().unwrap().tile.texture_id;
+                let sprites_start = self.monochrome_sprites_start;
+                let mut sprites_end = sprites_start + 1;
+                self.monochrome_sprites_iter.next();
+                while self
+                    .monochrome_sprites_iter
+                    .next_if(|sprite| {
+                        (sprite.order, batch_kind) < max_order_and_kind
+                            && sprite.tile.texture_id == texture_id
+                    })
+                    .is_some()
+                {
+                    sprites_end += 1;
+                }
+                self.monochrome_sprites_start = sprites_end;
+                Some(PrimitiveBatch::MonochromeSprites {
+                    texture_id,
+                    range: sprites_start..sprites_end,
+                })
+            }
+            PrimitiveKind::SubpixelSprite => {
+                let texture_id = self.subpixel_sprites_iter.peek().unwrap().tile.texture_id;
+                let sprites_start = self.subpixel_sprites_start;
+                let mut sprites_end = sprites_start + 1;
+                self.subpixel_sprites_iter.next();
+                while self
+                    .subpixel_sprites_iter
+                    .next_if(|sprite| {
+                        (sprite.order, batch_kind) < max_order_and_kind
+                            && sprite.tile.texture_id == texture_id
+                    })
+                    .is_some()
+                {
+                    sprites_end += 1;
+                }
+                self.subpixel_sprites_start = sprites_end;
+                Some(PrimitiveBatch::SubpixelSprites {
+                    texture_id,
+                    range: sprites_start..sprites_end,
+                })
+            }
+            PrimitiveKind::PolychromeSprite => {
+                let texture_id = self.polychrome_sprites_iter.peek().unwrap().tile.texture_id;
+                let sprites_start = self.polychrome_sprites_start;
+                let mut sprites_end = sprites_start + 1;
+                self.polychrome_sprites_iter.next();
+                while self
+                    .polychrome_sprites_iter
+                    .next_if(|sprite| {
+                        (sprite.order, batch_kind) < max_order_and_kind
+                            && sprite.tile.texture_id == texture_id
+                    })
+                    .is_some()
+                {
+                    sprites_end += 1;
+                }
+                self.polychrome_sprites_start = sprites_end;
+                Some(PrimitiveBatch::PolychromeSprites {
+                    texture_id,
+                    range: sprites_start..sprites_end,
+                })
+            }
+            PrimitiveKind::Surface => {
+                let surfaces_start = self.surfaces_start;
+                let mut surfaces_end = surfaces_start + 1;
+                self.surfaces_iter.next();
+                while self
+                    .surfaces_iter
+                    .next_if(|surface| (surface.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    surfaces_end += 1;
+                }
+                self.surfaces_start = surfaces_end;
+                Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+#[cfg_attr(
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    ),
+    allow(dead_code)
+)]
+#[allow(missing_docs)]
+pub enum PrimitiveBatch {
+    Shadows(Range<usize>),
+    Quads(Range<usize>),
+    Paths(Range<usize>),
+    Underlines(Range<usize>),
+    MonochromeSprites {
+        texture_id: AtlasTextureId,
+        range: Range<usize>,
+    },
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    SubpixelSprites {
+        texture_id: AtlasTextureId,
+        range: Range<usize>,
+    },
+    PolychromeSprites {
+        texture_id: AtlasTextureId,
+        range: Range<usize>,
+    },
+    Surfaces(Range<usize>),
+}
+
+impl PrimitiveBatch {
+    #[expect(missing_docs)]
+    pub fn label(&self) -> String {
+        match self {
+            Self::Shadows(range) => format!("shadows ({})", range.len()),
+            Self::Quads(range) => format!("quads ({})", range.len()),
+            Self::Paths(range) => format!("paths ({})", range.len()),
+            Self::Underlines(range) => format!("underlines ({})", range.len()),
+            Self::MonochromeSprites { texture_id, range } => {
+                format!(
+                    "monochrome sprites ({}) on atlas {}",
+                    range.len(),
+                    texture_id.index
+                )
+            }
+            Self::SubpixelSprites { texture_id, range } => {
+                format!(
+                    "subpixel sprites ({}) on atlas {}",
+                    range.len(),
+                    texture_id.index
+                )
+            }
+            Self::PolychromeSprites { texture_id, range } => {
+                format!(
+                    "polychrome sprites ({}) on atlas {}",
+                    range.len(),
+                    texture_id.index
+                )
+            }
+            Self::Surfaces(range) => format!("surfaces ({})", range.len()),
+        }
+    }
+}
+
+#[derive(Default, Debug, Copy, Clone)]
+#[repr(C)]
+#[expect(missing_docs)]
+pub struct Quad {
+    pub order: DrawOrder,
+    pub border_style: BorderStyle,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub background: Background,
+    pub border_color: Hsla,
+    pub corner_radii: Corners<ScaledPixels>,
+    pub border_widths: Edges<ScaledPixels>,
+}
+
+impl From<Quad> for Primitive {
+    fn from(quad: Quad) -> Self {
+        Primitive::Quad(quad)
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+#[repr(C)]
+#[expect(missing_docs)]
+pub struct Underline {
+    pub order: DrawOrder,
+    pub pad: u32, // align to 8 bytes
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub color: Hsla,
+    pub thickness: ScaledPixels,
+    pub wavy: PaddedBool32,
+}
+
+impl From<Underline> for Primitive {
+    fn from(underline: Underline) -> Self {
+        Primitive::Underline(underline)
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+#[repr(C)]
+#[expect(missing_docs)]
+pub struct Shadow {
+    pub order: DrawOrder,
+    pub blur_radius: ScaledPixels,
+    pub bounds: Bounds<ScaledPixels>,
+    pub corner_radii: Corners<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub color: Hsla,
+    pub element_bounds: Bounds<ScaledPixels>,
+    pub element_corner_radii: Corners<ScaledPixels>,
+    /// 0 = drop shadow (rendered outside the element), 1 = inset shadow (rendered inside).
+    pub inset: u32,
+    pub pad: u32, // align to 8 bytes
+}
+
+impl From<Shadow> for Primitive {
+    fn from(shadow: Shadow) -> Self {
+        Primitive::Shadow(shadow)
+    }
+}
+
+/// The style of a border.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[repr(C)]
+pub enum BorderStyle {
+    /// A solid border.
+    #[default]
+    Solid = 0,
+    /// A dashed border.
+    Dashed = 1,
+}
+
+/// A data type representing a 2 dimensional transformation that can be applied to an element.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
+pub struct TransformationMatrix {
+    /// 2x2 matrix containing rotation and scale,
+    /// stored row-major
+    pub rotation_scale: [[f32; 2]; 2],
+    /// translation vector
+    pub translation: [f32; 2],
+}
+
+impl Eq for TransformationMatrix {}
+
+impl TransformationMatrix {
+    /// The unit matrix, has no effect.
+    pub fn unit() -> Self {
+        Self {
+            rotation_scale: [[1.0, 0.0], [0.0, 1.0]],
+            translation: [0.0, 0.0],
+        }
+    }
+
+    /// Move the origin by a given point
+    pub fn translate(self, point: Point<ScaledPixels>) -> Self {
+        self.compose(Self {
+            rotation_scale: [[1.0, 0.0], [0.0, 1.0]],
+            translation: [point.x.0, point.y.0],
+        })
+    }
+
+    /// Clockwise rotation in radians around the origin
+    pub fn rotate(self, angle: Radians) -> Self {
+        self.compose(Self {
+            rotation_scale: [
+                [angle.0.cos(), -angle.0.sin()],
+                [angle.0.sin(), angle.0.cos()],
+            ],
+            translation: [0.0, 0.0],
+        })
+    }
+
+    /// Scale around the origin
+    pub fn scale(self, size: Size<f32>) -> Self {
+        self.compose(Self {
+            rotation_scale: [[size.width, 0.0], [0.0, size.height]],
+            translation: [0.0, 0.0],
+        })
+    }
+
+    /// Perform matrix multiplication with another transformation
+    /// to produce a new transformation that is the result of
+    /// applying both transformations: first, `other`, then `self`.
+    #[inline]
+    pub fn compose(self, other: TransformationMatrix) -> TransformationMatrix {
+        if other == Self::unit() {
+            return self;
+        }
+        // Perform matrix multiplication
+        TransformationMatrix {
+            rotation_scale: [
+                [
+                    self.rotation_scale[0][0] * other.rotation_scale[0][0]
+                        + self.rotation_scale[0][1] * other.rotation_scale[1][0],
+                    self.rotation_scale[0][0] * other.rotation_scale[0][1]
+                        + self.rotation_scale[0][1] * other.rotation_scale[1][1],
+                ],
+                [
+                    self.rotation_scale[1][0] * other.rotation_scale[0][0]
+                        + self.rotation_scale[1][1] * other.rotation_scale[1][0],
+                    self.rotation_scale[1][0] * other.rotation_scale[0][1]
+                        + self.rotation_scale[1][1] * other.rotation_scale[1][1],
+                ],
+            ],
+            translation: [
+                self.translation[0]
+                    + self.rotation_scale[0][0] * other.translation[0]
+                    + self.rotation_scale[0][1] * other.translation[1],
+                self.translation[1]
+                    + self.rotation_scale[1][0] * other.translation[0]
+                    + self.rotation_scale[1][1] * other.translation[1],
+            ],
+        }
+    }
+
+    /// Apply transformation to a point, mainly useful for debugging
+    pub fn apply(&self, point: Point<Pixels>) -> Point<Pixels> {
+        let input = [point.x.0, point.y.0];
+        let mut output = self.translation;
+        for (i, output_cell) in output.iter_mut().enumerate() {
+            for (k, input_cell) in input.iter().enumerate() {
+                *output_cell += self.rotation_scale[i][k] * *input_cell;
+            }
+        }
+        Point::new(output[0].into(), output[1].into())
+    }
+}
+
+impl Default for TransformationMatrix {
+    fn default() -> Self {
+        Self::unit()
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+#[expect(missing_docs)]
+pub struct MonochromeSprite {
+    pub order: DrawOrder,
+    pub pad: u32,
+    pub tile: AtlasTile,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub color: Hsla,
+    pub transformation: TransformationMatrix,
+}
+
+impl From<MonochromeSprite> for Primitive {
+    fn from(sprite: MonochromeSprite) -> Self {
+        Primitive::MonochromeSprite(sprite)
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+#[expect(missing_docs)]
+pub struct SubpixelSprite {
+    pub order: DrawOrder,
+    pub pad: u32, // align to 8 bytes
+    pub tile: AtlasTile,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub color: Hsla,
+    pub transformation: TransformationMatrix,
+}
+
+impl From<SubpixelSprite> for Primitive {
+    fn from(sprite: SubpixelSprite) -> Self {
+        Primitive::SubpixelSprite(sprite)
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+#[expect(missing_docs)]
+pub struct PolychromeSprite {
+    pub order: DrawOrder,
+    pub pad: u32,
+    pub tile: AtlasTile,
+    pub grayscale: PaddedBool32,
+    pub opacity: f32,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub corner_radii: Corners<ScaledPixels>,
+}
+
+impl From<PolychromeSprite> for Primitive {
+    fn from(sprite: PolychromeSprite) -> Self {
+        Primitive::PolychromeSprite(sprite)
+    }
+}
+
+#[derive(Clone, Debug)]
+#[allow(missing_docs)]
+pub struct PaintSurface {
+    pub order: DrawOrder,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub image_buffer: objc2_core_foundation::CFRetained<objc2_core_video::CVPixelBuffer>,
+}
+
+impl From<PaintSurface> for Primitive {
+    fn from(surface: PaintSurface) -> Self {
+        Primitive::Surface(surface)
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[expect(missing_docs)]
+pub struct PathId(pub usize);
+
+/// A line made up of a series of vertices and control points.
+#[derive(Clone, Debug)]
+#[expect(missing_docs)]
+pub struct Path<P: Clone + Debug + Default + PartialEq> {
+    pub id: PathId,
+    pub order: DrawOrder,
+    pub bounds: Bounds<P>,
+    pub content_mask: ContentMask<P>,
+    pub vertices: Vec<PathVertex<P>>,
+    pub color: Background,
+    start: Point<P>,
+    current: Point<P>,
+    contour_count: usize,
+}
+
+impl Path<Pixels> {
+    /// Create a new path with the given starting point.
+    pub fn new(start: Point<Pixels>) -> Self {
+        Self {
+            id: PathId(0),
+            order: DrawOrder::default(),
+            vertices: Vec::new(),
+            start,
+            current: start,
+            bounds: Bounds {
+                origin: start,
+                size: Default::default(),
+            },
+            content_mask: Default::default(),
+            color: Default::default(),
+            contour_count: 0,
+        }
+    }
+
+    /// Scale this path by the given factor.
+    pub fn scale(&self, factor: f32) -> Path<ScaledPixels> {
+        Path {
+            id: self.id,
+            order: self.order,
+            bounds: self.bounds.scale(factor),
+            content_mask: self.content_mask.scale(factor),
+            vertices: self
+                .vertices
+                .iter()
+                .map(|vertex| vertex.scale(factor))
+                .collect(),
+            start: self.start.map(|start| start.scale(factor)),
+            current: self.current.scale(factor),
+            contour_count: self.contour_count,
+            color: self.color,
+        }
+    }
+
+    /// Move the start, current point to the given point.
+    pub fn move_to(&mut self, to: Point<Pixels>) {
+        self.contour_count += 1;
+        self.start = to;
+        self.current = to;
+    }
+
+    /// Draw a straight line from the current point to the given point.
+    pub fn line_to(&mut self, to: Point<Pixels>) {
+        self.contour_count += 1;
+        if self.contour_count > 1 {
+            self.push_triangle(
+                (self.start, self.current, to),
+                (point(0., 1.), point(0., 1.), point(0., 1.)),
+            );
+        }
+        self.current = to;
+    }
+
+    /// Draw a curve from the current point to the given point, using the given control point.
+    pub fn curve_to(&mut self, to: Point<Pixels>, ctrl: Point<Pixels>) {
+        self.contour_count += 1;
+        if self.contour_count > 1 {
+            self.push_triangle(
+                (self.start, self.current, to),
+                (point(0., 1.), point(0., 1.), point(0., 1.)),
+            );
+        }
+
+        self.push_triangle(
+            (self.current, ctrl, to),
+            (point(0., 0.), point(0.5, 0.), point(1., 1.)),
+        );
+        self.current = to;
+    }
+
+    /// Push a triangle to the Path.
+    pub fn push_triangle(
+        &mut self,
+        xy: (Point<Pixels>, Point<Pixels>, Point<Pixels>),
+        st: (Point<f32>, Point<f32>, Point<f32>),
+    ) {
+        self.bounds = self
+            .bounds
+            .union(&Bounds {
+                origin: xy.0,
+                size: Default::default(),
+            })
+            .union(&Bounds {
+                origin: xy.1,
+                size: Default::default(),
+            })
+            .union(&Bounds {
+                origin: xy.2,
+                size: Default::default(),
+            });
+
+        self.vertices.push(PathVertex {
+            xy_position: xy.0,
+            st_position: st.0,
+            content_mask: Default::default(),
+        });
+        self.vertices.push(PathVertex {
+            xy_position: xy.1,
+            st_position: st.1,
+            content_mask: Default::default(),
+        });
+        self.vertices.push(PathVertex {
+            xy_position: xy.2,
+            st_position: st.2,
+            content_mask: Default::default(),
+        });
+    }
+}
+
+impl<T> Path<T>
+where
+    T: Clone + Debug + Default + PartialEq + PartialOrd + Add<T, Output = T> + Sub<Output = T>,
+{
+    #[allow(unused)]
+    #[expect(missing_docs)]
+    pub fn clipped_bounds(&self) -> Bounds<T> {
+        self.bounds.intersect(&self.content_mask.bounds)
+    }
+}
+
+impl From<Path<ScaledPixels>> for Primitive {
+    fn from(path: Path<ScaledPixels>) -> Self {
+        Primitive::Path(path)
+    }
+}
+
+#[derive(Clone, Debug)]
+#[repr(C)]
+#[expect(missing_docs)]
+pub struct PathVertex<P: Clone + Debug + Default + PartialEq> {
+    pub xy_position: Point<P>,
+    pub st_position: Point<f32>,
+    pub content_mask: ContentMask<P>,
+}
+
+#[expect(missing_docs)]
+impl PathVertex<Pixels> {
+    pub fn scale(&self, factor: f32) -> PathVertex<ScaledPixels> {
+        PathVertex {
+            xy_position: self.xy_position.scale(factor),
+            st_position: self.st_position,
+            content_mask: self.content_mask.scale(factor),
+        }
+    }
+}

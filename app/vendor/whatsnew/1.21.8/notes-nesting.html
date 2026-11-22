@@ -1,0 +1,29 @@
+<div class="wna a-ntnest">
+  <div class="pg">
+    <div class="ttl">Trip</div>
+    <div class="li l0"><i></i>Pack</div>
+    <div class="li a1"><i></i>Clothes</div>
+    <div class="li a2"><i></i>Jackets</div>
+    <div class="li a3"><i></i>Boots</div>
+    <div class="li a4"><i></i>Tickets</div>
+    <div class="li l0"><i></i>Book the hotel</div>
+  </div>
+  <div class="key">Tab</div>
+  <style>
+    .a-ntnest{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-ntnest .pg{position:absolute;left:150px;top:46px;width:340px;height:300px;padding:22px 26px;box-sizing:border-box;border:1px solid var(--border);border-radius:12px;background:var(--bg-primary)}
+    .a-ntnest .ttl{font-size:22px;font-weight:700;margin-bottom:12px}
+    .a-ntnest .li{position:relative;display:flex;align-items:center;gap:10px;height:30px;font-size:14px}
+    .a-ntnest .li i{width:6px;height:6px;margin:0 8px;border-radius:50%;background:var(--text-secondary);flex:none}
+    .a-ntnest .a1{animation:antn-1 10s ease infinite}
+    .a-ntnest .a2{animation:antn-2 10s ease infinite}
+    .a-ntnest .a3{animation:antn-3 10s ease infinite}
+    .a-ntnest .a4{animation:antn-4 10s ease infinite}
+    @keyframes antn-1{0%,12%{padding-left:0}17%,94%{padding-left:28px}100%{padding-left:0}}
+    @keyframes antn-2{0%,30%{padding-left:0}35%,48%{padding-left:28px}53%,94%{padding-left:56px}100%{padding-left:0}}
+    @keyframes antn-3{0%,64%{padding-left:0}67%,72%{padding-left:28px}75%,94%{padding-left:56px}100%{padding-left:0}}
+    @keyframes antn-4{0%,81%{padding-left:0}84%,94%{padding-left:28px}100%{padding-left:0}}
+    .a-ntnest .key{position:absolute;left:520px;top:170px;min-width:44px;height:34px;padding:0 10px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-bottom-width:3px;border-radius:8px;background:var(--bg-card);font-size:13px;font-weight:600;color:var(--text-secondary);animation:antn-k 10s ease infinite}
+    @keyframes antn-k{0%,12%,18%,30%,36%,48%,54%,63%,69%,71%,77%,80%,86%,100%{background:var(--bg-card);color:var(--text-secondary);transform:none}15%,33%,51%,66%,74%,83%{background:var(--accent-dim);color:var(--accent-hover);transform:translateY(2px)}}
+  </style>
+</div>

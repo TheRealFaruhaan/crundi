@@ -1,0 +1,12 @@
+#!/bin/sh
+# shim for `compare -metric AE A B null:`: the count of differing pixels on stderr; exit 1 when any differ
+exec python3 -I -W ignore -c '
+import sys
+from PIL import Image, ImageChops
+a = [x for x in sys.argv[1:] if not x.startswith("-") and x not in ("AE", "null:")]
+A, B = Image.open(a[0]).convert("RGB"), Image.open(a[1]).convert("RGB")
+if A.size != B.size: sys.stderr.write("999999\n"); sys.exit(2)
+d = ImageChops.difference(A, B).convert("L")
+n = sum(1 for p in d.getdata() if p)
+sys.stderr.write(str(n) + "\n"); sys.exit(1 if n else 0)
+' "$@"

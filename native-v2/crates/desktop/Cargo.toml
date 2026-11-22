@@ -1,0 +1,66 @@
+[package]
+name = "crundi-desktop"
+description = "The desktop area (AREAS.md): the browser drawer, the Browsers tab, the native host, tray, notifications, Inbox, saved passwords, the homepool node, Cru"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+raw-window-handle = "0.6"
+gpui.workspace = true
+gpui-component.workspace = true
+gpui-kit-assets.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+crundi-core.workspace = true
+crundi-theme.workspace = true
+crundi-widgets.workspace = true
+crundi-shell.workspace = true
+crundi-webview.workspace = true
+crundi-workbench.workspace = true
+crundi-chat.workspace = true
+crundi-workspace.workspace = true
+# Cru's show_in_crundi: a card and an idea shown (kanban::show_card, mindmap::flash_node).
+crundi-planning.workspace = true
+# The browser lent to Operations' Panels and What's new (crundi_operations::web::set_host).
+crundi-operations.workspace = true
+futures.workspace = true
+tungstenite.workspace = true
+base64.workspace = true
+chrono.workspace = true
+image.workspace = true
+open.workspace = true
+gethostname.workspace = true
+rfd.workspace = true
+
+# Phase 6 (shared/requests.md: asked of the Lead since the Slint client;
+# added to this crate only, pinned): the tray, and saved passwords' key in
+# the OS keychain with AES-GCM.
+aes-gcm = "=0.10.3"
+# "Hey Cru" (phase 6.6): sherpa-onnx's keyword spotter and speaker embedding,
+# its static libraries linked in (no code loaded at run time); the model is
+# data, downloaded once and checked (wake/engine.rs).
+sherpa-onnx = { version = "=2.0.1", default-features = false, features = ["static"] }
+sha2 = "0.10"
+bzip2 = "0.5"
+tar = "0.4"
+ureq.workspace = true
+cpal.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["screensaver"] }
+# The PC lock's auto lock: the idle time and the screen's lock on Wayland (idle.rs).
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+ksni = { version = "=0.3.7", default-features = false, features = ["blocking", "async-io"] }
+keyring = { version = "=3.6.3", default-features = false, features = ["async-secret-service", "async-io", "crypto-rust"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+tray-icon = "=0.21.2"
+# The window's × hides to the tray (ShowWindow), the auto lock's idle time (GetLastInputInfo).
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_SystemInformation"] }
+keyring = { version = "=3.6.3", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tray-icon = "=0.21.2"
+keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }

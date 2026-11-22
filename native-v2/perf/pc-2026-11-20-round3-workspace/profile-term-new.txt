@@ -1,0 +1,93 @@
+samples 500: busy 315, idle 185
+
+stage:
+   161 paint
+    71 render
+    46 other
+    37 layout
+
+owner x stage:
+    52 crundi_v2::main::  [render]
+    45 crundi_v2::main::  [other]
+    39 crundi_chat::log::LogView  [paint]
+    32 crundi_v2::main::  [paint]
+    27 crundi_v2::main::  [layout]
+    24 crundi_chat::log::BlockEl  [paint]
+    16 crundi_chat::pane::Composer  [paint]
+    12 crundi_workbench::head::PaneHead  [paint]
+    11 crundi_workspace::terms::TermInput  [paint]
+     7 crundi_chat::log::Layer  [paint]
+     5 crundi_shell::views::ProjectBar  [paint]
+     5 crundi_workbench::Workbench  [render]
+     4 crundi_shell::views::Sidebar  [paint]
+     3 crundi_chat::log::Layer  [layout]
+     3 crundi_shell::views::TopBar  [paint]
+     3 crundi_workspace::terms::TermScreen  [paint]
+     3 crundi_chat::log::LogView  [layout]
+     3 crundi_shell::views::Shell  [render]
+     2 crundi_chat::log::LogView  [render]
+     2 crundi_chat::log::HitText  [paint]
+     2 crundi_chat::log::  [layout]
+     1 crundi_workspace::terms::  [render]
+     1 crundi_shell::views::TopBar  [layout]
+     1 crundi_workbench::Pane  [render]
+     1 crundi_chat::log::BlockEl  [layout]
+
+leaf function:
+   154 ?
+     8 total_cmp
+     8 eq
+     6 _int_malloc
+     6 replace<gpui::element::ElementDrawPhase<gpui::elements::div::DivFrameS
+     5 occupied<taffy::tree::taffy_tree::NodeData>
+     5 ??
+     4 paint_glyphs
+     4 drop_glue<gpui::scene::PaintOperation>
+     4 tcache_get_n
+     3 write<gpui::scene::SubpixelSprite>
+     3 default
+     3 from<gpui::scene::Primitive>
+     2 __memcpy_avx_unaligned_erms
+     2 paint_glyph
+
+functions on the stack (inclusive):
+   315 crundi_v2::main::
+   308 gpui::app::
+   303 gpui::window::
+   303 gpui::platform::RequestFrameOptions
+   302 gpui::app::async_context::AsyncApp
+   221 gpui::view::ViewElement
+   207 gpui::elements::div::Stateful
+   207 gpui::view::AnyView
+   204 gpui::elements::div::Div
+   204 gpui_component::window_border::WindowBorder
+   198 gpui::elements::div::
+   196 gpui::elements::div::InteractiveElementState
+   177 gpui::window::ElementId
+   147 gpui::app::entity_map::Entity
+   144 gpui::view::ViewElementState
+   131 gpui::view::paint_view::
+    71 gpui::element::AnyElement
+    48 gpui::geometry::ScaledPixels
+    47 gpui::elements::list::List
+    47 crundi_chat::log::Layer
+    42 gpui::window::Hitbox
+    41 gpui::scene::Primitive
+    40 gpui::taffy::LayoutId
+    40 gpui::window::FocusHandle
+    32 gpui::element::Drawable
+    31 crundi_chat::log::
+    29 gpui::elements::list::
+    28 crundi_chat::log::BlockEl
+    27 gpui::taffy::NodeContext
+    27 gpui::scene::
+    23 gpui::scene::SubpixelSprite
+    17 gpui::elements::list::LayoutItemsResponse
+    14 taffy::tree::taffy_tree::TaffyView
+    10 taffy::tree::taffy_tree::NodeData
+    10 gpui::element::ElementDrawPhase
+    10 gpui::bounds_tree::Node
+     9 gpui::scene::Quad
+     9 gpui::tab_stop::TabStopNode
+     9 crundi_workbench::Workbench
+     8 gpui::window::DispatchPhase

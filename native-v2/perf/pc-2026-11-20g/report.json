@@ -1,0 +1,247 @@
+{
+ "setup": {
+  "server": "http://localhost:4884",
+  "project": "demo",
+  "panes": [
+   "live:b2a7e433fe281f7b",
+   "live:cc65639960b61d92",
+   "live:bda98870ff3cf45e",
+   "live:a859a62c00a5f94e"
+  ],
+  "chats": 4,
+  "window": "1920x1040",
+  "focused": "a859a62c00a5f94e",
+  "focusedRows": 98,
+  "streamChat": "eccd3c2595cd04c7",
+  "panesWhileStreaming": 5,
+  "batches": 289,
+  "spliced": 600,
+  "rows": 302,
+  "replyChars": 6880,
+  "kanban": {
+   "columns": 4,
+   "cards": 80
+  },
+  "mindmap": {
+   "ideas": 133,
+   "drawn": 20,
+   "view": [
+    1638,
+    873
+   ]
+  },
+  "planningPanes": [
+   "panel:kanban",
+   "live:b2a7e433fe281f7b",
+   "panel:mindmap",
+   "live:cc65639960b61d92",
+   "live:eccd3c2595cd04c7",
+   "live:bda98870ff3cf45e",
+   "live:a859a62c00a5f94e"
+  ],
+  "planningInView": {
+   "focused": "eccd3c2595cd04c7",
+   "kanbanCols": 1,
+   "mindmapCanvas": [
+    737,
+    179
+   ],
+   "mindmapView": [
+    460,
+    378
+   ]
+  },
+  "planningStream": {
+   "chat": "eccd3c2595cd04c7",
+   "state": "working"
+  }
+ },
+ "idle-open": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8
+ },
+ "scroll-panes": {
+  "frames": 563,
+  "p50": 5.01,
+  "p95": 6.33,
+  "max": 10.21,
+  "share7": 0.99,
+  "over7": 6,
+  "over16": 0,
+  "seconds": 8.3,
+  "wheelEvents": 848,
+  "renders": {
+   "workbench": 563,
+   "top-bar": 0,
+   "sidebar": 0,
+   "project-bar": 0,
+   "wins": 0,
+   "head": 4,
+   "log": 570,
+   "composer": 4
+  }
+ },
+ "scroll-chat": {
+  "frames": 563,
+  "p50": 5.28,
+  "p95": 6.23,
+  "max": 7.59,
+  "share7": 0.99,
+  "over7": 6,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "workbench": 563,
+   "log": 563
+  }
+ },
+ "stream+scroll": {
+  "frames": 556,
+  "p50": 5.64,
+  "p95": 6.93,
+  "max": 8.19,
+  "share7": 0.96,
+  "over7": 20,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 800
+ },
+ "stream": {
+  "frames": 87,
+  "p50": 5.27,
+  "p95": 5.84,
+  "max": 10.2,
+  "share7": 0.99,
+  "over7": 1,
+  "over16": 0,
+  "seconds": 3.5,
+  "renders": {
+   "workbench": 643,
+   "top-bar": 2,
+   "sidebar": 1,
+   "project-bar": 0,
+   "wins": 0,
+   "head": 1,
+   "log": 816,
+   "composer": 1
+  }
+ },
+ "idle-end": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8,
+  "renders": {},
+  "batches": 0,
+  "head": {
+   "before": {
+    "title": "Number list in words",
+    "long": "",
+    "state": "idle"
+   },
+   "after": {
+    "title": "Number list in words",
+    "long": "",
+    "state": "idle"
+   }
+  }
+ },
+ "scroll-kanban": {
+  "frames": 604,
+  "p50": 3.44,
+  "p95": 4.2,
+  "max": 4.83,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "top-bar": 1,
+   "kanban-col": 612
+  }
+ },
+ "pan-mindmap": {
+  "frames": 305,
+  "p50": 4.22,
+  "p95": 5.18,
+  "max": 5.9,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "mindmap-map": 305
+  },
+  "drawnAtEnd": 20,
+  "relayouts": 0
+ },
+ "idle-planning": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 6
+ },
+ "planning+stream+scroll": {
+  "frames": 490,
+  "p50": 5.47,
+  "p95": 7.01,
+  "max": 8.22,
+  "share7": 0.95,
+  "over7": 25,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 845,
+  "renders": {
+   "workbench": 491,
+   "log": 403,
+   "mindmap-map": 80,
+   "kanban-stack": 156
+  }
+ },
+ "region:kanban": {
+  "frames": 143,
+  "p50": 4.26,
+  "p95": 6.66,
+  "max": 7.09,
+  "share7": 0.99,
+  "over7": 1,
+  "over16": 0,
+  "seconds": 2,
+  "renders": {
+   "workbench": 144,
+   "log": 51,
+   "kanban-stack": 143
+  }
+ },
+ "region:mindmap": {
+  "frames": 137,
+  "p50": 4.55,
+  "p95": 6.75,
+  "max": 7.36,
+  "share7": 0.97,
+  "over7": 4,
+  "over16": 0,
+  "seconds": 2,
+  "renders": {
+   "workbench": 138,
+   "log": 50,
+   "mindmap-map": 137
+  }
+ },
+ "allFrames": 3667,
+ "ranSeconds": 124
+}

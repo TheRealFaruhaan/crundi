@@ -41,6 +41,14 @@
     '.nt-block{position:relative;display:flex;align-items:flex-start;gap:6px;margin:0;padding:1px 0;border-radius:0}',
     '.nt-gutter{position:absolute;left:-40px;top:2px;display:flex;gap:1px;opacity:0;transition:opacity .12s}',
     '.nt-block:hover > .nt-gutter,.nt-block.menu-open > .nt-gutter{opacity:1}',
+    // The fold, left of the gutter, on a block with children: on hover, and always while folded.
+    '.nt-fold{position:absolute;left:-56px;top:2px;width:16px;height:22px;display:none;align-items:center;justify-content:center;border:none;background:none;border-radius:4px;color:var(--text-muted);cursor:pointer;padding:0;opacity:0;transition:opacity .12s}',
+    '.nt-fold svg{width:12px;height:12px;transition:transform .12s}',
+    '.nt-block.kids > .nt-fold{display:flex}',
+    '.nt-block:hover > .nt-fold,.nt-block.menu-open > .nt-fold,.nt-block.folded > .nt-fold{opacity:1}',
+    '.nt-block.folded > .nt-fold svg{transform:rotate(-90deg)}',
+    '.nt-fold:hover{background:var(--bg-hover,#22223a);color:var(--text-primary)}',
+    '.nt-block.nt-hid{display:none}',
     '.nt-gutter button{width:19px;height:22px;display:flex;align-items:center;justify-content:center;border:none;background:none;border-radius:4px;color:var(--text-muted);cursor:pointer;padding:0;font-size:' + F(14) + ';line-height:1}',
     '.nt-gutter button:hover{background:var(--bg-hover,#22223a);color:var(--text-primary)}',
     '.nt-grip{width:19px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:4px;color:var(--text-muted);cursor:grab;letter-spacing:-3px;font-size:' + F(14) + ';user-select:none;touch-action:none}',
@@ -171,8 +179,11 @@
     '.nt-trash-acts button:hover{color:var(--text-primary);background:var(--bg-tertiary,#1a1a28)}',
     '.nt-trash-acts button.danger:hover{color:var(--red,#ef4444);border-color:var(--red,#ef4444)}',
     '@media (max-width:700px){.nt-mgr{flex-direction:column}.nt-side{width:auto;max-height:40%;border-right:none;border-bottom:1px solid var(--border,#2a2a3d)}.nt-page{padding:16px 16px 120px 34px}}',
-    '@media (prefers-reduced-motion: reduce){.nt-check,.nt-check::after,.nt-gutter{transition:none}}'
-  ].join('');
+    '@media (prefers-reduced-motion: reduce){.nt-check,.nt-check::after,.nt-gutter,.nt-fold,.nt-fold svg{transition:none}}'
+  ].join('') +
+    // A nested paragraph or list item (Tab / Shift+Tab): under its parent's
+    // words, one marker and gap (22 + 6 px) further in per level.
+    [1, 2, 3, 4, 5].map(function (l) { return '.nt-block[data-level="' + l + '"]{padding-left:' + (28 * l) + 'px}'; }).join('');
 
   function ensureStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -315,6 +326,7 @@
   var MOD = /Mac|iPhone|iPad/.test(navigator.platform || '') ? 'Cmd' : 'Ctrl';
   var CODE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
   var WRAP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><path d="M3 12h15a3 3 0 1 1 0 6h-4"/><polyline points="16 16 14 18 16 20"/><line x1="3" y1="18" x2="10" y2="18"/></svg>';
+  var CHEVRON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
   var COPY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   /** A language id from whatever was written ('sh', 'ts', 'Python'…); '' stays plain. */
   function normLang(name) {
@@ -344,6 +356,91 @@
   var PH = { p: "Type '/' for blocks", h1: 'Heading 1', h2: 'Heading 2', h3: 'Heading 3', todo: 'To-do', bullet: 'List', number: 'List', quote: 'Quote' };
   var TEXTY = { p: 1, h1: 1, h2: 1, h3: 1, todo: 1, bullet: 1, number: 1, quote: 1 };
   var LISTY = { todo: 1, bullet: 1, number: 1 };
+  // What nests (Tab / Shift+Tab; the owner's 20 Nov decision): paragraphs and
+  // list items. A nested block's children are the blocks right after it that
+  // sit deeper; they move, copy, delete and fold with it.
+  var NESTY = { p: 1, todo: 1, bullet: 1, number: 1 };
+  // How deep a list item can nest ("level" in a page's blocks, 0 when absent).
+  var LEVEL_MAX = 5;
+  function clampLevel(v) { return Math.min(LEVEL_MAX, Math.max(0, Math.floor(Number(v)) || 0)); }
+  /**
+   * The list's numbers ("1.", "2." …) for numbered items, '' for the rest,
+   * from [{ type, level }]. Each nesting level counts on its own: a deeper
+   * item starts at 1, and a shallower one ends the deeper counts under it.
+   */
+  function listNumbers(items) {
+    var n = [0, 0, 0, 0, 0, 0];
+    return items.map(function (b) {
+      var l = depth(b);
+      // Anything else ends the counts at its depth and deeper (a nested
+      // paragraph under "1." lets the list go on at "2.").
+      if (!LISTY[b.type]) { for (var e = l; e < n.length; e++) n[e] = 0; return ''; }
+      for (var d = l + 1; d < n.length; d++) n[d] = 0;
+      if (b.type === 'number') { n[l]++; return n[l] + '.'; }
+      n[l] = 0; return '';
+    });
+  }
+
+  /** A block's depth (0 for what does not nest). */
+  function depth(b) { return NESTY[b.type] ? clampLevel(b.level) : 0; }
+  /** The end (exclusive) of block i's children: the blocks after it that sit deeper. */
+  function subEnd(items, i) { var l = depth(items[i]), j = i + 1; while (j < items.length && depth(items[j]) > l) j++; return j; }
+  function hasKids(items, i) { return i < items.length && subEnd(items, i) > i + 1; }
+  /** Which blocks are hidden, being under a folded block. */
+  function hiddenOf(items) {
+    var out = items.map(function () { return false; });
+    items.forEach(function (b, i) { if (b.folded && NESTY[b.type]) for (var j = i + 1, e = subEnd(items, i); j < e; j++) out[j] = true; });
+    return out;
+  }
+  /** Blocks lo..hi with every child of theirs: the last index. */
+  function withKids(items, lo, hi) { var m = hi; for (var i = lo; i <= hi && i < items.length; i++) m = Math.max(m, subEnd(items, i) - 1); return m; }
+  function shownBefore(items, i) { var h = hiddenOf(items); for (var j = Math.min(i, items.length) - 1; j >= 0; j--) if (!h[j]) return j; return -1; }
+  /** Tab / Shift+Tab on block i: it and its children one level in (at most one below the block shown above it, when that nests; a folded one opens to take it) or one level out. */
+  function nestAt(items, i, out) {
+    if (i < 0 || i >= items.length || !NESTY[items[i].type]) return false;
+    var end = subEnd(items, i), l = depth(items[i]), k;
+    if (out) {
+      if (!l) return false;
+      for (k = i; k < end; k++) if (NESTY[items[k].type]) items[k].level = Math.max(0, clampLevel(items[k].level) - 1);
+      return true;
+    }
+    var p = shownBefore(items, i);
+    var most = p >= 0 && NESTY[items[p].type] ? Math.min(LEVEL_MAX, depth(items[p]) + 1) : 0;
+    if (l >= most) return false;
+    for (k = i; k < end; k++) if (NESTY[items[k].type]) items[k].level = Math.min(LEVEL_MAX, clampLevel(items[k].level) + 1);
+    if (p >= 0) items[p].folded = false;
+    return true;
+  }
+  /** The run at s (len blocks) just put there: its first block no deeper than the block shown above allows (one below it; level with a folded one, so it lands after the fold), the rest with it. */
+  function settle(items, s, len) {
+    if (s >= items.length || !len) return;
+    var j = shownBefore(items, s), limit = 0;
+    if (j >= 0 && NESTY[items[j].type]) { if (j + 1 < s) limit = depth(items[j]); else { items[j].folded = false; limit = Math.min(LEVEL_MAX, depth(items[j]) + 1); } }
+    var d = depth(items[s]) - limit;
+    if (d <= 0) return;
+    for (var k = s; k < s + len && k < items.length; k++) if (NESTY[items[k].type]) items[k].level = Math.max(0, clampLevel(items[k].level) - d);
+  }
+  /** Where blocks lo..hi with their children go one place up or down: up, past the block before with its children when it is level with them (otherwise just past it); down, past the next block with its children when it is level with them or folded (otherwise in under it, first). { from, len, to }, or null. */
+  function moveSpot(items, lo, hi, up) {
+    if (hi >= items.length || lo > hi) return null;
+    var end = withKids(items, lo, hi) + 1, l = depth(items[lo]), len = end - lo, to;
+    if (up) {
+      if (!lo) return null;
+      var j = lo - 1; while (j >= 0 && depth(items[j]) > l) j--;
+      to = j >= 0 && depth(items[j]) === l ? j : lo - 1;
+    } else {
+      if (end >= items.length) return null;
+      var k = end;
+      to = (depth(items[k]) === l || (items[k].folded && hasKids(items, k)) ? subEnd(items, k) : k + 1) - len;
+    }
+    return { from: lo, len: len, to: to };
+  }
+  /** Where a new block below block i goes (Enter, the "+"): { at, level }. Under a block with its children shown, the first child; under a folded one, after its children; otherwise right after it, level with it. */
+  function belowSpot(items, i) {
+    var l = depth(items[i]);
+    if (hasKids(items, i)) return items[i].folded ? { at: subEnd(items, i), level: l } : { at: i + 1, level: Math.min(LEVEL_MAX, l + 1) };
+    return { at: i + 1, level: l };
+  }
 
   // ─── Markdown (what Claude reads when a block is dropped on a chat) ───
   function inlineMd(html) {
@@ -369,22 +466,25 @@
     }
     return walk(box);
   }
-  /** Blocks as Markdown, numbering consecutive numbered items. */
+  /** Blocks as Markdown, numbering consecutive numbered items (each nesting level on its own). */
   function toMarkdown(blocks) {
-    var out = [], n = 0;
-    (blocks || []).forEach(function (b) {
-      if (b.type !== 'number') n = 0;
+    var out = [], nums = listNumbers(blocks || []);
+    (blocks || []).forEach(function (b, bi) {
       var t = b.type === 'code' || b.type === 'table' || b.type === 'divider' ? '' : inlineMd(b.text || '');
       var indentRest = function (s, pad) { return s.replace(/\n/g, '\n' + pad); };
+      // A nested item indents two spaces a level.
+      var ind = LISTY[b.type] ? new Array(clampLevel(b.level) + 1).join('  ') : '';
       switch (b.type) {
         case 'h1': out.push('# ' + t); break;
         case 'h2': out.push('## ' + t); break;
         case 'h3': out.push('### ' + t); break;
-        case 'todo': out.push('- [' + (b.checked ? 'x' : ' ') + '] ' + indentRest(t, '  ')); break;
-        case 'bullet': out.push('- ' + indentRest(t, '  ')); break;
-        case 'number': n++; out.push(n + '. ' + indentRest(t, '   ')); break;
+        case 'todo': out.push(ind + '- [' + (b.checked ? 'x' : ' ') + '] ' + indentRest(t, ind + '  ')); break;
+        case 'bullet': out.push(ind + '- ' + indentRest(t, ind + '  ')); break;
+        case 'number': out.push(ind + nums[bi] + ' ' + indentRest(t, ind + new Array(nums[bi].length + 2).join(' '))); break;
         case 'quote': out.push('> ' + t.replace(/\n/g, '\n> ')); break;
         case 'divider': out.push('---'); break;
+        // A nested paragraph indents two spaces a level, as a list item.
+        case 'p': var pi = new Array(depth(b) + 1).join('  '); out.push(pi + indentRest(t, pi)); break;
         case 'code': out.push('```' + (b.lang || '') + '\n' + (b.text || '') + '\n```'); break;
         case 'table':
           var rows = (b.rows || []).map(function (r) { return r.map(function (c) { return inlineMd(c).replace(/\n/g, ' ').replace(/\|/g, '\\|'); }); });
@@ -464,6 +564,14 @@
       var w = el('div', 'nt-block t-' + b.type + (b.type === 'todo' && b.checked ? ' done' : ''));
       w.dataset.id = b.id || genId();
       w.dataset.type = b.type;
+      if (NESTY[b.type]) { setLevel(w, b.level); if (b.folded) w.classList.add('folded'); }
+      if (NESTY[b.type]) {
+        var fold = el('button', 'nt-fold', CHEVRON_SVG); fold.type = 'button';
+        fold.title = b.folded ? 'Unfold' : 'Fold';
+        fold.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        fold.addEventListener('click', function () { toggleFold(w); });
+        w.appendChild(fold);
+      }
       var g = el('div', 'nt-gutter');
       var add = el('button', '', '+'); add.title = 'Add a block below'; add.type = 'button';
       // A span, not a button: the host's drag starts on it (it ignores buttons),
@@ -472,17 +580,19 @@
       grip.title = 'Click: turn into, move, duplicate, delete. Drag: onto a chat or terminal to send it as Markdown';
       g.appendChild(add); g.appendChild(grip);
       w.appendChild(g);
+      // The block goes with its children.
       if (opts.dragBlock) opts.dragBlock(w, grip, function () {
-        return w.classList.contains('bsel') && selectedBlocks().length > 1 ? toMarkdown(selectedBlocks().map(readBlock)) : toMarkdown([readBlock(w)]);
-      }, reorderer(function () { return w.classList.contains('bsel') ? selectedBlocks() : [w]; }));
+        return w.classList.contains('bsel') && selectedBlocks().length > 1 ? toMarkdown(selectedBlocks().map(readBlock)) : toMarkdown(unitOf(w).map(readBlock));
+      }, reorderer(function () { return w.classList.contains('bsel') ? selectedBlocks() : unitOf(w); }));
       add.addEventListener('mousedown', function (e) { e.preventDefault(); });
-      add.addEventListener('click', function () { var nb = insertAfter(w, { type: 'p', text: '' }); openSlash(nb, true); });
+      add.addEventListener('click', function () { var nb = insertBelow(w, { type: 'p', text: '' }); openSlash(nb, true); });
       grip.addEventListener('mousedown', function (e) { e.preventDefault(); });
       grip.addEventListener('click', function () { openBlockMenu(w, grip); });
 
       if (b.type === 'divider') {
         var hr = el('hr', 'nt-hr'); hr.tabIndex = 0;
         hr.addEventListener('keydown', function (e) {
+          if (blockKey(e, w)) return;
           if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); var p = prevBlock(w) || nextBlock(w); removeBlock(w); if (p) focusBlock(p, 'end'); changed(); }
           else if (e.key === 'Enter') { e.preventDefault(); focusBlock(insertAfter(w, { type: 'p', text: '' }), 'start'); }
           else if (e.key === 'ArrowUp') { var p2 = prevBlock(w); if (p2) { e.preventDefault(); focusBlock(p2, 'end'); } }
@@ -578,6 +688,11 @@
         { key: 'ArrowUp', run: function (v) { var sel = v.state.selection.main; if (!sel.empty || v.state.doc.lineAt(sel.head).number !== 1) return false; var p = prevBlock(w); if (!p) return false; focusBlock(p, 'end'); return true; } },
         { key: 'ArrowDown', run: function (v) { var sel = v.state.selection.main; if (!sel.empty || v.state.doc.lineAt(sel.head).number !== v.state.doc.lines) return false; var n = nextBlock(w); focusBlock(n || insertAfter(w, { type: 'p', text: '' }), 'start'); return true; } },
         { key: 'Backspace', run: function (v) { if (v.state.doc.length) return false; focusBlock(convert(w, 'p'), 'start'); return true; } },
+        // The keys every block takes (before CodeMirror's own line moves).
+        { key: 'Alt-ArrowUp', run: function () { blockAct(w, 'up'); return true; } },
+        { key: 'Alt-ArrowDown', run: function () { blockAct(w, 'down'); return true; } },
+        { key: 'Mod-d', run: function () { blockAct(w, 'dup'); return true; } },
+        { key: 'Shift-Mod-k', run: function () { blockAct(w, 'del'); return true; } },
       ]);
       var view = new CM.EditorView({
         parent: hostEl,
@@ -674,6 +789,7 @@
     }
     function cellKey(e, td) {
       var tbl = td.closest('table');
+      if (blockKey(e, td.closest('.nt-block'))) return;
       if (e.key === 'Tab') {
         e.preventDefault();
         var cells = Array.prototype.slice.call(tbl.querySelectorAll('td'));
@@ -689,11 +805,118 @@
     }
 
     function renumber() {
-      var n = 0;
-      Array.prototype.forEach.call(list.children, function (w) {
-        if (w.dataset.type === 'number') { n++; var m = w.querySelector('.nt-mark'); if (m) m.textContent = n + '.'; }
-        else n = 0;
+      var arr = blocksArr();
+      var nums = listNumbers(arr.map(function (w) { return { type: w.dataset.type, level: levelOf(w) }; }));
+      arr.forEach(function (w, i) {
+        if (w.dataset.type === 'number') { var m = w.querySelector('.nt-mark'); if (m) m.textContent = nums[i]; }
       });
+      refold(arr);
+    }
+    // ─── nesting (paragraphs and list items; kept as "level" when above 0, "folded" when set) ───
+    function levelOf(w) { return NESTY[w.dataset.type] ? clampLevel(w.dataset.level) : 0; }
+    function setLevel(w, l) { l = clampLevel(l); if (l > 0) w.dataset.level = String(l); else delete w.dataset.level; }
+    function shapes(arr) { return arr.map(function (w) { return { type: w.dataset.type, level: levelOf(w), folded: w.classList.contains('folded') }; }); }
+    /** Put the rules' levels and folds back on the blocks. */
+    function applyShapes(arr, sh) { arr.forEach(function (w, i) { if (NESTY[w.dataset.type]) setLevel(w, sh[i].level); setFolded(w, sh[i].folded); }); }
+    function setFolded(w, on) {
+      w.classList.toggle('folded', !!on);
+      var f = w.querySelector(':scope > .nt-fold'); if (f) f.title = on ? 'Unfold' : 'Fold';
+    }
+    /** Which blocks have children (their fold shows), which are folded away. */
+    function refold(arr) {
+      arr = arr || blocksArr();
+      var sh = shapes(arr), hid = hiddenOf(sh);
+      arr.forEach(function (w, i) { w.classList.toggle('kids', hasKids(sh, i)); w.classList.toggle('nt-hid', hid[i]); });
+    }
+    /** The block and its children. */
+    function unitOf(w) { var arr = blocksArr(), i = arr.indexOf(w); return i < 0 ? [w] : arr.slice(i, subEnd(shapes(arr), i)); }
+    /** Tab / Shift+Tab: it and its children one level deeper (at most one below the block shown above it) or one level out. */
+    function nest(w, out) {
+      var arr = blocksArr(), sh = shapes(arr);
+      if (nestAt(sh, arr.indexOf(w), out)) { applyShapes(arr, sh); renumber(); changed(); }
+    }
+    /** Fold or open a block's children (the fold beside it). */
+    function toggleFold(w) {
+      var on = !w.classList.contains('folded');
+      setFolded(w, on);
+      renumber();
+      // A caret or a selection in what folds away goes.
+      if (on && selectedBlocks().some(function (b) { return b.classList.contains('nt-hid'); })) clearBlockSel();
+      var a = document.activeElement; if (on && a && list.contains(a) && a.closest('.nt-hid')) focusBlock(w, 'end');
+      changed();
+    }
+    /** A new block below this one: the first child of a parent, after a folded block's children, else right after it, level with it. */
+    function insertBelow(w, b) {
+      var arr = blocksArr(), sh = shapes(arr), i = arr.indexOf(w);
+      if (i < 0) return insertAfter(w, b);
+      var sp = belowSpot(sh, i);
+      b.level = NESTY[b.type] ? sp.level : 0;
+      return insertAfter(sp.at > 0 ? arr[sp.at - 1] : null, b);
+    }
+
+    // ─── keys every block takes, whatever its kind ───
+    // Alt+Up / Alt+Down moves it, Ctrl+D duplicates it (the caret into the
+    // copy, at the same place), Ctrl+Shift+K deletes it.
+    function blockKeyName(e) {
+      var mod = e.ctrlKey || e.metaKey, k = (e.key || '').toLowerCase();
+      if (e.altKey && !mod && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) return e.key === 'ArrowUp' ? 'up' : 'down';
+      if (mod && !e.altKey && !e.shiftKey && k === 'd') return 'dup';
+      if (mod && !e.altKey && e.shiftKey && k === 'k') return 'del';
+      return '';
+    }
+    function blockKey(e, w) {
+      var name = blockKeyName(e);
+      if (!name) return false;
+      e.preventDefault(); e.stopPropagation();
+      blockAct(w, name);
+      return true;
+    }
+    /** Where the caret is in a block, to put it back after a move or into a copy. */
+    function caretSpot(w) {
+      if (w._cm) return { cm: w._cm.view.state.selection.main.head };
+      var a = document.activeElement;
+      if (!a || !w.contains(a)) return null;
+      return { cell: Array.prototype.indexOf.call(w.querySelectorAll('td'), a), off: a.tagName === 'HR' ? -1 : caretOffset(a) };
+    }
+    function restoreCaret(w, spot) {
+      if (!spot) { focusBlock(w, 'end'); return; }
+      if (w._cm) { var v = w._cm.view; v.focus(); v.dispatch({ selection: { anchor: Math.min(spot.cm || 0, v.state.doc.length) } }); return; }
+      var t = spot.cell >= 0 ? w.querySelectorAll('td')[spot.cell] : editable(w);
+      if (!t) return;
+      if (t.tagName === 'HR') t.focus(); else placeCaret(t, spot.off);
+    }
+    function blockAct(w, name) {
+      closeFloating();
+      // A block's children go with it.
+      if (name === 'del') { var un = unitOf(w), p = prevBlock(w) || un[un.length - 1].nextElementSibling; un.forEach(function (b) { destroyCode(b); b.remove(); }); removeBlock(null); changed(); if (p) focusBlock(p, 'end'); return; }
+      var spot = caretSpot(w);
+      if (name === 'dup') { var c = dupBlocks(unitOf(w)); if (c.length) restoreCaret(c[0], spot); return; }
+      if (moveBlocks([w], name === 'up') && (!document.activeElement || !w.contains(document.activeElement))) restoreCaret(w, spot);
+    }
+    /** A run of blocks one place up or down, their children with them (moveSpot). */
+    function moveBlocks(run, up) {
+      var arr = blocksArr(), sh = shapes(arr);
+      var sp = moveSpot(sh, arr.indexOf(run[0]), arr.indexOf(run[run.length - 1]), up);
+      if (!sp) return false;
+      var moving = arr.slice(sp.from, sp.from + sp.len), rest = arr.slice(0, sp.from).concat(arr.slice(sp.from + sp.len));
+      var anchor = rest[sp.to] || null;
+      moving.forEach(function (b) { list.insertBefore(b, anchor); });
+      settleRun(moving);
+      renumber(); changed();
+      return true;
+    }
+    /** Blocks just put somewhere: no deeper than the block shown above them allows (settle). */
+    function settleRun(moving) {
+      var arr = blocksArr(), sh = shapes(arr), at = arr.indexOf(moving[0]);
+      if (at < 0) return;
+      settle(sh, at, moving.length);
+      applyShapes(arr, sh);
+    }
+    /** Copies of a run of blocks, after it; the copies. */
+    function dupBlocks(run) {
+      var at = run[run.length - 1], out = [];
+      run.forEach(function (b) { var d = readBlock(b); d.id = genId(); at = insertAfter(at, d); out.push(at); });
+      return out;
     }
 
     function render(blocks) {
@@ -704,8 +927,9 @@
     }
 
     // ─── block navigation and edits ───
-    function prevBlock(w) { return w.previousElementSibling; }
-    function nextBlock(w) { return w.nextElementSibling; }
+    // The blocks shown around it (a folded block's children are skipped).
+    function prevBlock(w) { var p = w.previousElementSibling; while (p && p.classList.contains('nt-hid')) p = p.previousElementSibling; return p; }
+    function nextBlock(w) { var n = w.nextElementSibling; while (n && n.classList.contains('nt-hid')) n = n.nextElementSibling; return n; }
     function editable(w) { return w && (w.querySelector('.nt-text') || w.querySelector('.nt-code') || w.querySelector('td') || w.querySelector('.nt-hr')); }
     function focusBlock(w, where) {
       if (!w) return;
@@ -727,7 +951,7 @@
       renumber(); changed();
       return nb;
     }
-    function removeBlock(w) { destroyCode(w); w.remove(); if (!list.children.length) list.appendChild(blockEl({ id: genId(), type: 'p', text: '' })); renumber(); }
+    function removeBlock(w) { if (w) { destroyCode(w); w.remove(); } if (!list.children.length) list.appendChild(blockEl({ id: genId(), type: 'p', text: '' })); renumber(); }
     /** Change a block's type, keeping its text where both kinds have text. */
     function convert(w, type, extra) {
       var b = readBlock(w);
@@ -735,6 +959,9 @@
       if (type === 'code') { nb.text = b.type === 'code' ? b.text : plainOf(b.text || ''); nb.lang = b.lang || ''; if (b.wrap) nb.wrap = true; }
       else if (type === 'table') nb.rows = [['', '', ''], ['', '', ''], ['', '', '']];
       else if (type !== 'divider') nb.text = b.type === 'code' ? esc(b.text || '').replace(/\n/g, '<br>') : (b.text || '');
+      // A paragraph or list item turned into another stays at its depth.
+      if (NESTY[type] && b.level) nb.level = b.level;
+      if (NESTY[type] && b.folded) nb.folded = true;
       if (extra) for (var k in extra) nb[k] = extra[k];
       var fresh = blockEl(nb);
       destroyCode(w);
@@ -761,6 +988,8 @@
       }
       b.text = sanitize((w.querySelector('.nt-text') || {}).innerHTML || '');
       if (type === 'todo') b.checked = !!(w.querySelector('.nt-check') || {}).checked;
+      if (levelOf(w) > 0) b.level = levelOf(w);
+      if (NESTY[type] && w.classList.contains('folded')) b.folded = true;
       return b;
     }
     function serialize() { return Array.prototype.map.call(list.children, readBlock); }
@@ -787,20 +1016,28 @@
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'a') { hintSelectAll(); return; }
       if (e.shiftKey && e.key === 'ArrowUp' && onFirstLine(t) && prevBlock(w) && window.getSelection().isCollapsed) { e.preventDefault(); setBlockSel(w, prevBlock(w)); return; }
       if (e.shiftKey && e.key === 'ArrowDown' && onLastLine(t) && nextBlock(w) && window.getSelection().isCollapsed) { e.preventDefault(); setBlockSel(w, nextBlock(w)); return; }
+      if (blockKey(e, w)) return;
       if ((e.ctrlKey || e.metaKey) && fmtKey(e)) return;
+      if (e.key === 'Tab' && NESTY[type] && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); closeFloating(); nest(w, e.shiftKey); return; }
       if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); document.execCommand('insertLineBreak'); return; }
       if (e.key === 'Enter') {
         e.preventDefault();
+        // An empty nested block steps out one level (its children with it).
+        if (NESTY[type] && levelOf(w) > 0 && !t.textContent.trim()) { nest(w, true); return; }
         // An empty list item ends the list.
         if (LISTY[type] && !t.textContent.trim()) { convert(w, 'p'); focusBlock(list.querySelector('[data-id="' + w.dataset.id + '"]'), 'start'); return; }
         var parts = splitAtCaret(t);
         t.innerHTML = parts[0];
         var nextType = LISTY[type] ? type : 'p';
-        var nb = insertAfter(w, { type: nextType, text: parts[1], checked: false });
+        // A list goes on at the same level; under a parent, first among its
+        // children; after a folded block, past its children.
+        var nb = insertBelow(w, { type: nextType, text: parts[1], checked: false });
         focusBlock(nb, 'start');
         return;
       }
       if (e.key === 'Backspace' && atStart(t)) {
+        // At the start of a nested paragraph: one level out first.
+        if (type === 'p' && levelOf(w) > 0) { e.preventDefault(); nest(w, true); return; }
         if (type !== 'p') { e.preventDefault(); var c = convert(w, 'p'); focusBlock(c, 'start'); return; }
         var p = prevBlock(w);
         if (!p) return;
@@ -826,6 +1063,7 @@
     }
 
     function codeKey(e, w, pre) {
+      if (blockKey(e, w)) return;
       if (e.key === 'Tab') { e.preventDefault(); document.execCommand('insertText', false, '  '); return; }
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.execCommand('insertText', false, '\n'); return; }
       // Leaving a code block: Shift+Enter at the end, or arrows past its edges.
@@ -1115,7 +1353,7 @@
           var hit = document.elementFromPoint(x, y);
           if (!hit || !page.contains(hit)) { clear(); return false; }
           var moving = getMoving();
-          var arr = blocksArr().filter(function (b) { return moving.indexOf(b) < 0; });
+          var arr = blocksArr().filter(function (b) { return moving.indexOf(b) < 0 && !b.classList.contains('nt-hid'); });
           if (!arr.length) { clear(); return false; }
           var ref = null, before = true;
           for (var i = 0; i < arr.length; i++) {
@@ -1132,10 +1370,14 @@
         drop: function () {
           if (!spot) return;
           var moving = getMoving(), anchor = spot.before ? spot.ref : spot.ref.nextSibling;
+          // After a folded block: past its children too.
+          if (!spot.before && spot.ref.classList.contains('folded')) { var u = unitOf(spot.ref); anchor = u[u.length - 1].nextSibling; }
+          while (anchor && moving.indexOf(anchor) >= 0) anchor = anchor.nextSibling;
           moving.forEach(function (b) {
             // CodeMirror survives being moved; nothing to rebuild.
             if (anchor && anchor !== dropLine) list.insertBefore(b, anchor); else list.appendChild(b);
           });
+          settleRun(moving);
           clear(); renumber(); changed();
         },
         clear: clear,
@@ -1150,7 +1392,8 @@
       selAnchor = a; selFocus = f;
       var arr = blocksArr(), i = arr.indexOf(a), j = arr.indexOf(f);
       if (i < 0 || j < 0) { clearBlockSel(); return; }
-      var lo = Math.min(i, j), hi = Math.max(i, j);
+      // A selected block's children are selected with it.
+      var lo = Math.min(i, j), hi = withKids(shapes(arr), lo, Math.max(i, j));
       arr.forEach(function (b, k) { b.classList.toggle('bsel', k >= lo && k <= hi); });
       var s = window.getSelection(); if (s.rangeCount) s.removeAllRanges();
       if (document.activeElement && root.contains(document.activeElement) && document.activeElement !== root) document.activeElement.blur();
@@ -1263,6 +1506,17 @@
     root.addEventListener('keydown', function (e) {
       if (e.target !== root || !selectedBlocks().length) return;
       var arr = blocksArr();
+      var bk = blockKeyName(e);
+      if (bk) {
+        e.preventDefault();
+        var run = selectedBlocks();
+        if (bk === 'del') deleteSelected();
+        // The selection moves as one, and stays selected.
+        else if (bk === 'up' || bk === 'down') moveBlocks(run, bk === 'up');
+        // The copies, after the selection, are selected.
+        else { var cp = dupBlocks(run); if (cp.length) { setBlockSel(cp[0], cp[cp.length - 1]); } }
+        return;
+      }
       if (e.key === 'Escape') { e.preventDefault(); var f = selFocus; clearBlockSel(); focusBlock(f, 'end'); }
       else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); deleteSelected(); }
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') { e.preventDefault(); copySelection(); }
