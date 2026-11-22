@@ -43,15 +43,23 @@ LAST="$CARGO_TARGET_DIR/.v2-last-worktree"
 OTHER=""
 [ -f "$LAST" ] && OTHER=$(find "$CARGO_TARGET_DIR/debug/build" "$CARGO_TARGET_DIR/release/build" -mindepth 2 -maxdepth 2 -path '*/crundi-*' -newer "$LAST" -print -quit 2>/dev/null || true)
 if [ "$(cat "$LAST" 2>/dev/null)" != "$HERE" ] || [ -n "$OTHER" ]; then
-  find crates -name '*.rs' -path '*/src/*' -exec touch {} +
-  find crates -name 'Cargo.toml' -exec touch {} +
+  # (vendor/ too: the patched gpui is a crate of the same name and version
+  # in every worktree, F247.)
+  find crates vendor -name '*.rs' -path '*/src/*' -exec touch {} +
+  find crates vendor -name 'Cargo.toml' -exec touch {} +
   echo "sources touched: the last build was from $(cat "$LAST" 2>/dev/null || echo nowhere)" >&2
 fi
+# Marked before cargo runs: a build that fails part way has still left this
+# worktree's crates in the folder, so the next build from another worktree
+# touches its own sources (F247: a failed build left a stale client).
+echo "$HERE" > "$LAST"
 PEAKS=/tmp/crundi-v2-peaks-$$.log
 tools/rustc-peak.sh "$PEAKS" & PK=$!
 trap 'kill $PK 2>/dev/null; rm -f "$PEAKS" "$PEAKS.tmp"' EXIT
 S=$(date +%s)
 cargo "$CMD" -j"$JOBS" "$@"
+# (Stamped again once it succeeded: the marker is newer than this build's
+# own outputs, so the next build from here touches nothing.)
 echo "$HERE" > "$LAST"
 # (Only a build of the client: not one crate's, whose client would be stale.)
 APP=1; PREV=""; for a in "$@"; do case "$PREV" in -p|--package) [ "$a" = crundi-app ] || APP=0;; esac; PREV="$a"; done

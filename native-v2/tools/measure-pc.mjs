@@ -33,6 +33,7 @@
 //                        shell's screen filled as the two streams leave
 //                        it); the rest skipped: about 3 minutes, for A/B
 //                        runs (compare quick runs with quick runs only)
+//   MEASURE_QUICK_PAN=1  with MEASURE_QUICK=1: pan-mindmap and idle-planning too
 //   MEASURE_TIMEOUT=<s>  the whole run's limit (default 2400): past it, it
 //                        fails, stops the client and cleans up
 //
@@ -229,6 +230,9 @@ const W = 1920, H = 1040;
 // MEASURE_QUICK=1: the CR's scenarios (planning+stream+scroll, cr-sweep, cr-scroll,
 // and the drawer's unless MEASURE_DRAWER=0) with the setup they need, the others skipped.
 const QUICK = process.env.MEASURE_QUICK === '1';
+// MEASURE_QUICK_PAN=1 (with MEASURE_QUICK=1): the Mindmap tab's pan and the
+// idle after it as well (pan-mindmap, idle-planning).
+const QPAN = QUICK && process.env.MEASURE_QUICK_PAN === '1';
 // The wheel over a grid of points across the workbench: tools/sweep.mjs.
 
 try {
@@ -389,8 +393,8 @@ try {
     report.setup.mindmap = { ideas: (MM(s)?.nodes || []).filter((n) => n.kind === 'node').length, drawn: (MM(s)?.drawn || []).length, view: [vw, vh] };
     r0 = s.renders || {};
     m = fm.mark();
-    { const end = Date.now() + (QUICK ? 0 : 8000); let i = 0; while (Date.now() < end) { const side = Math.floor(i / 80) % 2 === 1; await d.send({ cmd: 'mouse', kind: 'wheel', x: cx0 + vw - 30, y: cy0 + vh / 2, dy: (i % 40) < 20 ? -60 : 60, mods: side ? ['shift'] : [] }); i++; await sleep(7); } }
-    if (!QUICK) {
+    { const end = Date.now() + (QUICK && !QPAN ? 0 : 8000); let i = 0; while (Date.now() < end) { const side = Math.floor(i / 80) % 2 === 1; await d.send({ cmd: 'mouse', kind: 'wheel', x: cx0 + vw - 30, y: cy0 + vh / 2, dy: (i % 40) < 20 ? -60 : 60, mods: side ? ['shift'] : [] }); i++; await sleep(7); } }
+    if (!QUICK || QPAN) {
     await sleep(300); stats('pan-mindmap', m);
     s = await state(); report['pan-mindmap'].renders = drew(r0, s); report['pan-mindmap'].drawnAtEnd = (MM(s)?.drawn || []).length; report['pan-mindmap'].relayouts = MM(s)?.relayouts;
     m = fm.mark(); await sleep(6000); stats('idle-planning', m);

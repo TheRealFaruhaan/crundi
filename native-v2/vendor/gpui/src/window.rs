@@ -274,6 +274,12 @@ impl WindowInvalidator {
     }
 
     #[track_caller]
+    /// crundi patch (e): whether the window is painting (not prepainting).
+    pub fn painting(&self) -> bool {
+        matches!(self.inner.borrow().draw_phase, DrawPhase::Paint)
+    }
+
+    #[track_caller]
     pub fn debug_assert_paint(&self) {
         debug_assert!(
             matches!(self.inner.borrow().draw_phase, DrawPhase::Paint),
@@ -837,10 +843,17 @@ pub struct Hitbox {
     /// The bounds of the hitbox.
     #[deref]
     pub bounds: Bounds<Pixels>,
-    /// The content mask when the hitbox was inserted.
+    /// The content mask when the hitbox was inserted (crundi patch (e): cut
+    /// to the real clip of a wide clip it is in; what hit-testing uses).
     pub content_mask: ContentMask<Pixels>,
     /// Flags that specify hitbox behavior.
     pub behavior: HitboxBehavior,
+    /// crundi patch (e), PATCH.md: the content mask it was recorded under
+    /// (a wide clip's wider mask), and the real clip it was cut to with the
+    /// number of wide clips open: a replay that moves it cuts it again.
+    pub(crate) recorded: Bounds<Pixels>,
+    pub(crate) cut: Option<Bounds<Pixels>>,
+    pub(crate) cut_depth: usize,
 }
 
 impl Hitbox {
@@ -1277,6 +1290,12 @@ pub struct Window {
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
+    /// crundi patch (e), PATCH.md: the real clips of the wide clips open,
+    /// innermost last (each inside those before it).
+    pub(crate) cut_stack: Vec<Bounds<Pixels>>,
+    /// crundi patch (e): per cached view rendering (innermost last), whether
+    /// a cached view inside it holds less than its bounds.
+    pub(crate) rec_spoiled: Vec<bool>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
     /// The [`TextInputConfiguration`] most recently forwarded to the platform
     /// window, so that only actual changes are forwarded (reconfiguring a live
@@ -2412,6 +2431,8 @@ impl Window {
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
+            cut_stack: Vec::new(),
+            rec_spoiled: Vec::new(),
             element_opacity: 1.0,
             requested_autoscroll: None,
             last_text_input_configuration: None,
@@ -4308,12 +4329,13 @@ impl Window {
     fn reuse_prepaint_moved(&mut self, range: Range<PrepaintStateIndex>, delta: Option<Point<Pixels>>) {
         let to = self.prepaint_index();
         let view_state = crate::view::view_state_type();
+        let moved = delta.map(|d| (d, self.content_mask().bounds));
         for key in &self.rendered_frame.accessed_element_states
             [range.start.accessed_element_states_index..range.end.accessed_element_states_index]
         {
             if key.1 != view_state { continue; }
             if let Some(state) = self.rendered_frame.element_states.get_mut(key) {
-                crate::view::shift_prepaint(state.inner.as_mut(), &range.start, &to, delta);
+                crate::view::shift_prepaint(state.inner.as_mut(), &range.start, &to, moved);
             }
         }
         self.next_frame.hitboxes.extend(
@@ -4417,6 +4439,14 @@ impl Window {
         })
     }
 
+    /// crundi patch (e): whether a cached view's last paint registered a
+    /// mouse listener or an input handler (closures that may hold window
+    /// positions: a view moved by a replay renders once still for them).
+    pub(crate) fn paints_handlers(&self, paint: &Range<PaintIndex>) -> bool {
+        paint.start.mouse_listeners_index != paint.end.mouse_listeners_index
+            || paint.start.input_handlers_index != paint.end.input_handlers_index
+    }
+
     /// crundi patch (b): whether a cached view's last prepaint deferred a draw.
     pub(crate) fn deferred_in(&self, prepaint: &Range<PrepaintStateIndex>) -> bool {
         prepaint.start.deferred_draws_index != prepaint.end.deferred_draws_index
@@ -4430,15 +4460,105 @@ impl Window {
 
     /// crundi patch (b): `reuse_prepaint`, the hitboxes moved by `delta` and
     /// their clips kept inside the current content mask.
-    pub(crate) fn reuse_prepaint_at(&mut self, range: Range<PrepaintStateIndex>, delta: Point<Pixels>) {
+    ///
+    /// (e) Each is cut again: to the real clip open here, or, one recorded
+    /// inside a wide clip of the view's own (deeper than the view's
+    /// `depth`), to that clip moved and kept inside the one open here.
+    pub(crate) fn reuse_prepaint_at(&mut self, range: Range<PrepaintStateIndex>, delta: Point<Pixels>, depth: usize) {
         let first = self.next_frame.hitboxes.len();
         self.reuse_prepaint_moved(range, Some(delta));
         let mask = self.content_mask().bounds;
+        let here = self.cut_stack.last().copied();
         for hitbox in &mut self.next_frame.hitboxes[first..] {
             hitbox.bounds.origin = hitbox.bounds.origin + delta;
-            let moved = Bounds { origin: hitbox.content_mask.bounds.origin + delta, size: hitbox.content_mask.bounds.size };
-            hitbox.content_mask.bounds = moved.intersect(&mask);
+            hitbox.recorded = Bounds { origin: hitbox.recorded.origin + delta, size: hitbox.recorded.size }.intersect(&mask);
+            let cut = if hitbox.cut_depth > depth {
+                hitbox.cut.map(|c| {
+                    let c = Bounds { origin: c.origin + delta, size: c.size };
+                    here.map_or(c, |h| c.intersect(&h))
+                })
+            } else {
+                here
+            };
+            hitbox.cut = cut;
+            hitbox.content_mask.bounds = cut.map_or(hitbox.recorded, |c| hitbox.recorded.intersect(&c));
         }
+    }
+
+    /// crundi patch (e), PATCH.md: the innermost real clip open (`None`:
+    /// no wide clip is open), and how many are.
+    pub fn current_cut(&self) -> Option<Bounds<Pixels>> {
+        self.cut_stack.last().copied()
+    }
+
+    /// crundi patch (e): the cached view rendering around this point records
+    /// only what it shows (`view.rs` `note_recorded`).
+    pub(crate) fn spoil_recorded(&mut self) {
+        if let Some(t) = self.rec_spoiled.last_mut() { *t = true; }
+    }
+
+    /// crundi patch (e): hitboxes just reused for a view whose clip changed
+    /// (`view.rs`, rekeyed): those cut at the view's own level (depth
+    /// `old_depth`) take the real clip open now; their hit area, inside what
+    /// was and is shown, stays as it was.
+    pub(crate) fn rekey_hitboxes(&mut self, first: usize, old_depth: usize) {
+        let (cut, depth, mask) = (self.cut_stack.last().copied(), self.cut_stack.len(), self.content_mask().bounds);
+        for h in &mut self.next_frame.hitboxes[first..] {
+            if h.cut_depth == old_depth {
+                h.cut = cut;
+                h.cut_depth = depth;
+                h.recorded = mask;
+            } else if h.cut_depth > old_depth {
+                h.cut_depth = h.cut_depth - old_depth + depth;
+            }
+        }
+    }
+
+    pub(crate) fn cut_depth(&self) -> usize {
+        self.cut_stack.len()
+    }
+
+    /// crundi patch (e): what is shown here, the content mask cut to the
+    /// innermost real clip open.
+    pub fn visible_mask(&self) -> Bounds<Pixels> {
+        let m = self.content_mask().bounds;
+        self.cut_stack.last().map_or(m, |c| m.intersect(c))
+    }
+
+    /// crundi patch (e), PATCH.md: a wide clip. What `f` draws is shown
+    /// inside `clip` (and every clip around it), as `with_content_mask`
+    /// would, but recorded under the wider mask `clip` grown by `margin` on
+    /// each side (not cut by the clips around it): a cached view inside it
+    /// that moves is replayed as long as what comes into view was inside
+    /// that wider mask when it rendered. Elements see the wider mask as
+    /// their content mask (they draw what lies in it); hitboxes and the
+    /// scene are cut to the real clip.
+    pub fn with_wide_clip<R>(
+        &mut self,
+        clip: Bounds<Pixels>,
+        margin: Size<Pixels>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        let shown = self.visible_mask().intersect(&clip);
+        let wide = Bounds {
+            origin: point(clip.origin.x - margin.width, clip.origin.y - margin.height),
+            size: size(clip.size.width + margin.width * 2., clip.size.height + margin.height * 2.),
+        };
+        let painting = self.invalidator.painting();
+        self.content_mask_stack.push(ContentMask { bounds: wide });
+        self.cut_stack.push(shown);
+        if painting {
+            let c = self.cover_bounds(shown);
+            self.next_frame.scene.push_cut(c);
+        }
+        let result = f(self);
+        if painting {
+            self.next_frame.scene.pop_cut();
+        }
+        self.cut_stack.pop();
+        self.content_mask_stack.pop();
+        result
     }
 
     /// crundi patch (b): a view that only moved (and settles later).
@@ -5727,11 +5847,16 @@ impl Window {
         let content_mask = self.content_mask();
         let id = self.next_hitbox_id;
         self.next_hitbox_id = self.next_hitbox_id.next();
+        // (crundi patch (e): hit only where the real clip shows it.)
+        let cut = self.cut_stack.last().copied();
         let hitbox = Hitbox {
             id,
             bounds,
-            content_mask,
+            content_mask: ContentMask { bounds: cut.map_or(content_mask.bounds, |c| content_mask.bounds.intersect(&c)) },
             behavior,
+            recorded: content_mask.bounds,
+            cut,
+            cut_depth: self.cut_stack.len(),
         };
         self.next_frame.hitboxes.push(hitbox.clone());
         hitbox

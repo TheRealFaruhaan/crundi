@@ -93,7 +93,9 @@ impl ChatPane {
                 let (layer, clip) = m.read(cx).anchor();
                 let id = m.entity_id();
                 d.child(canvas(move |b, window, cx| {
-                    let c = window.content_mask().bounds.intersect(&b);
+                    // (What is shown: inside a wide clip, its real clip, not
+                    // the wider mask its content is recorded under.)
+                    let c = window.visible_mask().intersect(&b);
                     if layer.get() != b || clip.get() != c { layer.set(b); clip.set(c); cx.defer(move |cx| cx.notify(id)); }
                 }, |_, _, _, _| {}).absolute().inset_0())
             })

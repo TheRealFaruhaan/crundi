@@ -692,7 +692,9 @@ impl Render for TermScreen {
         let grid = canvas(
             move |bounds, window, cx| {
                 origin.set(bounds.origin);
-                let m = window.content_mask().bounds;
+                // (What is shown: a wide clip's real clip; the paint below
+                // draws all its wider mask holds.)
+                let m = window.visible_mask();
                 hidden.set(!bounds.intersects(&m));
                 clipped.set(!(bounds.left() >= m.left() && bounds.top() >= m.top() && bounds.right() <= m.right() && bounds.bottom() <= m.bottom()));
                 let (bw, bh) = (f32::from(bounds.size.width) - 2. * f32::from(pad), f32::from(bounds.size.height) - 2. * f32::from(pad));

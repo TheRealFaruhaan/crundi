@@ -340,6 +340,13 @@ struct ViewElementState {
     /// its clip; what it last drew, unclipped, relative to its origin. It
     /// renders when any of that would be in view again.
     skipped: Option<Bounds<Pixels>>,
+    /// crundi patch (e), PATCH.md: where its last frame's scene is whole,
+    /// in window pixels: the content mask it rendered under (a wide clip's
+    /// wider mask), moved with each replay and cut to the mask there.
+    recorded: Bounds<Pixels>,
+    /// crundi patch (e): its extent (`Window::painted_extent` with its
+    /// bounds), relative to its origin, once a move has needed it.
+    ext_local: Option<Bounds<Pixels>>,
 }
 
 struct ViewElementCacheKey {
@@ -347,6 +354,10 @@ struct ViewElementCacheKey {
     content_mask: ContentMask<Pixels>,
     text_style: TextStyle,
     opacity: f32,
+    /// crundi patch (e): the real clip of the wide clip it is in, and how
+    /// many are open around it.
+    cut: Option<Bounds<Pixels>>,
+    cut_depth: usize,
 }
 
 #[cfg(not(gpui_hot_reload))]
@@ -544,10 +555,15 @@ fn view_state(state: &mut dyn std::any::Any) -> Option<&mut ViewElementState> { 
 
 /// crundi patch (a): a cached view drawn inside a range that is replayed
 /// from `from` to `to` (and, (b), moved by `delta`): its prepaint range follows.
-pub(crate) fn shift_prepaint(state: &mut dyn std::any::Any, from: &PrepaintStateIndex, to: &PrepaintStateIndex, delta: Option<crate::Point<Pixels>>) {
+/// (e) Where its scene is whole moves with it, cut to `mask` (the mask the
+/// range is replayed under).
+pub(crate) fn shift_prepaint(state: &mut dyn std::any::Any, from: &PrepaintStateIndex, to: &PrepaintStateIndex, delta: Option<(crate::Point<Pixels>, Bounds<Pixels>)>) {
     let Some(s) = view_state(state) else { return };
     s.prepaint_range = s.prepaint_range.start.shifted(from, to)..s.prepaint_range.end.shifted(from, to);
-    if let Some(d) = delta { s.cache_key.bounds.origin = s.cache_key.bounds.origin + d; }
+    if let Some((d, mask)) = delta {
+        s.cache_key.bounds.origin = s.cache_key.bounds.origin + d;
+        s.recorded = Bounds { origin: s.recorded.origin + d, size: s.recorded.size }.intersect(&mask);
+    }
 }
 
 /// crundi patch (a): its paint range follows, and it counts as painted in this frame.
@@ -563,15 +579,23 @@ fn inside(mask: &Bounds<Pixels>, b: &Bounds<Pixels>) -> bool {
 }
 
 /// crundi patch (b): `ext` (what a view drew, unclipped) moved by `delta`
-/// shows nothing under `mask` that was clipped before the move: the part of
-/// it now in view, taken back by `delta`, was in view (tolerance: a hundredth
-/// of a pixel). The scene kept only that, so it can be replayed moved.
-fn reveals_nothing(mask: &Bounds<Pixels>, ext: &Bounds<Pixels>, delta: crate::Point<Pixels>) -> bool {
-    let back = Bounds { origin: mask.origin - delta, size: mask.size };
+/// shows nothing in `shown` that its last scene does not hold: the part of
+/// it now shown, taken back by `delta`, lies where that scene is whole,
+/// `recorded` (tolerance: a hundredth of a pixel). (e) Under a wide clip,
+/// `shown` is the real clip and `recorded` the wider mask (as moved since).
+fn reveals_nothing(shown: &Bounds<Pixels>, recorded: &Bounds<Pixels>, ext: &Bounds<Pixels>, delta: crate::Point<Pixels>) -> bool {
+    let back = Bounds { origin: shown.origin - delta, size: shown.size };
     let now = ext.intersect(&back);
     if now.is_empty() { return true; }
     let e = crate::px(0.01);
-    now.left() >= mask.left() - e && now.top() >= mask.top() - e && now.right() <= mask.right() + e && now.bottom() <= mask.bottom() + e
+    now.left() >= recorded.left() - e && now.top() >= recorded.top() - e && now.right() <= recorded.right() + e && now.bottom() <= recorded.bottom() + e
+}
+
+/// crundi patch (e): a cached view drawn inside one that is rendering: when
+/// its scene holds less than its bounds, the one around it records only
+/// what is shown.
+fn note_recorded(window: &mut Window, recorded: &Bounds<Pixels>, bounds: &Bounds<Pixels>) {
+    if !inside(recorded, bounds) { window.spoil_recorded(); }
 }
 
 /// crundi patch (b): `b` and `mask` share no area.
@@ -600,6 +624,10 @@ fn prepaint_view(
                 let content_mask = window.content_mask();
                 let text_style = window.text_style();
                 let opacity = window.element_opacity();
+                // (crundi patch (e): under a wide clip, what is shown is its
+                // real clip; the content mask is where things are recorded.)
+                let (cut, cut_depth) = (window.current_cut(), window.cut_depth());
+                let shown = cut.map_or(content_mask.bounds, |c| content_mask.bounds.intersect(&c));
 
                 // crundi patch (b), PATCH.md: a view wholly outside its clip (and
                 // all it drew last, its overflow included) is neither rendered
@@ -614,7 +642,7 @@ fn prepaint_view(
                 if let Some(st) = element_state.as_mut()
                     && !window.refreshing
                     && st.cache_key.bounds.size == bounds.size
-                    && outside(&content_mask.bounds, &bounds)
+                    && outside(&shown, &bounds)
                 {
                     let local = match st.skipped {
                         Some(local) => Some(local),
@@ -629,16 +657,54 @@ fn prepaint_view(
                         None => None,
                     };
                     if let Some(local) = local
-                        && outside(&content_mask.bounds, &Bounds { origin: local.origin + bounds.origin, size: local.size })
+                        && outside(&shown, &Bounds { origin: local.origin + bounds.origin, size: local.size })
                     {
                         let at = window.prepaint_index();
                         st.skipped = Some(local);
                         st.prepaint_range = at.clone()..at;
                         st.cache_key.bounds = bounds;
                         st.cache_key.content_mask = content_mask;
+                        st.cache_key.cut = cut;
+                        st.cache_key.cut_depth = cut_depth;
                         st.moved = false;
                         st.paint_offset = None;
+                        window.spoil_recorded();
                         return (None, element_state.unwrap());
+                    }
+                }
+
+                // crundi patch (e), PATCH.md: a view in the same place whose clip
+                // changed (a wide clip opened or closed around it) but which lies,
+                // all it drew, inside what was shown before and is shown now draws
+                // the same: its key takes the new clip and it is reused (and its
+                // hitboxes take the new real clip below).
+                let mut rekeyed = None;
+                if let Some(st) = element_state.as_mut()
+                    && st.skipped.is_none()
+                    && (st.cache_key.content_mask != content_mask || st.cache_key.cut != cut || st.cache_key.cut_depth != cut_depth)
+                    && st.cache_key.bounds == bounds
+                    && !st.moved
+                    && st.painted_in + 1 == window.frame_seq
+                    && !window.refreshing
+                {
+                    let old = st.cache_key.bounds;
+                    let old_shown = st.cache_key.cut.map_or(st.cache_key.content_mask.bounds, |c| st.cache_key.content_mask.bounds.intersect(&c));
+                    let local = match st.ext_local {
+                        Some(l) => l,
+                        None => {
+                            let e = window.painted_extent(&st.paint_range).map_or(old, |e| e.union(&old));
+                            let l = Bounds { origin: e.origin - old.origin, size: e.size };
+                            st.ext_local = Some(l);
+                            l
+                        }
+                    };
+                    let ext = Bounds { origin: local.origin + old.origin, size: local.size };
+                    if inside(&old_shown, &ext) && inside(&shown, &ext) {
+                        rekeyed = Some(st.cache_key.cut_depth);
+                        st.cache_key.content_mask = content_mask;
+                        st.cache_key.cut = cut;
+                        st.cache_key.cut_depth = cut_depth;
+                        st.recorded = st.recorded.intersect(&content_mask.bounds);
                     }
                 }
 
@@ -649,6 +715,8 @@ fn prepaint_view(
                     && element_state.cache_key.content_mask == content_mask
                     && element_state.cache_key.text_style == text_style
                     && element_state.cache_key.opacity.to_bits() == opacity.to_bits()
+                    && element_state.cache_key.cut == cut
+                    && element_state.cache_key.cut_depth == cut_depth
                     && !window.dirty_views.contains(&entity_id)
                     && !window.refreshing
                     && element_state.painted_in + 1 == window.frame_seq
@@ -656,11 +724,14 @@ fn prepaint_view(
                     let old = element_state.cache_key.bounds;
                     if old == bounds && !element_state.moved {
                         let prepaint_start = window.prepaint_index();
+                        let first_hitbox = window.next_frame.hitboxes.len();
                         window.reuse_prepaint(element_state.prepaint_range.clone());
+                        if let Some(old_depth) = rekeyed { window.rekey_hitboxes(first_hitbox, old_depth); }
                         cx.entities
                             .extend_accessed(element_state.accessed_entities.iter().copied());
                         let prepaint_end = window.prepaint_index();
                         element_state.prepaint_range = prepaint_start..prepaint_end;
+                        note_recorded(window, &element_state.recorded, &bounds);
 
                         return (None, element_state);
                     }
@@ -675,28 +746,41 @@ fn prepaint_view(
                         let d = f32::from(v) * sf;
                         (d - d.round()).abs() < 0.001
                     };
-                    let mask = content_mask.bounds;
+                    let rec = element_state.recorded;
                     if old != bounds
                         && old.size == bounds.size
                         && whole(delta.x)
                         && whole(delta.y)
-                        && ((inside(&mask, &old) && inside(&mask, &bounds))
-                            // (The extent holds the bounds: test them alone
-                            // first, and scan the scene only if they pass.)
-                            || (reveals_nothing(&mask, &old, delta)
-                                && reveals_nothing(&mask, &window.painted_extent(&element_state.paint_range).map_or(old, |e| e.union(&old)), delta)))
+                        // (The extent holds the bounds: test them alone
+                        // first; a view wholly recorded and wholly shown
+                        // qualifies at once; else its extent is tested,
+                        // scanned from the scene once and kept.)
+                        && reveals_nothing(&shown, &rec, &old, delta)
+                        && ((inside(&rec, &old) && inside(&shown, &bounds)) || {
+                            let local = *element_state.ext_local.get_or_insert_with(|| {
+                                let e = window.painted_extent(&element_state.paint_range).map_or(old, |e| e.union(&old));
+                                Bounds { origin: e.origin - old.origin, size: e.size }
+                            });
+                            reveals_nothing(&shown, &rec, &Bounds { origin: local.origin + old.origin, size: local.size }, delta)
+                        })
                         && window.offset_reusable(&element_state.prepaint_range, &element_state.paint_range)
                     {
+                        // (crundi patch (e): a view that registered no mouse
+                        // listener nor input handler captured no position a
+                        // handler would use: it needs no render once still.)
+                        let settle = window.paints_handlers(&element_state.paint_range);
                         let prepaint_start = window.prepaint_index();
-                        window.reuse_prepaint_at(element_state.prepaint_range.clone(), delta);
+                        window.reuse_prepaint_at(element_state.prepaint_range.clone(), delta, cut_depth);
                         cx.entities
                             .extend_accessed(element_state.accessed_entities.iter().copied());
                         let prepaint_end = window.prepaint_index();
                         element_state.prepaint_range = prepaint_start..prepaint_end;
                         element_state.cache_key.bounds = bounds;
                         element_state.paint_offset = Some(delta);
-                        element_state.moved = true;
-                        window.note_unsettled(entity_id, cx);
+                        element_state.recorded = Bounds { origin: rec.origin + delta, size: rec.size }.intersect(&content_mask.bounds);
+                        element_state.moved = settle;
+                        if settle { window.note_unsettled(entity_id, cx); }
+                        note_recorded(window, &element_state.recorded, &bounds);
 
                         return (None, element_state);
                     }
@@ -708,6 +792,9 @@ fn prepaint_view(
                 // cached child keeps its cache; a dirty one is in `dirty_views`.
                 let refreshing = window.refreshing;
                 let prepaint_start = window.prepaint_index();
+                // (crundi patch (e): whether a cached view inside it records
+                // less than its bounds, or was skipped.)
+                window.rec_spoiled.push(false);
                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                     let mut element = render(window, cx);
                     element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
@@ -717,6 +804,14 @@ fn prepaint_view(
 
                 let prepaint_end = window.prepaint_index();
                 window.refreshing = refreshing;
+                // crundi patch (e), PATCH.md: its scene is whole under its
+                // content mask (a wide clip's wider mask), unless a cached
+                // view inside it was skipped (wholly outside the real clip:
+                // nothing of it recorded) or holds less than its bounds;
+                // then only what is shown is.
+                let spoiled = window.rec_spoiled.pop().unwrap_or(false);
+                let recorded = if spoiled { shown } else { content_mask.bounds };
+                note_recorded(window, &recorded, &bounds);
 
                 (
                     Some(element),
@@ -728,11 +823,15 @@ fn prepaint_view(
                         paint_offset: None,
                         painted_in: 0,
                         skipped: None,
+                        recorded,
+                        ext_local: None,
                         cache_key: ViewElementCacheKey {
                             bounds,
                             content_mask,
                             text_style,
                             opacity,
+                            cut,
+                            cut_depth,
                         },
                     },
                 )

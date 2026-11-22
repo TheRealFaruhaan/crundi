@@ -42,6 +42,10 @@ pub struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
+    /// crundi patch (e), PATCH.md: the real clips of the wide clips open
+    /// (innermost last). A primitive is recorded under its content mask (a
+    /// wide clip's wider mask) and drawn cut to the innermost of these.
+    cut_stack: Vec<Bounds<ScaledPixels>>,
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
     pub paths: Vec<Path<ScaledPixels>>,
@@ -58,6 +62,7 @@ impl Scene {
         self.paint_operations.clear();
         self.primitive_bounds.clear();
         self.layer_stack.clear();
+        self.cut_stack.clear();
         self.paths.clear();
         self.shadows.clear();
         self.quads.clear();
@@ -99,43 +104,64 @@ impl Scene {
             .last()
             .copied()
             .unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds));
-        match &mut primitive {
-            Primitive::Shadow(shadow) => {
-                shadow.order = order;
-                self.shadows.push(*shadow);
-            }
-            Primitive::Quad(quad) => {
-                quad.order = order;
-                self.quads.push(*quad);
-            }
-            Primitive::Path(path) => {
-                path.order = order;
-                path.id = PathId(self.paths.len());
-                self.paths.push(path.clone());
-            }
-            Primitive::Underline(underline) => {
-                underline.order = order;
-                self.underlines.push(*underline);
-            }
-            Primitive::MonochromeSprite(sprite) => {
-                sprite.order = order;
-                self.monochrome_sprites.push(*sprite);
-            }
-            Primitive::SubpixelSprite(sprite) => {
-                sprite.order = order;
-                self.subpixel_sprites.push(*sprite);
-            }
-            Primitive::PolychromeSprite(sprite) => {
-                sprite.order = order;
-                self.polychrome_sprites.push(*sprite);
-            }
-            Primitive::Surface(surface) => {
-                surface.order = order;
-                self.surfaces.push(surface.clone());
-            }
-        }
+        primitive.set_order(order);
+        // (crundi patch (e): drawn cut to the open wide clip's real clip;
+        // recorded whole, under its own mask, for a replay that moves it.)
+        self.draw(&primitive, false);
         self.paint_operations
             .push(PaintOperation::Primitive(primitive));
+    }
+
+    /// crundi patch (e), PATCH.md: a primitive (its order given) into the
+    /// draw lists, its clip cut to the innermost real clip open; nothing when
+    /// that leaves nothing of it, or (`check`) when its own clip does.
+    fn draw(&mut self, primitive: &Primitive, check: bool) {
+        // (What is cut away is not copied: a wide clip's margin is mostly
+        // that; what is drawn is copied straight into its list.)
+        let cut = self.cut_stack.last().copied();
+        let mask = match cut {
+            Some(c) => primitive.content_mask().bounds.intersect(&c),
+            None => primitive.content_mask().bounds,
+        };
+        if (cut.is_some() || check) && primitive.bounds().intersect(&mask).is_empty() {
+            return;
+        }
+        let m = |x: &mut ContentMask<ScaledPixels>| if cut.is_some() { x.bounds = mask; };
+        match primitive {
+            Primitive::Shadow(x) => { let mut x = *x; m(&mut x.content_mask); self.shadows.push(x); }
+            Primitive::Quad(x) => { let mut x = *x; m(&mut x.content_mask); self.quads.push(x); }
+            Primitive::Path(x) => {
+                let mut x = x.clone();
+                if let Some(c) = cut {
+                    x.content_mask.bounds = mask;
+                    for v in &mut x.vertices { v.content_mask.bounds = v.content_mask.bounds.intersect(&c); }
+                }
+                x.id = PathId(self.paths.len());
+                self.paths.push(x);
+            }
+            Primitive::Underline(x) => { let mut x = *x; m(&mut x.content_mask); self.underlines.push(x); }
+            Primitive::MonochromeSprite(x) => { let mut x = *x; m(&mut x.content_mask); self.monochrome_sprites.push(x); }
+            Primitive::SubpixelSprite(x) => { let mut x = *x; m(&mut x.content_mask); self.subpixel_sprites.push(x); }
+            Primitive::PolychromeSprite(x) => { let mut x = x.clone(); m(&mut x.content_mask); self.polychrome_sprites.push(x); }
+            Primitive::Surface(x) => { let mut x = x.clone(); m(&mut x.content_mask); self.surfaces.push(x); }
+        }
+    }
+
+    /// crundi patch (e), PATCH.md: open a wide clip's real clip (`bounds`,
+    /// kept inside the one open): what is painted until `pop_cut` is drawn
+    /// cut to it, and recorded under its own (wider) mask.
+    pub(crate) fn push_cut(&mut self, bounds: Bounds<ScaledPixels>) {
+        let b = match self.cut_stack.last() {
+            Some(c) => bounds.intersect(c),
+            None => bounds,
+        };
+        self.cut_stack.push(b);
+        self.paint_operations.push(PaintOperation::StartCut(bounds));
+    }
+
+    pub(crate) fn pop_cut(&mut self) {
+        self.cut_stack.pop();
+        self.paint_operations.push(PaintOperation::EndCut);
     }
 
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
@@ -146,6 +172,8 @@ impl Scene {
                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
+                PaintOperation::StartCut(bounds) => self.push_cut(*bounds),
+                PaintOperation::EndCut => self.pop_cut(),
             }
         }
     }
@@ -206,6 +234,8 @@ impl Scene {
                 }
                 PaintOperation::StartLayer(bounds) => { let mut b = *bounds; mv(&mut b); self.push_layer(b.intersect(mask)); }
                 PaintOperation::EndLayer => self.pop_layer(),
+                PaintOperation::StartCut(bounds) => { let mut b = *bounds; mv(&mut b); self.push_cut(b); }
+                PaintOperation::EndCut => self.pop_cut(),
             }
         }
     }
@@ -236,16 +266,24 @@ impl Scene {
                     p.bounds().intersect(&p.content_mask().bounds)
                 }
                 PaintOperation::StartLayer(b) => *b,
-                PaintOperation::EndLayer => continue,
+                PaintOperation::EndLayer | PaintOperation::StartCut(_) | PaintOperation::EndCut => continue,
             };
             ext = Some(ext.map_or(b, |e| e.union(&b)));
         }
         let Some(mut ext) = ext else {
             // Only layer ends (or nothing): keep the operations as they are.
-            self.paint_operations.extend(ops.iter().filter_map(|op| match op {
-                PaintOperation::EndLayer => Some(PaintOperation::EndLayer),
-                _ => None,
-            }));
+            for op in ops {
+                match op {
+                    PaintOperation::EndLayer => self.paint_operations.push(PaintOperation::EndLayer),
+                    PaintOperation::StartCut(b) => {
+                        let mut b = *b;
+                        if let Some((d, _)) = offset { b.origin = b.origin + d; }
+                        self.push_cut(b);
+                    }
+                    PaintOperation::EndCut => self.pop_cut(),
+                    _ => {}
+                }
+            }
             return true;
         };
         if lo == u32::MAX { lo = 0; hi = 0; }
@@ -260,6 +298,13 @@ impl Scene {
                 match op {
                     PaintOperation::StartLayer(b) => self.paint_operations.push(PaintOperation::StartLayer(*b)),
                     PaintOperation::EndLayer => self.paint_operations.push(PaintOperation::EndLayer),
+                    // (crundi patch (e): a wide clip's real clip moves with it.)
+                    PaintOperation::StartCut(b) => {
+                        let mut b = *b;
+                        if let Some((d, _)) = offset { b.origin = b.origin + d; }
+                        self.push_cut(b);
+                    }
+                    PaintOperation::EndCut => self.pop_cut(),
                     PaintOperation::Primitive(_) => {}
                 }
             }
@@ -292,20 +337,9 @@ impl Scene {
                         }
                         if p.bounds().intersect(&p.content_mask().bounds).is_empty() { continue; }
                     }
-                    match &mut p {
-                        Primitive::Shadow(x) => { x.order = shift(x.order); self.shadows.push(*x); }
-                        Primitive::Quad(x) => { x.order = shift(x.order); self.quads.push(*x); }
-                        Primitive::Path(x) => {
-                            x.order = shift(x.order);
-                            x.id = PathId(self.paths.len());
-                            self.paths.push(x.clone());
-                        }
-                        Primitive::Underline(x) => { x.order = shift(x.order); self.underlines.push(*x); }
-                        Primitive::MonochromeSprite(x) => { x.order = shift(x.order); self.monochrome_sprites.push(*x); }
-                        Primitive::SubpixelSprite(x) => { x.order = shift(x.order); self.subpixel_sprites.push(*x); }
-                        Primitive::PolychromeSprite(x) => { x.order = shift(x.order); self.polychrome_sprites.push(*x); }
-                        Primitive::Surface(x) => { x.order = shift(x.order); self.surfaces.push(x.clone()); }
-                    }
+                    p.set_order(shift(p.order()));
+                    // (crundi patch (e): drawn cut to the open real clip.)
+                    self.draw(&p, false);
                     self.paint_operations.push(PaintOperation::Primitive(p));
                 }
                 PaintOperation::StartLayer(b) => {
@@ -314,6 +348,12 @@ impl Scene {
                     self.paint_operations.push(PaintOperation::StartLayer(b));
                 }
                 PaintOperation::EndLayer => self.paint_operations.push(PaintOperation::EndLayer),
+                PaintOperation::StartCut(b) => {
+                    let mut b = *b;
+                    if let Some((d, _)) = offset { b.origin = b.origin + d; }
+                    self.push_cut(b);
+                }
+                PaintOperation::EndCut => self.pop_cut(),
             }
         }
         true
@@ -386,6 +426,9 @@ pub(crate) enum PaintOperation {
     Primitive(Primitive),
     StartLayer(Bounds<ScaledPixels>),
     EndLayer,
+    /// crundi patch (e): a wide clip's real clip (`Scene::push_cut`).
+    StartCut(Bounds<ScaledPixels>),
+    EndCut,
 }
 
 #[derive(Clone)]
@@ -413,6 +456,20 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+        }
+    }
+
+    /// crundi patch (e): its draw order set.
+    pub(crate) fn set_order(&mut self, order: DrawOrder) {
+        match self {
+            Primitive::Shadow(x) => x.order = order,
+            Primitive::Quad(x) => x.order = order,
+            Primitive::Path(x) => x.order = order,
+            Primitive::Underline(x) => x.order = order,
+            Primitive::MonochromeSprite(x) => x.order = order,
+            Primitive::SubpixelSprite(x) => x.order = order,
+            Primitive::PolychromeSprite(x) => x.order = order,
+            Primitive::Surface(x) => x.order = order,
         }
     }
 

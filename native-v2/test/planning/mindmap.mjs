@@ -249,6 +249,20 @@ export async function run(T_, t) {
   const idle = T.frames.mark();
   await sleep(1500);
   t.check('the idle map draws no frames', T.frames.since(idle).frames === 0, T.frames.since(idle));
+  // A small pan (within the margin the content last drew past the view)
+  // moves the content's last frame: the map's content isn't drawn again
+  // (F247, GPUI patch (e)); the frame around it is.
+  {
+    const r0 = (await T.props()).renders || {}, s0 = M(await T.props()).scroll[1];
+    const fp = T.frames.mark();
+    for (let i = 0; i < 3; i++) { await T.mouse('wheel', vx, vy, { dy: 40 }); await sleep(30); }
+    await sleep(400);
+    const p1 = await T.props();
+    const d = (p1.renders['mindmap-map'] ?? 0) - (r0['mindmap-map'] ?? 0);
+    console.log(`  mindmap small pan: ${Math.round(M(p1).scroll[1] - s0)} px, ${T.frames.since(fp).frames} frames, renders`, JSON.stringify(Object.fromEntries(Object.keys(p1.renders).map((k) => [k, p1.renders[k] - (r0[k] ?? 0)]).filter(([, v]) => v))));
+    t.check('a small pan moves the map\'s last frame: its content renders 0 times (F247, patch e)', d === 0 && Math.abs(M(p1).scroll[1] - s0) > 50 && (p1.renders['mindmap-frame'] ?? 0) > (r0['mindmap-frame'] ?? 0), { d, s0, s1: M(p1).scroll[1] });
+    await T.settle(500, 6000);
+  }
   void big;
 
   // ── The panel in a workbench pane ──

@@ -58,7 +58,7 @@ impl Element for MarkEl {
     }
     fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), window: &mut Window, _: &mut App) {
         if self.text.is_empty() { return; }
-        let seen = bounds.intersect(&window.content_mask().bounds);
+        let seen = bounds.intersect(&window.visible_mask());
         let (text, label) = (self.text.clone(), self.label);
         window.with_global_id(ElementId::Name(text.clone()), |gid, window| {
             window.with_element_state::<Rc<Mark>, _>(gid, |st, _| {
@@ -122,7 +122,7 @@ impl Element for MarksEl {
     }
     fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), window: &mut Window, _: &mut App) {
         if self.items.is_empty() { return; }
-        let mask = window.content_mask().bounds;
+        let mask = window.visible_mask();
         let items = self.items.clone();
         window.with_global_id(ElementId::Name("find-marks".into()), |gid, window| {
             type St = (Rc<Vec<(SharedString, Bounds<Pixels>)>>, Vec<Rc<Mark>>);
@@ -157,7 +157,8 @@ pub type Words = Rc<Vec<(Bounds<Pixels>, SharedString, bool)>>;
 /// and only their bounds move. Per frame that is a cell set per word, not
 /// an element namespace and a state lookup each, as `mark` children cost.
 pub fn words_at<'a>(key: &'static str, groups: impl IntoIterator<Item = (&'a Words, Point<Pixels>)>, window: &mut Window) {
-    let mask = window.content_mask().bounds;
+    // (What is shown: inside a wide clip, its real clip.)
+    let mask = window.visible_mask();
     window.with_global_id(ElementId::Name(key.into()), |gid, window| {
         // By the list and its occurrence (one drawing shown twice, as the
         // map's ghosts share theirs, keeps a set of marks for each place).

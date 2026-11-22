@@ -797,7 +797,14 @@ impl Render for Workbench {
             // A card, an idea, a file dragged near the grid's left or right
             // edge scrolls it (the web's wbAutoScroll on #term-grid), so an
             // off-screen pane can be reached.
-            .child(w::edge_scroll::<w::RefDrag>(div().id("wb-grid"), w::Scroller::Handle(self.scroll.clone()), true, false, cx.entity_id()).size_full().overflow_x_scroll().track_scroll(&self.scroll).child(grid))
+            // While a pane is moved (the edge scroll's ticks), the grid's clip
+            // is a wide clip (GPUI patch (e), PATCH.md): a pane body coming
+            // into view across its edge was recorded whole (a grid's width
+            // past each side), so it is replayed moved, not drawn again on
+            // every tick (F213). Not otherwise: a pane partly in view would
+            // replay all of its body on every frame.
+            .child(w::edge_scroll::<w::RefDrag>(div().id("wb-grid"), w::Scroller::Handle(self.scroll.clone()), true, false, cx.entity_id()).size_full().overflow_x_scroll()
+                .when(self.drag.is_some(), |d| d.wide_clip(size(px(self.area.0.max(0.)), px(0.)))).track_scroll(&self.scroll).child(grid))
             .children(card)
             .into_any_element()
     }

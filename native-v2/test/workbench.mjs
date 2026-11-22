@@ -219,9 +219,8 @@ t.check('…and the lit pane is the one now under the pointer', !s.drag.target |
 s = await T.until('…up to its end', (s) => s.drag && Math.abs(s.grid.scroll - s.grid.max) < 1, 5000);
 // Each tick moves the grid by whole pixels: the panes' bodies are replayed
 // moved, not drawn again (F213): the chat's log, its composer and Mini's
-// layers render far less than once a tick. A pane crossing the grid's edge:
-// leaving, it is replayed too (F241, below); entering, it renders (what the
-// clip cut off is drawn), at most once a tick (below).
+// layers render far less than once a tick. A pane crossing the grid's edge
+// is replayed too, leaving (F241) and entering (patch e): below.
 {
   const er1 = s.renders || {}, frames = T.frames.since(ef).frames;
   const d = Object.fromEntries(Object.keys(er1).map((k) => [k, (er1[k] || 0) - (er0[k] || 0)]).filter(([, v]) => v));
@@ -291,10 +290,11 @@ await T.until('let go, the move ends', (s) => !s.drag, 3000);
     const r3 = s.renders || {}, frames = T.frames.since(f2).frames;
     const d = Object.fromEntries(Object.keys(r3).map((k) => [k, (r3[k] || 0) - (r2[k] || 0)]).filter(([, v]) => v));
     console.log(`  edge scroll, the chat entering (${frames} frames):`, JSON.stringify(d));
-    // Entering brings into view what the grid's clip cut off: the scene
-    // holds none of it, so the chat renders (once a tick at most, never
-    // more). Replaying it would need F247's wider clip.
-    t.check('during an edge scroll the chat entering across the grid\'s edge renders at most once a tick (F213)', frames >= 5 && ['log', 'composer', 'mini-panes', 'chat-mini'].every((k) => (d[k] || 0) <= frames), { d, frames });
+    // Entering brings into view what the grid's clip cut off: the grid's
+    // clip is a wide clip (GPUI patch (e)), so its last scene holds it and
+    // the chat is replayed moved: its log, composer and Mini's layers
+    // render once at most (their settle), not on every tick.
+    t.check('during an edge scroll the chat entering across the grid\'s edge is moved, not drawn: its log, composer and Mini\'s layers 0-1 times (F213, patch e)', frames >= 5 && ['log', 'composer', 'mini-panes', 'chat-mini'].every((k) => (d[k] || 0) <= 1), { d, frames });
   }
   await T.mouse('move', g2.x + g2.w / 2, py, { buttons: ['left'] });
   await t.sleep(200);

@@ -10,8 +10,12 @@
 //! workbench pane) places cached leaves side by side: `Msg` (loading, an
 //! error, no ideas; its notify re-lays the host out), `Toolbar`, `Dots` (the
 //! canvas's dotted ground: it does not move, so it is drawn once) and
-//! `MapView`, which pans itself (its own `Pan`) and draws only the ideas and
-//! links that cross the view: a pan or a wheel redraws the map alone.
+//! `MapView`, which pans itself (its own `Pan`): its frame (the handlers, the
+//! scrollbars) around `MapContent`, which draws only the ideas and links that
+//! cross the view and a margin around it. The frame's clip is a wide clip
+//! (GPUI patch (e), PATCH.md): a pan or a wheel that stays within the margin
+//! of where the content last rendered moves the content's last frame,
+//! replayed; one past it renders the content again, about the new view.
 
 use super::{help, tree, Key, Pan, Row, M};
 use crundi_core::driver::rendered;
@@ -583,16 +587,46 @@ impl Render for Dots {
     }
 }
 
-/// The map: the ideas and links that cross the view, panned by its `Pan`.
+/// The map's frame: what the pointer and the keys do, the scrollbars, and
+/// the content panned by its `Pan` (a cached view of its own).
 pub struct MapView {
-    store: Entity<M>, pan: Entity<Pan>, edges: Option<Edges>, hot: Option<Hot>, pressed: Option<Hot>,
+    store: Entity<M>, pan: Entity<Pan>, hot: Option<Hot>, pressed: Option<Hot>,
+    content: Entity<MapContent>,
+    /// The pan and zoom as last drawn.
+    last_pan: Option<(f32, f32, f32)>,
+    /// A pan close on another's heels (a wheel sweep, a drag of the
+    /// scrollbar): the content is drawn without the margin until it stops
+    /// (`pan_settle`), shared with the content (`margin_now`).
+    fast: Rc<std::cell::Cell<bool>>,
+    last_pan_at: Option<std::time::Instant>,
+    pan_seq: u64,
+    pan_settle: Option<Task<()>>,
+    _subs: Vec<Subscription>,
+}
+
+/// The map's content: the ideas and links that cross the view and the
+/// margin around it (`margin`), laid out at the map's origin. It renders
+/// when the map changes or what is hovered does, and when a pan goes past
+/// the margin it last rendered with; a pan within it replays it moved.
+pub struct MapContent {
+    store: Entity<M>, pan: Entity<Pan>, edges: Option<Edges>, hot: Option<Hot>, fast: Rc<std::cell::Cell<bool>>,
     /// The ideas at rest, laid out (idea_el.rs), and the ghost's drawing per zoom.
     ideas: super::idea_el::Cache,
     ghost: Option<(u32, super::idea_el::Laid)>,
-    /// The pan and zoom as last drawn.
-    last_pan: Option<(f32, f32, f32)>,
     _subs: Vec<Subscription>,
 }
+
+/// How far past the view the content is drawn (and recorded) on each side:
+/// a quarter of the view, at most `PAN_MARGIN_MAX` (the margin's ideas cost
+/// every frame that replays them, and every render draws them). None while
+/// a pan follows close on another (`fast`): a sweep goes past any margin
+/// within a few frames, and the content renders on those at the view's
+/// size alone; once it stops, it renders once with the margin again.
+const PAN_MARGIN_MAX: f32 = 200.;
+const PAN_FAST: std::time::Duration = std::time::Duration::from_millis(20);
+const PAN_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+fn margin(vw: f32, vh: f32) -> (f32, f32) { ((vw / 4.).clamp(0., PAN_MARGIN_MAX), (vh / 4.).clamp(0., PAN_MARGIN_MAX)) }
+fn margin_now(fast: bool, vw: f32, vh: f32) -> (f32, f32) { if fast { (0., 0.) } else { margin(vw, vh) } }
 
 /// What the pointer is on: an idea, its fold button, an "add idea" box (its
 /// row, its idea).
@@ -634,6 +668,13 @@ impl MapView {
         self.set_hot(h, window, cx);
     }
 
+    /// The content draws what is hovered: it is told (and renders) only
+    /// when that changed.
+    fn hot_to_content(&mut self, cx: &mut Context<Self>) {
+        let h = self.hot.clone();
+        self.content.update(cx, |c, cx| if c.hot != h { c.hot = h; cx.notify(); });
+    }
+
     /// The pointer onto another part: drawn hovered; an idea whose words are
     /// cut opens up over itself (as its hover did).
     fn set_hot(&mut self, h: Option<Hot>, window: &mut Window, cx: &mut Context<Self>) {
@@ -642,6 +683,7 @@ impl MapView {
         let (was, now) = (idea(&self.hot), idea(&h));
         self.hot = h;
         cx.notify();
+        self.hot_to_content(cx);
         if was == now { return; }
         let rows: Vec<Row> = { let s = self.store.read(cx); s.rows.iter().filter(|r| r.kind == "node" && (Some(&r.id) == was.as_ref() || Some(&r.id) == now.as_ref())).cloned().collect() };
         let z = self.store.read(cx).zoom;
@@ -660,12 +702,28 @@ impl MapView {
     fn new(store: Entity<M>, cx: &mut Context<Self>) -> Self {
         let pan = store.read(cx).pan();
         let subs = vec![cx.observe(&store, |_, _, cx| cx.notify()), cx.observe(&pan, |_, _, cx| cx.notify())];
-        MapView { store, pan, edges: None, hot: None, pressed: None, ideas: Rc::default(), ghost: None, last_pan: None, _subs: subs }
+        let fast = Rc::new(std::cell::Cell::new(false));
+        let content = cx.new(|cx| MapContent::new(store.clone(), pan.clone(), fast.clone(), cx));
+        MapView { store, pan, hot: None, pressed: None, content, last_pan: None, fast, last_pan_at: None, pan_seq: 0, pan_settle: None, _subs: subs }
     }
 }
 
-impl Render for MapView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl MapContent {
+    fn new(store: Entity<M>, pan: Entity<Pan>, fast: Rc<std::cell::Cell<bool>>, cx: &mut Context<Self>) -> Self {
+        // (Not the pan: a pan moves this view; it renders only past the margin.)
+        let subs = vec![cx.observe(&store, |_, _, cx| cx.notify())];
+        MapContent { store, pan, edges: None, hot: None, fast, ideas: Rc::default(), ghost: None, _subs: subs }
+    }
+}
+
+impl Render for MapContent {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement { self.build(window, cx) }
+}
+
+impl MapContent {
+    /// The content's elements, at the map's origin: this view's render, or
+    /// (during a fast pan) built inline by the frame, as one view would.
+    fn build(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         rendered("mindmap-map");
         let store = self.store.clone();
         let s = store.read(cx);
@@ -673,13 +731,15 @@ impl Render for MapView {
         let (z, panx, pany) = (s.zoom, p.x, p.y);
         let Some(u) = s.ui.as_ref() else { return div().into_any_element() };
         let (cw, ch) = (s.view_w.max(s.base_w * z), s.view_h.max(s.base_h * z));
-        // The view, in the map's own (unscaled) units, with a margin.
-        let (vx0, vy0) = (panx / z - f32::from(T::MINDMAP_NODE), pany / z - f32::from(T::SP_48) * 4.);
-        let (vx1, vy1) = ((panx + s.view_w.max(1.)) / z + f32::from(T::SP_24), (pany + s.view_h.max(1.)) / z + f32::from(T::SP_48) * 4.);
+        // The view and its margin (what the frame's wide clip records), in
+        // the map's own (unscaled) units, with a margin for an idea's size.
+        let (mx, my) = margin_now(self.fast.get(), s.view_w, s.view_h);
+        let (vx0, vy0) = ((panx - mx) / z - f32::from(T::MINDMAP_NODE), (pany - my) / z - f32::from(T::SP_48) * 4.);
+        let (vx1, vy1) = ((panx + s.view_w.max(1.) + mx) / z + f32::from(T::SP_24), (pany + s.view_h.max(1.) + my) / z + f32::from(T::SP_48) * 4.);
         let seen = |x: f32, y: f32, h: f32| x + f32::from(T::MINDMAP_NODE) >= vx0 && x <= vx1 && y + h / 2. >= vy0 && y - h / 2. <= vy1;
         // The links in view: each tessellated once (at the map's origin, per
         // zoom, kept by its end points: a new layout reuses the links that
-        // did not move), then only moved as the map pans.
+        // did not move).
         let crosses = |c: &[f32; 4]| c[0].max(c[2]) >= vx0 && c[0].min(c[2]) <= vx1 && c[1].max(c[3]) >= vy0 && c[1].min(c[3]) <= vy1;
         if self.edges.as_ref().is_none_or(|e| e.zoom != z.to_bits() || e.paths.len() > 4000) { self.edges = Some(Edges { zoom: z.to_bits(), paths: HashMap::new() }); }
         let cache = &mut self.edges.as_mut().expect("edges").paths;
@@ -706,13 +766,7 @@ impl Render for MapView {
             paint(solid, T::border());
             paint(dashed, T::border().opacity(T::MINDMAP_O_DIM));
         }).absolute().top_0().left_0().w(px(s.base_w * z)).h(px(s.base_h * z));
-        let mut content = div().id("mm-content").absolute().left(px(-panx)).top(px(-pany)).w(px(cw)).h(px(ch)).child(edges);
-        // What the pointer is on, as this frame places the map (a pan moves
-        // the ideas under a still pointer).
-        // While it pans, nothing is drawn hovered (the pointer's next move
-        // hovers what is under it; a press hits through `hit` regardless).
-        let pan_now = (panx, pany, z);
-        if self.last_pan != Some(pan_now) { if self.last_pan.is_some() { self.hot = None; } self.last_pan = Some(pan_now); }
+        let mut content = div().id("mm-content").relative().w(px(cw)).h(px(ch)).child(edges);
         let s = store.read(cx);
         let mut drawn = vec![];
         // The ideas and ghosts at rest: one element paints them from their
@@ -754,6 +808,54 @@ impl Render for MapView {
         if let Some(h) = &s.hover { if !(s.edit_on && s.edit_node.as_ref().is_some_and(|e| e.id == h.id)) { content = content.child(card(h, Mode::Open, z, None, true, false)); } }
         if s.edit_on { if let Some(e) = &s.edit_node { content = content.child(card(e, Mode::Editing, z, Some(&u.edit), true, false)); } }
         if s.draft_on { content = content.child(draft(s, z, &u.draft)); }
+        w::layer(content).into_any_element()
+    }
+}
+
+impl Render for MapView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        rendered("mindmap-frame");
+        let store = self.store.clone();
+        let (z, panx, pany) = { let p = self.pan.read(cx); (store.read(cx).zoom, p.x, p.y) };
+        // What the pointer is on, as this frame places the map (a pan moves
+        // the ideas under a still pointer).
+        // While it pans, nothing is drawn hovered (the pointer's next move
+        // hovers what is under it; a press hits through `hit` regardless).
+        let pan_now = (panx, pany, z);
+        if self.last_pan != Some(pan_now) {
+            if self.last_pan.is_some() && self.hot.is_some() { self.hot = None; self.hot_to_content(cx); }
+            // A pan close on the last one: no margin until the pans stop.
+            let now = std::time::Instant::now();
+            if self.last_pan.is_some() && self.last_pan_at.is_some_and(|t| now - t < PAN_FAST) {
+                self.fast.set(true);
+                self.pan_seq += 1;
+                let seq = self.pan_seq;
+                self.pan_settle = Some(cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                    cx.background_executor().timer(PAN_SETTLE).await;
+                    let _ = this.update(cx, |this, cx| if this.pan_seq == seq { this.fast.set(false); this.pan_settle = None; cx.notify(); });
+                }));
+            }
+            self.last_pan_at = Some(now);
+            self.last_pan = Some(pan_now);
+        }
+        let (cw, ch, vw0, vh0, has_ui) = { let s = store.read(cx); (s.view_w.max(s.base_w * z), s.view_h.max(s.base_h * z), s.view_w, s.view_h, s.ui.is_some()) };
+        if !has_ui { return div().into_any_element(); }
+        // The content at the pan, by whole device pixels (a move by a part
+        // of one would draw it again, GPUI patch (b)).
+        let sf = window.scale_factor().max(1.);
+        let (ox, oy) = ((panx * sf).round() / sf, (pany * sf).round() / sf);
+        let (mx, my) = margin_now(self.fast.get(), vw0, vh0);
+        // During a fast pan the content renders on every frame anyway: the
+        // frame builds it inline (one view, as before the split); else it is
+        // the cached view a pan within its margin moves.
+        let content = if self.fast.get() {
+            let el = self.content.update(cx, |c, cx| c.build(window, cx));
+            div().absolute().left(px(-ox)).top(px(-oy)).w(px(cw)).h(px(ch)).child(el).into_any_element()
+        } else {
+            self.content.clone().cached(StyleRefinement::default().absolute().left(px(-ox)).top(px(-oy)).w(px(cw)).h(px(ch))).into_any_element()
+        };
+        let s = store.read(cx);
+        let Some(u) = s.ui.as_ref() else { return div().into_any_element() };
         let clone = (!s.drag_id.is_empty()).then(|| clone_box(s, z));
         let lh = window.line_height();
         let held = s.press.is_some();
@@ -767,7 +869,9 @@ impl Render for MapView {
         let hbar = w::scrollbar("mm-hbar", false, vw, cw, panx, corner, window, cx, move |x, _, cx| { let y = super::store(cx).read(cx).pan().read(cx).y; super::set_scroll(x, y, cx); });
         // The keys of the map (the web's document keydown while the map was
         // the last thing pressed): a press anywhere in it gives it the keys.
-        div().id("mindmap").track_focus(&canvas_fh).relative().size_full().overflow_hidden()
+        // The clip is a wide clip (GPUI patch (e)): the content is recorded
+        // `margin` past the view on each side, as far as it draws.
+        div().id("mindmap").track_focus(&canvas_fh).relative().size_full().overflow_hidden().wide_clip(size(px(mx), px(my)))
             .key_context(super::MAP_CONTEXT)
             .on_action(|_: &super::MapTab, window, cx| { super::key(&Key { key: "tab", ctrl: false, shift: false, alt: false }, window, cx); })
             .on_action(|_: &super::MapBackTab, window, cx| { super::key(&Key { key: "tab", ctrl: false, shift: true, alt: false }, window, cx); })
@@ -836,7 +940,7 @@ impl Render for MapView {
                     if phase == DispatchPhase::Bubble && e.button == MouseButton::Left && !b.contains(&e.position) && super::pressing(cx) { super::release_outside(window, cx); }
                 });
             }).absolute().top_0().left_0().size_full())
-            .child(w::layer(content))
+            .child(content)
             .children(clone)
             .when(vbar.is_some() || hbar.is_some(), |d| d.child(w::layer(div().absolute().top_0().left_0().size_full().children(vbar).children(hbar))))
             .into_any_element()

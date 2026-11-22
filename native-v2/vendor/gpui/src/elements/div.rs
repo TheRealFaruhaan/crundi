@@ -1299,6 +1299,16 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// crundi patch (e), PATCH.md: this element's overflow clip (it needs
+    /// one: `overflow_hidden`, a scroll) shows what is inside it as before,
+    /// but its content is recorded `margin` past it on each side, so a
+    /// cached view in it that moves (a scroll, a pan) is replayed while what
+    /// comes into view was recorded (`Window::with_wide_clip`).
+    fn wide_clip(mut self, margin: Size<Pixels>) -> Self {
+        self.interactivity().wide_clip = Some(margin);
+        self
+    }
+
     /// Set the bounds of this element as a window control area for the platform window.
     /// The fluent API equivalent to [`Interactivity::window_control_area`].
     fn window_control_area(mut self, area: WindowControlArea) -> Self {
@@ -2189,6 +2199,9 @@ pub struct Interactivity {
     /// was created for the interactive element.
     pub hovered: Option<bool>,
     pub(crate) tooltip_id: Option<TooltipId>,
+    /// crundi patch (e), PATCH.md: its overflow clip is a wide clip, its
+    /// content recorded this far past it on each side (`Window::with_wide_clip`).
+    pub(crate) wide_clip: Option<Size<Pixels>>,
     pub(crate) content_size: Size<Pixels>,
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) focusable: bool,
@@ -2434,9 +2447,12 @@ impl Interactivity {
                     }
                 }
 
+                let wide = self.wide_clip;
                 window.with_text_style(style.text_style().cloned(), |window| {
-                    window.with_content_mask(
+                    with_clip(
+                        window,
                         style.overflow_mask(bounds, window.rem_size()),
+                        wide,
                         |window| {
                             let hitbox = if self.should_insert_hitbox(&style, window, cx) {
                                 Some(window.insert_hitbox(bounds, self.hitbox_behavior))
@@ -2595,11 +2611,14 @@ impl Interactivity {
                     tab_group = self.tab_index;
                 }
 
+                let wide = self.wide_clip;
                 window.with_element_opacity(style.opacity, |window| {
                     style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
                         window.with_text_style(style.text_style().cloned(), |window| {
-                            window.with_content_mask(
+                            with_clip(
+                                window,
                                 style.overflow_mask(bounds, window.rem_size()),
+                                wide,
                                 |window| {
                                     window.with_tab_group(tab_group, |window| {
                                         // Register the container's own focus handle *inside* its
@@ -5801,5 +5820,18 @@ mod tests {
         assert_eq!(bounds("cell-0").origin.x, px(0.));
         assert_eq!(bounds("cell-1").origin.x, px(100.));
         assert_eq!(bounds("cell-2").origin.x, px(300.));
+    }
+}
+
+/// crundi patch (e): an element's overflow clip, a wide clip if it asked for one.
+fn with_clip<R>(
+    window: &mut Window,
+    mask: Option<crate::ContentMask<Pixels>>,
+    wide: Option<Size<Pixels>>,
+    f: impl FnOnce(&mut Window) -> R,
+) -> R {
+    match (mask, wide) {
+        (Some(m), Some(margin)) => window.with_wide_clip(m.bounds, margin, f),
+        (mask, _) => window.with_content_mask(mask, f),
     }
 }

@@ -17,7 +17,9 @@ GPUI is `gpui-pre =0.3.12` (a snapshot of Zed's gpui, imported as `gpui`),
 patched in `vendor/gpui` (`PATCH.md`, the owner's call of 21 Nov) so a
 cached view keeps its clean cached children and a cached view that only
 moved is replayed at an offset (and a replayed view keeps its draw
-orders instead of going back through the scene's bounds tree), with `gpui-component` / `gpui-kit-assets =0.10.0`; CEF `=156.4.0` only in
+orders instead of going back through the scene's bounds tree, and inside a
+wide clip a view is recorded past the clip, so one coming into view or
+panned within the margin is replayed too), with `gpui-component` / `gpui-kit-assets =0.10.0`; CEF `=156.4.0` only in
 the browser host (`crates/browser-host`), started lazily in a process of
 its own.
 
@@ -298,7 +300,9 @@ Root (gpui-component)
   bounds. The patch replays a cached view that only moved (by whole device
   pixels, bringing into view nothing its clip cut off) at the offset, and
   skips a view wholly outside its clip (PATCH.md (b), F241), so a list
-  of views scrolls by replay. A row that is not a view of its own (the
+  of views scrolls by replay. Inside a **wide clip** (PATCH.md (e)) a view
+  is recorded past the clip as well, so one coming into view across it is
+  replayed too: see "Wide clips" below. A row that is not a view of its own (the
   log's rows are elements) is still built, laid out and painted again on
   each frame that scrolls. So the work per row is what has to be small. As Zed's editor
   draws its lines, **each of Claude's blocks is one element**:
@@ -379,7 +383,8 @@ inside theirs.
   a notify dirties the view and every view above it, and a cached view
   that re-renders drew every cached view inside it again
   (`window.refreshing`). The patch in `vendor/gpui` (PATCH.md (a) to
-  (d)) keeps clean nested caches, replays a view that only moved, keeps
+  (e)) keeps clean nested caches, replays a view that only moved (and,
+  inside a wide clip, one coming into view), keeps
   a click's press, its release and a tooltip from redrawing the whole
   window, and replays a clean view's scene with its draw orders shifted
   rather than one bounds-tree insert per primitive (F245). The dirty chain (the Shell, the tab's root, the Workbench)
@@ -391,6 +396,34 @@ inside theirs.
   every clean leaf (scene, hitboxes, element states, text layouts) and
   presenting it all; keeping the dirty leaves small (the tail, a block per
   element, the map's paint) is what is left to us without a fork.
+- **Wide clips** (PATCH.md (e), F213, F247): a clip that things move
+  under (a scroll, a pan) whose views draw what they hold whatever is in
+  view is a wide clip (`.wide_clip(margin)` on the element with the
+  overflow clip, `Window::with_wide_clip`): it shows only what is inside
+  it, but its content is recorded `margin` past it on each side, so a
+  cached view in it that moves is replayed as long as what comes into view
+  was in that wider region when it last rendered. Elements inside see the
+  wider region as their content mask (an element that culls to the mask
+  draws as far as it). Two are used: the workbench grid while a pane is
+  moved (a grid's width each side: a pane body entering across the grid's
+  edge during the edge scroll is replayed, not drawn on every tick; at
+  other times a pane partly in view would replay all its body on every
+  frame, so the grid's clip is a plain one then) and the mind map's frame
+  (`MapView`, a quarter of its view each side, at most 200 px: the
+  content, a cached `MapContent` that culls to the view and that margin, is
+  moved by a pan within it and renders again only past it, about the new
+  view; while pans follow each other within 20 ms, a wheel sweep or a
+  touchpad, the frame builds the content inline at the view's size, as
+  before the split (a sweep goes past any margin in a few frames), and
+  150 ms after they stop the cached content renders once with the margin
+  again). What a margin costs: everything recorded in it is replayed every
+  frame (cut away, not drawn) and every render draws it, so a margin is as
+  small as the moves it covers; a view's content clips itself to its own
+  box (a pane body does), so the grid's wide margin records no more than
+  each pane's own box. A view that rendered while a cached view inside it
+  was skipped (wholly outside the real clip) records only what it showed
+  (PATCH.md (e)): a Kanban pane whose columns were out of view renders as
+  it comes in, rather than replaying without them.
 - **The mosaic is laid out once per change** (`Workbench::laid`): the
   leaves' and gutters' rectangles are kept until the mosaic, the project
   or the area changes; the Workbench's render places them.
@@ -428,8 +461,9 @@ inside theirs.
   (gpui's text.rs), which rule 2 forbids; the log handles its own links.
 
 - **Kanban, mind map, file trees, long lists** (the areas'): the same; the
-  mind map draws only nodes intersecting the viewport (a spatial index in
-  its store) on a canvas.
+  mind map draws only nodes intersecting the viewport and the margin of
+  its wide clip (a spatial index in its store) on a canvas, in a cached
+  view of its own that a pan moves ("Wide clips").
 - Item measurement: a row is re-measured only when the store splices it.
 
 ## The live link
