@@ -302,7 +302,8 @@ fn ev_id(e: &Ev) -> Option<u64> {
     Some(match e {
         Ev::Shm { id, .. } | Ev::Paint { id, .. } | Ev::Loading { id, .. } | Ev::LoadError { id, .. } | Ev::LoadEnd { id, .. }
         | Ev::Title { id, .. } | Ev::Address { id, .. } | Ev::Cursor { id, .. } | Ev::Console { id, .. } | Ev::Popup { id, .. }
-        | Ev::Scrolled { id } | Ev::Net { id, .. } | Ev::CdpResult { id, .. } | Ev::Gone { id, .. } | Ev::Closed { id } | Ev::Texture { id, .. } => *id,
+        | Ev::Scrolled { id } | Ev::Net { id, .. } | Ev::CdpResult { id, .. } | Ev::Gone { id, .. } | Ev::Closed { id } | Ev::Texture { id, .. }
+        | Ev::Download { id, .. } | Ev::Downloaded { id, .. } => *id,
         Ev::Ready { .. } | Ev::Failed { .. } | Ev::Stats { .. } => return None,
     })
 }

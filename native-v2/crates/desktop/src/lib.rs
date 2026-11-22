@@ -33,11 +33,13 @@ mod cru_frame;
 mod cru_kid;
 mod cru_screen;
 mod cru_ui;
+mod downloads;
 pub mod cru_spot;
 pub mod homepool;
 pub mod drawer;
 mod host;
 mod hosts;
+mod hotkeys;
 mod hpdrawer;
 mod idle;
 mod inbox;
@@ -49,8 +51,8 @@ mod passwords;
 mod pclock;
 mod pointer;
 mod pwstore;
+mod rpa;
 pub mod rules;
-mod hotkeys;
 mod tray;
 pub mod updater;
 mod ui;
@@ -110,6 +112,8 @@ pub fn init(cx: &mut App) {
         ask_note: |i, n| drawer::ask_note(i, n),
         console: passwords::console,
         reload: drawer::reload_panel,
+        download: downloads::asked,
+        downloaded: downloads::ended,
     });
     // The browser host stays while the drawer is open, even with no page.
     web::set_keep_alive(|| drawer::with(|d| d.open));
@@ -206,7 +210,7 @@ pub fn init(cx: &mut App) {
             if r.is_some() { pump(window, cx); }
             r
         })
-        .state(|_, window, cx| { let mut p = props(); p["lock"]["pinFocused"] = json!(views_global().map(|l| l.read(cx).pin_focused(window, cx))); p["chatFrames"] = hosts::props(); p["cruSpot"] = cru_spot::state(cx); p["menu"] = w::menu_props(cx); p["menuPicked"] = json!(TEST_MENU_PICK.with(|p| p.borrow().clone())); json!({ "areas": { "desktop": p } }) }));
+        .state(|_, window, cx| { let mut p = props(); p["win"] = ctx::window_props(Some(window)); p["lock"]["pinFocused"] = json!(views_global().map(|l| l.read(cx).pin_focused(window, cx))); p["chatFrames"] = hosts::props(); p["cruSpot"] = cru_spot::state(cx); p["menu"] = w::menu_props(cx); p["menuPicked"] = json!(TEST_MENU_PICK.with(|p| p.borrow().clone())); json!({ "areas": { "desktop": p } }) }));
     // Browser-only mode (test/drive.mjs): a socket of its own to a server.
     if let Ok(url) = std::env::var("CRUNDI_SERVER") { if !url.is_empty() { host::start(url); } }
 }
@@ -227,8 +231,10 @@ pub fn init_window(shell: &Entity<crundi_shell::Shell>, window: &mut Window, cx:
     shell.update(cx, |s, cx| s.set_drawer_view(Some(Drawer { view: drawer.into(), left }), cx));
     // While kid mode or the PC lock holds the window, it comes straight back
     // to the front when it loses the keys (app/main.js wireKidLock's blur).
-    let _ = lock.update(cx, |_, cx| cx.observe_window_activation(window, |_, window, _| {
+    let _ = lock.update(cx, |_, cx| cx.observe_window_activation(window, |_, window, cx| {
         if ctx::window_locked() && !window.is_window_active() { window.activate_window(); }
+        // Brought to the front: the server's new pages come here (several PCs attached).
+        if window.is_window_active() { host::window_active(cx); }
     }).detach());
     WINDOW.with(|w| w.set(Some(window.window_handle())));
     // Opened again (Wayland's hide closed it): the same entities, the same pump.
@@ -330,7 +336,7 @@ const FRAME: Duration = crundi_shell::live_hub::FRAME;
 /// When the pump must run with nothing waking it: the webview's timers and
 /// deadlines, and the area's own (Cru's, the voice's).
 fn next_due() -> Option<Instant> {
-    [web::next_due(), cru::next_due(), wake::next_due(), notify::next_due(), drawer::next_due(), updater::next_due()].into_iter().flatten().min()
+    [web::next_due(), cru::next_due(), wake::next_due(), notify::next_due(), drawer::next_due(), updater::next_due(), ctx::watch_due()].into_iter().flatten().min()
 }
 
 /// The pump (woken, at most once a frame): CEF's deferred calls and the
@@ -349,7 +355,7 @@ pub fn pump(window: &mut Window, cx: &mut App) {
         if host::waiting() { why.push("host".into()); }
         if tray::has_picks() { why.push("tray".into()); }
         if hotkeys::has_presses() { why.push("keys".into()); }
-        for (k, d) in [("cru", cru::next_due()), ("wake", wake::next_due()), ("notify", notify::next_due()), ("drawer", drawer::next_due())] { if d.is_some_and(|t| t <= Instant::now()) { why.push(format!("{k}-due")); } }
+        for (k, d) in [("cru", cru::next_due()), ("wake", wake::next_due()), ("notify", notify::next_due()), ("drawer", drawer::next_due()), ("kidwatch", ctx::watch_due())] { if d.is_some_and(|t| t <= Instant::now()) { why.push(format!("{k}-due")); } }
         if why.is_empty() { why.push("?".into()); }
         PUMP_WHY.with(|w| { let mut w = w.borrow_mut(); w.push_back(why.join(",")); while w.len() > 24 { w.pop_front(); } });
     }
@@ -376,6 +382,7 @@ pub fn pump(window: &mut Window, cx: &mut App) {
     let (supported, unread) = inbox::with(|i| (i.supported, i.unread));
     crundi_shell::set_inbox_badge(cx, supported, unread);
     notify::pump();
+    ctx::watchdog(window);
     for f in ctx::take_main() { f(); }
     // The drawer open or closed: the shell's place for it.
     let open = drawer::with(|d| d.open);
@@ -603,6 +610,13 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "update-check" => { updater::check(true); ok() }
         "update-due" => { updater::test_due_now(); ok() }
         "update-cmd" => { updater::command(&a(0)); ok() }
+        // The window brought to the front, as the platform's activation tells the area
+        // (gpui hears no X focus change under Xvfb, with no window manager).
+        "window-activated" => { ctx::on_app(|_, cx| host::window_active(cx)); ok() }
+        // The windows' power and screen lock as this OS reads them (wake/mod.rs), and the RDP task (rpa.rs).
+        "power" => Some(json!({ "ok": true, "onBattery": wake::read_power(), "locked": wake::read_locked() })),
+        "rdp-status" => Some(rpa::status()),
+        "rdp-setup" => Some(rpa::setup()),
         // Cru's live screen: an event as the voice socket brings it ({type: "screen", screen}).
         "cru-event" => { if let Ok(v) = serde_json::from_str::<Value>(&a(0)) { cru_screen::event(&v); } ok() }
         "cru-screen-close" => { cru_screen::close_screen(); ok() }
@@ -632,6 +646,10 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "wake-cond" => { let b = |x: String| match x.as_str() { "true" => Some(true), "false" => Some(false), _ => None }; wake::test_conditions(b(a(0)), b(a(1))); ok() }
         "wake-forget" => { wake::forget(); ok() }
         "homepool-status" => Some(json!({ "ok": true, "status": homepool::status() })),
+        // This PC's node, as the Homepool tab's "This PC" card asks (share with a node key, stop, forget).
+        "homepool-share" => match homepool::share(&a(0), &a(1)) { Ok(()) => ok(), Err(e) => Some(json!({ "ok": false, "error": e })) },
+        "homepool-stop" => { homepool::stop(); ok() }
+        "homepool-forget" => { homepool::forget(); ok() }
         "browsers-open" => { browsers::open(&a(0)); ok() }
         "browsers-shot" => { browsers::shot(&a(0)); ok() }
         "browsers-go" => { browsers::go(&a(0), &a(1)); ok() }
@@ -667,8 +685,8 @@ fn props() -> Value {
         "due": due_ms(),
         "drawer": drawer::props(), "drawerActive": active, "evals": EVALS.with(|e| Value::Object(e.borrow().1.clone())),
         "browsers": browsers::props(),
-        "inbox": inbox::props(), "cru": cru::props(), "cruScreen": cru_screen::props(), "kid": cru_kid::props(), "lock": pclock::props(), "windowLocked": ctx::window_locked(), "hideHow": ctx::hide_how_name(), "wake": wake::status(), "homepool": homepool::status(), "hp": hpdrawer::props(), "tray": tray::props(), "updater": updater::props(), "globalKeys": hotkeys::props(), "logFile": crundi_shell::lifecycle::log_path().to_string_lossy(), "passwords": passwords::props(), "notifications": notify::props(), "hidden": hidden,
-        "host": { "features": host::features() },
+        "inbox": inbox::props(), "cru": cru::props(), "cruScreen": cru_screen::props(), "kid": cru_kid::props(), "lock": pclock::props(), "windowLocked": ctx::window_locked(), "hideHow": ctx::hide_how_name(), "wake": wake::status(), "homepool": homepool::status(), "hp": hpdrawer::props(), "tray": tray::props(), "updater": updater::props(), "globalKeys": hotkeys::props(), "downloads": downloads::props(), "logFile": crundi_shell::lifecycle::log_path().to_string_lossy(), "passwords": passwords::props(), "notifications": notify::props(), "hidden": hidden,
+        "host": { "features": host::features(), "activeSent": host::active_sent(), "kind": host::CLIENT_KIND },
         "browserHost": web::host_props(),
     })
 }

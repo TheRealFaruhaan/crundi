@@ -147,6 +147,124 @@ fn x11_state(win: &Window, on: bool) {
     let _ = c.flush();
 }
 
+/// One EWMH request to the window manager about our window (`_NET_WM_STATE`
+/// add/remove of up to two states, `_NET_ACTIVE_WINDOW`…), as a client message to the root.
+#[cfg(target_os = "linux")]
+fn x11_ask(win: &Window, kind: &str, data: impl FnOnce(&dyn Fn(&str) -> Option<u32>) -> Option<[u32; 5]>) -> bool {
+    use x11rb::connection::Connection as _;
+    use x11rb::protocol::xproto::{ClientMessageEvent, ConnectionExt as _, EventMask};
+    let Some(id) = x11_window(win) else { return false };
+    let Ok((c, screen)) = x11rb::connect(None) else { return false };
+    let root = c.setup().roots[screen].root;
+    let atom = |n: &str| c.intern_atom(false, n.as_bytes()).ok().and_then(|r| r.reply().ok()).map(|r| r.atom);
+    let (Some(kind), Some(d)) = (atom(kind), data(&atom)) else { return false };
+    let ev = ClientMessageEvent::new(32, id, kind, d);
+    let ok = c.send_event(false, root, EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY, ev).is_ok();
+    let _ = c.flush();
+    ok
+}
+
+/// The X11 window's id (None: not an X11 window).
+#[cfg(target_os = "linux")]
+pub fn x11_window(win: &Window) -> Option<u32> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match HasWindowHandle::window_handle(win).map(|h| h.as_raw()) {
+        Ok(RawWindowHandle::Xlib(h)) => Some(h.window as u32),
+        Ok(RawWindowHandle::Xcb(h)) => Some(h.window.get()),
+        _ => None,
+    }
+}
+
+/// The window held above the others (setAlwaysOnTop) or let go, alone (no taskbar change).
+pub fn above(win: &Window, on: bool) {
+    #[cfg(target_os = "linux")]
+    { x11_ask(win, "_NET_WM_STATE", |a| Some([u32::from(on), a("_NET_WM_STATE_ABOVE")?, 0, 1, 0])); }
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE};
+        // SAFETY: the window's own handle, alive while `win` is.
+        if let Some(h) = hwnd(win) { unsafe { SetWindowPos(h, if on { HWND_TOPMOST } else { HWND_NOTOPMOST }, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE); } }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    let _ = (win, on);
+}
+
+/// Focus asked outright (app.focus({ steal: true })): on X11 as a pager
+/// asks (source 2), which GNOME's focus-stealing prevention lets through.
+pub fn steal_focus(win: &Window) {
+    #[cfg(target_os = "linux")]
+    { x11_ask(win, "_NET_ACTIVE_WINDOW", |_| Some([2, 0, 0, 0, 0])); }
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+        // SAFETY: the window's own handle.
+        if let Some(h) = hwnd(win) { unsafe { SetForegroundWindow(h); } }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    let _ = win;
+}
+
+/// Full screen asked (setFullScreen(true): never a toggle, so a request the
+/// window manager has not answered yet is not undone by the next one).
+pub fn fullscreen_on(win: &mut Window) {
+    #[cfg(target_os = "linux")]
+    { if x11_ask(win, "_NET_WM_STATE", |a| Some([1, a("_NET_WM_STATE_FULLSCREEN")?, 0, 1, 0])) { return; } }
+    if !win.is_fullscreen() { win.toggle_fullscreen(); }
+}
+
+/// Minimised (iconic, or hidden by the window manager)? Then shown again.
+/// True when it was.
+pub fn restore_minimized(win: &Window) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
+        let Some(id) = x11_window(win) else { return false };
+        let Ok((c, _)) = x11rb::connect(None) else { return false };
+        let atom = |n: &str| c.intern_atom(false, n.as_bytes()).ok().and_then(|r| r.reply().ok()).map(|r| r.atom);
+        let (Some(state), Some(hidden)) = (atom("_NET_WM_STATE"), atom("_NET_WM_STATE_HIDDEN")) else { return false };
+        let Some(r) = c.get_property(false, id, state, AtomEnum::ATOM, 0, 64).ok().and_then(|r| r.reply().ok()) else { return false };
+        let is_hidden = r.value32().is_some_and(|mut v| v.any(|a| a == hidden));
+        if is_hidden {
+            let _ = c.map_window(id);
+            let _ = x11rb::connection::Connection::flush(&c);
+            x11_ask(win, "_NET_WM_STATE", |a| Some([0, a("_NET_WM_STATE_HIDDEN")?, 0, 1, 0]));
+        }
+        is_hidden
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, ShowWindow, SW_RESTORE};
+        let Some(h) = hwnd(win) else { return false };
+        // SAFETY: the window's own handle.
+        unsafe { if IsIconic(h) != 0 { ShowWindow(h, SW_RESTORE); true } else { false } }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    { let _ = win; false }
+}
+
+/// What the window manager says of the window (`_NET_WM_STATE`): full
+/// screen, focused, hidden (minimised). None: not X11, or nothing said.
+#[cfg(target_os = "linux")]
+pub fn x11_wm_state(win: &Window) -> Option<(bool, bool, bool)> {
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
+    let id = x11_window(win)?;
+    let (c, _) = x11rb::connect(None).ok()?;
+    let atom = |n: &str| c.intern_atom(false, n.as_bytes()).ok().and_then(|r| r.reply().ok()).map(|r| r.atom);
+    let (state, full, focused, hidden) = (atom("_NET_WM_STATE")?, atom("_NET_WM_STATE_FULLSCREEN")?, atom("_NET_WM_STATE_FOCUSED")?, atom("_NET_WM_STATE_HIDDEN")?);
+    let r = c.get_property(false, id, state, AtomEnum::ATOM, 0, 64).ok()?.reply().ok()?;
+    let v: Vec<u32> = r.value32()?.collect();
+    Some((v.contains(&full), v.contains(&focused), v.contains(&hidden)))
+}
+
+#[cfg(target_os = "windows")]
+fn hwnd(win: &Window) -> Option<windows_sys::Win32::Foundation::HWND> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match HasWindowHandle::window_handle(win).map(|h| h.as_raw()) {
+        Ok(RawWindowHandle::Win32(h)) => Some(h.hwnd.get() as windows_sys::Win32::Foundation::HWND),
+        _ => None,
+    }
+}
+
 // ─── Windows ───
 
 #[cfg(target_os = "windows")]

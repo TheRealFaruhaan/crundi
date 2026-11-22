@@ -4,18 +4,24 @@
 //! brings the window to the front and, for /chat/<id>, opens that chat.
 //!
 //! Linux: the desktop's notification service over D-Bus (gdbus, with a
-//! "default" action; a monitor hears the click). Windows: a toast through
-//! PowerShell. macOS: osascript's notification (a click opens nothing there).
+//! "default" action; a monitor hears the click). Windows: a toast under the
+//! app's AppUserModelID (the installer's shortcut carries it), its click
+//! heard in this process (on_activated). macOS: the notification centre
+//! under the app's bundle id, waited on for its click on its own thread.
+//! Each click goes through the same `clicked` (raise, then the chat).
 
 use crate::ctx as kit;
 use serde_json::{json, Value};
-use std::{cell::RefCell, collections::HashMap, process::Command, sync::Mutex};
+use std::{cell::RefCell, sync::Mutex};
+#[cfg(target_os = "linux")]
+use std::{collections::HashMap, process::Command};
 
 // What was shown (for the driver), newest last.
 thread_local! {
     static SHOWN: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
 }
 /// Linux: notification id → the chat to open on its click (kept 6 hours).
+#[cfg(target_os = "linux")]
 static LIVE: Mutex<Option<HashMap<u32, (String, std::time::Instant)>>> = Mutex::new(None);
 
 /// A chat link's id, re-checked (^/chat/[A-Za-z0-9_-]{1,80}$).
@@ -37,13 +43,19 @@ pub fn from_server(m: &Value) {
 
 fn show(title: String, body: String, chat: String) {
     std::thread::spawn(move || {
-        let r = if cfg!(target_os = "linux") { linux(&title, &body, &chat) }
-            else if cfg!(target_os = "windows") { windows(&title, &body) }
-            else { mac(&title, &body) };
+        #[cfg(target_os = "linux")]
+        let r = linux(&title, &body, &chat);
+        #[cfg(target_os = "windows")]
+        let r = windows(&title, &body, chat);
+        #[cfg(target_os = "macos")]
+        let r = mac(&title, &body, chat);
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        let r: Result<(), String> = { let _ = (&title, &body, chat); Ok(()) };
         if let Err(e) = r { eprintln!("[notify] could not show: {e}"); }
     });
 }
 
+#[cfg(target_os = "linux")]
 fn linux(title: &str, body: &str, chat: &str) -> Result<(), String> {
     let out = Command::new("gdbus").args(["call", "--session", "--dest", "org.freedesktop.Notifications", "--object-path", "/org/freedesktop/Notifications",
         "--method", "org.freedesktop.Notifications.Notify", "Crundi", "0", "", title, body, "['default', 'Open']", "{}", "-1"])
@@ -63,6 +75,7 @@ fn linux(title: &str, body: &str, chat: &str) -> Result<(), String> {
 }
 
 /// Hear the clicks (ActionInvoked) on our notifications.
+#[cfg(target_os = "linux")]
 fn monitor() {
     std::thread::spawn(|| {
         use std::io::BufRead;
@@ -79,18 +92,39 @@ fn monitor() {
     });
 }
 
-fn windows(title: &str, body: &str) -> Result<(), String> {
-    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('\'', "''");
-    let script = format!("[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; \
-        $x = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]::new(); \
-        $x.LoadXml('<toast><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>'); \
-        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Crundi').Show([Windows.UI.Notifications.ToastNotification]::new($x))", esc(title), esc(body));
-    Command::new("powershell").args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script]).status().map_err(|e| e.to_string()).map(|_| ())
+/// The app's id with the OS (contract: com.crundi.app, the client edition
+/// com.crundi.client): the all-in-one has its server beside it.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn app_id() -> &'static str {
+    let all_in_one = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("server").join("src").join("index.js").is_file())).unwrap_or(false);
+    if all_in_one { "com.crundi.app" } else { "com.crundi.client" }
 }
 
-fn mac(title: &str, body: &str) -> Result<(), String> {
-    let q = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-    Command::new("osascript").args(["-e", &format!("display notification \"{}\" with title \"{}\"", q(body), q(title))]).status().map_err(|e| e.to_string()).map(|_| ())
+/// A click heard on any thread: the pump takes it.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn heard(chat: String) { CLICKS.lock().unwrap().push(chat); crundi_webview::wake(); }
+
+#[cfg(target_os = "windows")]
+fn windows(title: &str, body: &str, chat: String) -> Result<(), String> {
+    tauri_winrt_notification::Toast::new(app_id()).title(title).text1(body)
+        .on_activated(move |_| { heard(chat.clone()); Ok(()) })
+        .show().map_err(|e| e.to_string())
+}
+
+/// Shown and waited on (this thread is the notification's own); a click on it
+/// or its Open button opens it. Kept at most 6 hours, as main.js keeps them.
+#[cfg(target_os = "macos")]
+fn mac(title: &str, body: &str, chat: String) -> Result<(), String> {
+    use mac_notification_sys::{Notification, NotificationResponse};
+    static APP: std::sync::Once = std::sync::Once::new();
+    APP.call_once(|| { let _ = mac_notification_sys::set_application(app_id()); });
+    let mut n = Notification::new();
+    n.title(title).message(body).wait_for_click(true);
+    match n.send().map_err(|e| e.to_string())? {
+        NotificationResponse::Click | NotificationResponse::ActionButton(_) => heard(chat),
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Clicks heard on the monitor's thread, for the main thread (`pump`).

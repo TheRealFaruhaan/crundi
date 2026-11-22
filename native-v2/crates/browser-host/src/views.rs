@@ -149,6 +149,7 @@ pub fn handle(c: Cmd) -> bool {
             if redraw { if let Some(hh) = host_of(id) { hh.invalidate(PaintElementType::VIEW); } }
         }
         Cmd::ClearCookies { site } => clear_cookies(site.as_deref()),
+        Cmd::DownloadTo { dl, path, .. } => download_to(dl, &path),
     }
     true
 }
@@ -161,6 +162,7 @@ fn open(id: u64, url: &str, frame: bool, network: &str, proxy: Option<Proxy>, or
     let mut client = ViewClient::new(
         ViewRender::new(id), ViewLife::new(id), ViewLoad::new(id), ViewDisplay::new(id),
         ViewDialogs::new(frame), ViewMenu::new(frame), ViewRequests::new(id, frame, ViewResource::new(url.to_string(), referrer)),
+        ViewDownloads::new(id),
     );
     let mut window_info = WindowInfo::default().set_as_windowless(Default::default());
     // The GPU path (gpu.rs): frames as shared textures.
@@ -579,6 +581,47 @@ wrap_request_handler! {
     }
 }
 
+// ─── Downloads (app/main.js wireDownloads: one Save dialog per download) ───
+
+thread_local! {
+    /// Downloads waiting for the app's answer (where to save), by CEF's id.
+    static PENDING: RefCell<HashMap<u32, BeforeDownloadCallback>> = RefCell::new(HashMap::new());
+}
+
+/// The app's answer: continue into `path` without CEF's own dialog, or
+/// cancel ("": the callback let go unrun cancels the download).
+fn download_to(dl: u32, path: &str) {
+    let Some(cb) = PENDING.with(|p| p.borrow_mut().remove(&dl)) else { return };
+    if !path.is_empty() { cb.cont(Some(&CefString::from(path)), 0); }
+}
+
+wrap_download_handler! {
+    pub struct ViewDownloads {
+        id: u64,
+    }
+    impl DownloadHandler {
+        fn can_download(&self, _browser: Option<&mut Browser>, _url: Option<&CefString>, _request_method: Option<&CefString>) -> ::std::os::raw::c_int { 1 }
+        // Held: the app asks the person where (Ev::Download), then Cmd::DownloadTo.
+        fn on_before_download(&self, _browser: Option<&mut Browser>, download_item: Option<&mut DownloadItem>, suggested_name: Option<&CefString>, callback: Option<&mut BeforeDownloadCallback>) -> ::std::os::raw::c_int {
+            let (Some(item), Some(cb)) = (download_item, callback) else { return 0 };
+            let dl = item.id();
+            let url = CefString::from(&item.url()).to_string();
+            let name = suggested_name.map(|n| n.to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| "download".into());
+            PENDING.with(|p| p.borrow_mut().insert(dl, cb.clone()));
+            emit(&Ev::Download { id: self.id, dl, name, url });
+            1
+        }
+        fn on_download_updated(&self, _browser: Option<&mut Browser>, download_item: Option<&mut DownloadItem>, _callback: Option<&mut DownloadItemCallback>) {
+            let Some(item) = download_item else { return };
+            let done = item.is_complete() != 0;
+            if done || item.is_canceled() != 0 || item.is_interrupted() != 0 {
+                let path = CefString::from(&item.full_path()).to_string();
+                emit(&Ev::Downloaded { id: self.id, dl: item.id(), path, ok: done });
+            }
+        }
+    }
+}
+
 wrap_client! {
     pub struct ViewClient {
         render: RenderHandler,
@@ -588,6 +631,7 @@ wrap_client! {
         dialogs: JsdialogHandler,
         menu: ContextMenuHandler,
         requests: RequestHandler,
+        downloads: DownloadHandler,
     }
     impl Client {
         fn render_handler(&self) -> Option<RenderHandler> { Some(self.render.clone()) }
@@ -597,5 +641,6 @@ wrap_client! {
         fn jsdialog_handler(&self) -> Option<JsdialogHandler> { Some(self.dialogs.clone()) }
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> { Some(self.menu.clone()) }
         fn request_handler(&self) -> Option<RequestHandler> { Some(self.requests.clone()) }
+        fn download_handler(&self) -> Option<DownloadHandler> { Some(self.downloads.clone()) }
     }
 }

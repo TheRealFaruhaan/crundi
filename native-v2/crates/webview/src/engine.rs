@@ -52,11 +52,16 @@ pub struct Hooks {
     /// Reload a page whose browser host went away: true when the area made
     /// it again itself (a drawer tab); else the page is made again in place.
     pub reload: fn(usize) -> bool,
+    /// A page started a download (panel, download, suggested name, address):
+    /// the area asks where and answers with `download_to` ("" cancels).
+    pub download: fn(usize, u32, &str, &str),
+    /// A download ended (panel, download, where it went, saved).
+    pub downloaded: fn(usize, u32, &str, bool),
 }
 
 impl Default for Hooks {
     fn default() -> Self {
-        Hooks { changed: |_| {}, visited: |_, _| {}, popup: |_, _| false, load_failed: |_| {}, annotating: || false, ask_note: |_, _| {}, console: |_, _| false, reload: |_| false }
+        Hooks { changed: |_| {}, visited: |_, _| {}, popup: |_, _| false, load_failed: |_| {}, annotating: || false, ask_note: |_, _| {}, console: |_, _| false, reload: |_| false, download: |i, dl, _, _| download_to(i, dl, ""), downloaded: |_, _, _, _| {} }
     }
 }
 
@@ -244,6 +249,9 @@ pub fn status(text: &str) { with(|st| st.status = text.to_string()); }
 fn view_of(i: usize) -> Option<u64> { with(|st| st.panels.get(i).and_then(|p| p.browser)) }
 
 /// A command for panel [i]'s view (dropped when it has none).
+/// Where panel [i]'s download [dl] is saved (the whole path), or "" to cancel it.
+pub fn download_to(i: usize, dl: u32, path: &str) { let path = path.to_string(); to_view(i, move |id| Cmd::DownloadTo { id, dl, path }); }
+
 fn to_view(i: usize, cmd: impl FnOnce(u64) -> Cmd) { if let Some(id) = view_of(i) { client::send_to(id, cmd(id)); } }
 
 // ─── What the host tells a panel ───
@@ -285,6 +293,8 @@ pub(crate) fn on_event(i: usize, id: u64, ev: crate::ipc::Ev) {
         // Links that open a window: the area's (a new tab), else the same panel.
         Ev::Popup { url, .. } => if !(hooks().popup)(i, &url) { client::send_to(id, Cmd::Navigate { id, url }); },
         Ev::Net { method, params, .. } => net_event(i, &method, &params),
+        Ev::Download { dl, name, url, .. } => (hooks().download)(i, dl, &name, &url),
+        Ev::Downloaded { dl, path, ok, .. } => (hooks().downloaded)(i, dl, &path, ok),
         Ev::CdpResult { call, ok, result, .. } => {
             let w = with(|st| st.panels[i].cdp_waiters.remove(&call));
             if let Some(w) = w { w(ok, result); }
@@ -498,8 +508,9 @@ pub fn run_deferred() {
 /// Send a CDP command to panel [i]'s browser; [reply] gets (ok, result).
 pub fn cdp(i: usize, method: &str, params: Value, reply: CdpReply) {
     // A screenshot of a hidden panel: shown in the host until it is taken
-    // (a hidden page draws nothing to capture).
-    let wake = method == "Page.captureScreenshot";
+    // (a hidden page draws nothing to capture). A touch event too: a hidden
+    // renderer never acknowledges it, so its answer would never come.
+    let wake = matches!(method, "Page.captureScreenshot" | "Input.dispatchTouchEvent");
     let reply: CdpReply = if wake {
         Box::new(move |ok, v| { with(|st| if let Some(p) = st.panels.get_mut(i) { p.waking = p.waking.saturating_sub(1); p.unshown_at = Some(std::time::Instant::now()); }); reply(ok, v) })
     } else { reply };
