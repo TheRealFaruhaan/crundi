@@ -1,8 +1,9 @@
 //! The tray (specs/desktop/inbox-tray-bubble.md A.2-A.3; app/main.js
 //! createTray, updateTrayMenu): the head icon, the tooltip "Crundi —
 //! <status>", and the menu in the PC client's order and wording, as far as
-//! it applies to this client: no Start/Stop (no bundled server: A.3's note);
-//! "Check for Updates…", or "Restart to Install Update" once one is downloaded. The PC lock's "Lock (visible)" and "Lock (full)".
+//! it applies to this client: Start and Stop for the local server (the
+//! all-in-one's; local/mod.rs); "Check for Updates…", or "Restart to Install
+//! Update" once one is downloaded. The PC lock's "Lock (visible)" and "Lock (full)".
 //! Kid mode as the PC client's: "Locked", the locks and Quit off while the
 //! window is locked (kid mode or the PC lock: Electron's kidLocked). "Hey Cru" (voiceWakeTrayItems)
 //! with its note. A click (Linux; double click elsewhere) shows the window.
@@ -52,6 +53,10 @@ pub fn menu(s: &State) -> Vec<Item> {
         ("kid", if s.kid_locked { "Locked".into() } else { "Kid mode".into() }, !s.kid_locked, None),
         ("server", "Server\u{2026}".into(), true, None),
         sep(),
+        // startBot / stopBot (the local server; Electron's botStatus).
+        ("start", "Start".into(), s.status == "Stopped" || s.status == "Error", None),
+        ("stop", "Stop".into(), !s.kid_locked && (s.status == "Running" || s.status == "Starting..."), None),
+        sep(),
     ];
     if let Some((on, trained, note)) = &s.wake {
         m.push(("wake", WAKE_LABEL.into(), *trained, Some(*on)));
@@ -97,6 +102,8 @@ pub fn act(id: &str) {
         // Electron's showServerScreen: the server step over the signed-in app
         // (its address, Cancel and Save; F131).
         "server" => { ctx::raise(); ctx::on_app(|win, cx| crundi_shell::show_server_screen(true, win, cx)); }
+        "start" => crate::local::start(),
+        "stop" if !locked => crate::local::stop(),
         "update" => crate::updater::tray_pick(),
         "wake" => { let on = crate::wake::status()["enabled"].as_bool().unwrap_or(false); crate::wake::set(!on); }
         // Not while the kid screen is locked: only the PIN ends it.
@@ -146,7 +153,10 @@ fn set(s: State) {
 pub fn up() -> bool { SHOWN.lock().unwrap().as_ref().is_some_and(|x| x.0) }
 
 /// The connection changed: the status line and the tooltip follow.
-pub fn set_online(online: bool) { set(now(status_label(online).to_string())); }
+pub fn set_online(online: bool) { if !crate::local::active() { set(now(status_label(online).to_string())); } }
+
+/// Local mode: the status is the server's (Electron's botStatus labels).
+pub fn set_server(status: &str) { set(now(crundi_shell::local::status_label(status).to_string())); }
 
 /// What the test driver sees: shown, the tooltip, the menu's labels.
 pub fn props() -> Value {
@@ -271,9 +281,15 @@ mod tests {
     #[test]
     fn the_menu_and_its_words() {
         let s = State { status: "Running".into(), ..Default::default() };
-        assert_eq!(labels(&s), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", "Check for Updates…", "", "Quit"]);
+        assert_eq!(labels(&s), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", "Start", "Stop", "", "Check for Updates…", "", "Quit"]);
         let m = menu(&s);
-        assert!(!m[0].2 && !m[2].2 && m[4].2 && m[5].2 && m[6].2 && m[7].2 && m[10].2 && m[12].2);
+        assert!(!m[0].2 && !m[2].2 && m[4].2 && m[5].2 && m[6].2 && m[7].2 && m[13].2 && m[15].2);
+        // Start while stopped or after an error; Stop while running or starting.
+        assert!(!m[10].2 && m[11].2);
+        for (st, start, stop) in [("Stopped", true, false), ("Error", true, false), ("Starting...", false, true), ("Running", false, true)] {
+            let m = menu(&State { status: st.into(), ..Default::default() });
+            assert_eq!((m[10].2, m[11].2), (start, stop), "{st}");
+        }
         assert_eq!(tooltip("Stopped"), "Crundi — Stopped");
         assert_eq!(status_label(true), "Running");
         assert_eq!(status_label(false), "Stopped");
@@ -295,20 +311,21 @@ mod tests {
         let kid = m.iter().find(|x| x.0 == "kid").unwrap();
         assert_eq!((kid.1.as_str(), kid.2), ("Locked", false));
         assert!(!m.iter().find(|x| x.0 == "quit").unwrap().2);
+        assert!(!m.iter().find(|x| x.0 == "stop").unwrap().2);
         assert!(!m.iter().find(|x| x.0 == "lock-visible").unwrap().2 && !m.iter().find(|x| x.0 == "lock-full").unwrap().2);
     }
 
     #[test]
     fn hey_cru() {
         let untrained = State { status: "Running".into(), kid_locked: false, wake: Some((false, false, String::new())), update_ready: false };
-        assert_eq!(labels(&untrained), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", WAKE_LABEL, "    Train it first in Settings, Voice assistant", "", "Check for Updates…", "", "Quit"]);
+        assert_eq!(labels(&untrained), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", "Start", "Stop", "", WAKE_LABEL, "    Train it first in Settings, Voice assistant", "", "Check for Updates…", "", "Quit"]);
         let m = menu(&untrained);
-        assert_eq!((m[10].2, m[10].3), (false, Some(false)));
+        assert_eq!((m[13].2, m[13].3), (false, Some(false)));
         let on = State { wake: Some((true, true, "Listening".into())), ..untrained.clone() };
         let m = menu(&on);
-        assert_eq!((m[10].2, m[10].3), (true, Some(true)));
-        assert_eq!(m[11].1, "    Listening");
+        assert_eq!((m[13].2, m[13].3), (true, Some(true)));
+        assert_eq!(m[14].1, "    Listening");
         let off = State { wake: Some((false, true, String::new())), ..untrained };
-        assert_eq!(labels(&off), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", WAKE_LABEL, "", "Check for Updates…", "", "Quit"]);
+        assert_eq!(labels(&off), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", "Start", "Stop", "", WAKE_LABEL, "", "Check for Updates…", "", "Quit"]);
     }
 }

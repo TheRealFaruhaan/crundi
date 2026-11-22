@@ -4,7 +4,8 @@
 //! the log file (`crundi.log`) and the single instance.
 //!
 //! Names are package/CONTRACT.md's, so an Electron install moves over in
-//! place: the autostart entry `Crundi.desktop` (client `Crundi Client.desktop`),
+//! place: the autostart entry `crundi.desktop` (Linux all-in-one: Electron's
+//! app.getName() is its package name; client `Crundi Client.desktop`),
 //! the Windows Run value named after the AppUserModelId `com.crundi.app`
 //! (client `com.crundi.client`), the update file `latest`/`client`.
 
@@ -25,6 +26,10 @@ pub fn client_edition() -> bool {
 
 /// Electron's app.getName(): "Crundi", or "Crundi Client".
 pub fn app_name() -> &'static str { if client_edition() { "Crundi Client" } else { "Crundi" } }
+
+/// The autostart entry's name: Electron's app.getName() there. The Linux
+/// all-in-one's is its package name, "crundi" (CONTRACT.md "Launch at startup").
+pub fn launch_name() -> &'static str { if cfg!(target_os = "linux") && !client_edition() { "crundi" } else { app_name() } }
 
 /// The appId / AppUserModelId.
 pub fn app_id() -> &'static str { if client_edition() { "com.crundi.client" } else { "com.crundi.app" } }
@@ -86,12 +91,12 @@ const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 /// made, else the client's own config folder.
 pub fn launch_entry() -> PathBuf {
     if testing() {
-        if cfg!(target_os = "linux") { if let Some(x) = std::env::var_os("XDG_CONFIG_HOME") { return PathBuf::from(x).join("autostart").join(format!("{}.desktop", app_name())); } }
-        return crundi_core::store::config_dir().join("autostart").join(format!("{}.desktop", app_name()));
+        if cfg!(target_os = "linux") { if let Some(x) = std::env::var_os("XDG_CONFIG_HOME") { return PathBuf::from(x).join("autostart").join(format!("{}.desktop", launch_name())); } }
+        return crundi_core::store::config_dir().join("autostart").join(format!("{}.desktop", launch_name()));
     }
     if cfg!(target_os = "macos") { return home().join("Library/LaunchAgents").join(format!("{}.plist", app_id())); }
     let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config"));
-    base.join("autostart").join(format!("{}.desktop", app_name()))
+    base.join("autostart").join(format!("{}.desktop", launch_name()))
 }
 
 /// What starts at login: the AppImage that was started (gone after it
@@ -140,7 +145,7 @@ pub fn set_launch(on: bool) -> Result<bool, String> {
             if let Some(d) = f.parent() { std::fs::create_dir_all(d).map_err(|e| e.to_string())?; }
             let text = if cfg!(target_os = "macos") && !testing() {
                 format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>{}</string><key>ProgramArguments</key><array><string>{exe}</string></array><key>RunAtLoad</key><true/></dict></plist>\n", app_id())
-            } else { desktop_entry(app_name(), &exe) };
+            } else { desktop_entry(launch_name(), &exe) };
             std::fs::write(&f, text).map_err(|e| e.to_string())?;
         }
     }

@@ -1336,6 +1336,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    * than canRestart(), which predates the desktop app's support for it.
    */
   function restartMode() {
+    // The native desktop client's own server (it restarts it on this message, as Electron does).
+    if (process.env.CRUNDI_NATIVE_RUN === '1' && typeof process.send === 'function') return 'desktop';
     if (process.env.INVOCATION_ID && !process.versions.electron) return 'systemd';
     if (process.env.ELECTRON_RUN && typeof process.send === 'function') return 'desktop';
     if (process.env.pm_id !== undefined) return 'pm2';

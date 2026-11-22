@@ -12,7 +12,7 @@
 //!   then the authenticator step ("One more step"); the browser's code step.
 //! Enter submits every field's form.
 
-use crate::{session::Step, slots, views::BarPress, Stores};
+use crate::{local, local_ui::LocalScreen, session::Step, slots, views::BarPress, Stores};
 use crundi_theme::{IconName, T};
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
@@ -34,6 +34,11 @@ pub struct SignIn {
     /// The failed sign-ins seen (a new one clears the code, or the passcode).
     failed_seen: u64,
     press: BarPress,
+    /// Local mode's status screen and setup wizard (local_ui.rs).
+    pub(crate) local_screen: Entity<LocalScreen>,
+    /// The server screen's choice in the all-in-one: connect to a server
+    /// (else run one on this machine; Electron's #srv-remote).
+    srv_remote: bool,
     _subs: Vec<Subscription>,
 }
 
@@ -78,7 +83,11 @@ impl SignIn {
             subs.push(watch(cx, Box::new(move |cx| { let _ = me.update(cx, |_, cx| cx.notify()); })));
             (open, draw)
         });
-        SignIn { stores, server_input, password_input, code_input, collab_name, collab_pass, setup_pw, enrol_saved: false, restore, failed_seen: 0, press: BarPress::default(), _subs: subs }
+        let local_screen = cx.new(|cx| LocalScreen::new(window, cx));
+        let lo = local::local(cx);
+        subs.push(cx.observe(&lo, |_, _, cx| cx.notify()));
+        let srv_remote = local::client_config(lo.read(cx).bundled).0 == "remote";
+        SignIn { local_screen, srv_remote, stores, server_input, password_input, code_input, collab_name, collab_pass, setup_pw, enrol_saved: false, restore, failed_seen: 0, press: BarPress::default(), _subs: subs }
     }
 
     fn submit(&mut self, what: Submit, cx: &mut Context<Self>) {
@@ -87,6 +96,23 @@ impl SignIn {
         match what {
             Submit::Server => {
                 let v = val(&self.server_input, cx);
+                // The all-in-one's choice (Electron's client:setConfig): run a
+                // server here, or connect to one; either way for the next start.
+                if local::local(cx).read(cx).bundled {
+                    let t = v.trim().to_string();
+                    let ok = !self.srv_remote || { let l = t.to_ascii_lowercase(); l.starts_with("http://") || l.starts_with("https://") };
+                    if !ok {
+                        self.stores.session.update(cx, |s, cx| { s.server_note = "Enter the full server address, including http:// or https://".into(); cx.notify(); });
+                        return;
+                    }
+                    let saved = local::write_client_config(if self.srv_remote { "remote" } else { "local" }, &t);
+                    if !self.srv_remote || self.stores.session.read(cx).server_over {
+                        if self.srv_remote { crundi_core::store::update(|st| { let b = crundi_core::api::normalize_base(&t); if st.server != b { st.refresh_token.clear(); } st.server = b; }); }
+                        let note = if saved { "Saved. Restart Crundi for it to take effect." } else { "Could not save the setting" };
+                        self.stores.session.update(cx, |s, cx| { s.server_note = note.into(); cx.notify(); });
+                        return;
+                    }
+                }
                 // Over the signed-in app: kept for the next start (F131).
                 if self.stores.session.read(cx).server_over { self.stores.session.update(cx, |s, cx| s.save_server_over(&v, cx)); }
                 else { self.stores.session.update(cx, |s, cx| s.check_server(&v, cx)); }
@@ -124,7 +150,13 @@ impl SignIn {
     pub(crate) fn fill_server(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let srv = crundi_core::store::load().server;
         self.server_input.update(cx, |st, cx| st.set_value(srv, window, cx));
+        self.srv_remote = local::client_config(local::local(cx).read(cx).bundled).0 == "remote";
     }
+
+    pub(crate) fn srv_remote_now(&self) -> bool { self.srv_remote }
+
+    /// The server screen's choice (the driver's "server-mode").
+    pub(crate) fn set_srv_remote(&mut self, remote: bool, cx: &mut Context<Self>) { self.srv_remote = remote; cx.notify(); }
 }
 
 impl Render for SignIn {
@@ -149,6 +181,13 @@ impl Render for SignIn {
             .child(w::icon_button("win-close", IconName::X, "Close").on_click(|_, window, cx| crate::close_window(window, cx)));
         let page = div().flex().flex_col().size_full().bg(T::bg()).child(bar);
 
+        // Local mode: the status screen or the setup wizard (index.html), until
+        // its server is up and signed in to.
+        let lo = local::local(cx).read(cx).clone();
+        if lo.active && !over {
+            return page.child(self.local_screen.clone().cached(StyleRefinement::default().flex_1().w_full().min_h_0())).into_any_element();
+        }
+
         // The start-up screen (#boot).
         if step == Step::Boot {
             return page.child(div().flex().flex_col().flex_1().items_center().justify_center().gap(T::SP_20 + T::SP_2)
@@ -160,13 +199,23 @@ impl Render for SignIn {
 
         // The server step (Electron's #server-screen, the client-only build).
         if step == Step::Server || over {
-            let (err, had_server) = if over { (note, true) } else { (err, had_server) };
+            let noted = !note.is_empty();
+            let (err, had_server) = if over { (note, true) } else if noted { (note, had_server) } else { (err, had_server) };
+            let (bundled, remote) = (lo.bundled, self.srv_remote);
+            let radio = |id: &'static str, title: &'static str, sub: &'static str, on: bool, v: bool| div().id(id).flex().items_start().gap(T::SP_8).mb(T::SP_8).cursor_pointer()
+                .child(w::choice_mark(false, on, false))
+                .child(div().flex().flex_col().child(div().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(title))
+                    .child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child(sub)))
+                .on_click(cx.listener(move |this, _, _, cx| this.set_srv_remote(v, cx)));
             let card = w::card().w(T::DIALOG_W_LG).p(T::SP_24).gap(T::SP_6).bg(T::bg_secondary())
                 .child(div().text_size(T::TEXT_20).font_weight(T::W_SEMIBOLD).text_color(T::text()).child("Server"))
                 .child(div().mb(T::SP_10).text_size(T::TEXT_13).text_color(T::text_muted())
                     .child("Crundi can run its own server on this machine, or connect to one running elsewhere — a container on your network, for instance. Either way the browser panel opens here, in front of you."))
-                .child(w::input(&self.server_input))
-                .child(div().min_h(T::SP_16).mb(T::SP_6).text_size(T::TEXT_12).text_color(if err.is_empty() || over { T::text_muted() } else { T::red() }).child(err.clone()))
+                .when(bundled, |d| d
+                    .child(radio("srv-local", "Run a server on this machine", "The standard setup. Everything local.", !remote, false))
+                    .child(radio("srv-remote", "Connect to a server", "Your projects and Claude live there; this app is the window onto them.", remote, true)))
+                .child(div().when(bundled && !remote, |d| d.opacity(0.45)).child(w::input(&self.server_input)))
+                .child(div().min_h(T::SP_16).mb(T::SP_6).text_size(T::TEXT_12).text_color(if err.is_empty() || over || noted { T::text_muted() } else { T::red() }).child(err.clone()))
                 .child(div().flex().gap(T::SP_8)
                     .child(w::disabled(w::primary("srv-save", "Save"), busy).on_click(cx.listener(|this, _, _, cx| this.submit(Submit::Server, cx))))
                     .when(had_server, |d| d.child(w::button("srv-cancel", "Cancel").on_click({ let session = session.clone(); move |_, _, cx| {

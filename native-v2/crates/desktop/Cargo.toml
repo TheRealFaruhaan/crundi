@@ -48,6 +48,10 @@ tar = "0.4"
 ureq.workspace = true
 cpal.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# The local server's IPC channel at fd 3 and its process group (local/server.rs).
+libc = "0.2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "0.13", features = ["screensaver"] }
 # The PC lock's auto lock: the idle time and the screen's lock on Wayland (idle.rs).
