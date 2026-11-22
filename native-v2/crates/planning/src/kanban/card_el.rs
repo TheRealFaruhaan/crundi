@@ -6,7 +6,7 @@
 //! The card under the pointer, or in use, is the live one (view.rs).
 
 use super::board::Card;
-use crate::paint::{r, Draw, Op, Txt, PHI};
+use crate::paint::{r, Draw, Marks, Op, Txt, PHI};
 use crundi_theme::{IconName, T};
 use gpui::*;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
@@ -18,16 +18,27 @@ pub use crundi_widgets::paint::Look;
 pub struct Key { pub card: Card, pub dragged: bool, pub clip: bool, pub width: Pixels }
 
 /// The laid out cards of a column (by card id): kept while only the scroll moves.
-pub type Cache = Rc<RefCell<HashMap<String, (Key, Rc<Draw>)>>>;
+pub type Cache = Rc<RefCell<HashMap<String, (Key, Rc<Draw>, Rc<Marks>)>>>;
 
 fn b(x: Pixels, y: Pixels, w: Pixels, h: Pixels) -> Bounds<Pixels> { Bounds { origin: point(x, y), size: size(w, h) } }
 
 /// A control at rest (`w::paint::button_at`): its width; its place is a hit.
 #[allow(clippy::too_many_arguments)]
-fn button(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconName, look: Look, hit: &str, window: &mut Window, cx: &App) -> Pixels {
+fn button(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconName, look: Look, hit: &str, tip: &str, mk: &mut Marks, window: &mut Window, cx: &App) -> Pixels {
     let w = crundi_widgets::paint::button_at(d, x, y, label, icon, look, window, cx);
+    let bx = b(x, y, w, if label.is_some() { T::BTN_H } else { T::ICON_BTN });
     d.hits.push((b(x, y, w, T::BTN_H.max(T::ICON_BTN)), hit.to_string()));
+    marks_for(mk, bx, label, tip);
     w
+}
+
+/// A control's marks, as the live one has them (`w::button`'s label,
+/// `w::icon_button`'s tip).
+fn marks_for(mk: &mut Marks, bx: Bounds<Pixels>, label: Option<&str>, tip: &str) {
+    match label {
+        Some(l) => mk.push((bx, SharedString::from(l.to_string()), false)),
+        None => mk.push((bx, SharedString::from(tip.to_string()), true)),
+    }
 }
 
 fn button_w(label: Option<&str>, look: Look, window: &mut Window, cx: &App) -> Pixels { crundi_widgets::paint::button_w(label, look, window, cx) }
@@ -36,9 +47,11 @@ fn button_w(label: Option<&str>, look: Look, window: &mut Window, cx: &App) -> P
 /// colours view.rs gives the live paperclip and menu): `w::paint::button_tinted_at`,
 /// its place a hit. Returns its width.
 #[allow(clippy::too_many_arguments)]
-fn button_tint(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconName, look: (Option<Hsla>, Hsla, Hsla), hit: &str, window: &mut Window, cx: &App) -> Pixels {
+fn button_tint(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconName, look: (Option<Hsla>, Hsla, Hsla), hit: &str, tip: &str, mk: &mut Marks, window: &mut Window, cx: &App) -> Pixels {
     let w = crundi_widgets::paint::button_tinted_at(d, x, y, label, icon, look, window, cx);
+    let bx = b(x, y, w, if label.is_some() { T::BTN_H } else { T::ICON_BTN });
     d.hits.push((b(x, y, w, T::BTN_H.max(T::ICON_BTN)), hit.to_string()));
+    marks_for(mk, bx, label, tip);
     w
 }
 
@@ -57,10 +70,12 @@ pub(crate) fn menu_look(foot: bool, open: bool) -> (Option<Hsla>, Hsla, Hsla) {
     else if foot { (None, T::text_secondary(), T::border()) } else { (None, T::text_muted(), transparent_black()) }
 }
 
-/// Lay a card out at `width` (its box's width).
-pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
+/// Lay a card out at `width` (its box's width): its drawing, and the words
+/// on it where they are (its marks).
+pub fn lay(k: &Key, window: &mut Window, cx: &App) -> (Draw, Marks) {
     let cd = &k.card;
     let mut d = Draw::default();
+    let mut mk = Marks::new();
     let cw = k.width;
     let (x0, iw) = (px(1.) + T::SP_12, cw - px(2.) - T::SP_12 * 2.);
     let mut y = px(1.) + T::SP_12;
@@ -82,6 +97,7 @@ pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
     let title = Rc::new(Txt::shape(&cd.title, T::TEXT_14, T::W_SEMIBOLD, d.fade(T::text()), PHI, Some(tw), None, window, cx));
     let mut row_h = title.h.max(T::ICON_BTN);
     let th = title.h;
+    mk.push((b(x0, y, tw, th), SharedString::from(cd.title.clone()), false));
     d.text(title, point(x0, y));
     let mut x = x0 + tw + T::SP_8;
     if let Some(w) = mm_w {
@@ -89,17 +105,19 @@ pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
         let tb = crundi_widgets::paint::icon_tag_at(&mut d, x, cy, IconName::Share2, &cd.mm.to_string(), "accent", window, cx);
         row_h = row_h.max(T::SP_2 + tb.size.height);
         d.hits.push((tb, "mm".into()));
+        mk.push((tb, SharedString::from(format!("{} linked mindmap idea(s)", cd.mm)), true));
         x += w + T::SP_8;
     }
-    let w = button_tint(&mut d, x, y, media.as_deref(), IconName::Paperclip, clip_look(cd.media > 0, k.clip), "clip", window, cx);
+    let w = button_tint(&mut d, x, y, media.as_deref(), IconName::Paperclip, clip_look(cd.media > 0, k.clip), "clip", "Attachments", &mut mk, window, cx);
     x += w + T::SP_8;
-    if cd.compact { button_tint(&mut d, x, y, None, IconName::Menu, menu_look(false, cd.menu_open), "menu", window, cx); }
+    if cd.compact { button_tint(&mut d, x, y, None, IconName::Menu, menu_look(false, cd.menu_open), "menu", "Task actions", &mut mk, window, cx); }
     let _ = th;
     y += row_h;
 
     if !cd.desc.is_empty() {
         let t = Rc::new(Txt::shape(&cd.desc, T::TEXT_12, FontWeight::NORMAL, d.fade(T::text_secondary()), PHI, Some(iw), None, window, cx));
         let h = t.h;
+        mk.push((b(x0, y, iw, h), SharedString::from(cd.desc.clone()), false));
         d.text(t, point(x0, y));
         y += h;
     }
@@ -122,13 +140,14 @@ pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
             d.hits.push((cb, format!("tick:{}:{}", td.id, td.done)));
             let mut cx_ = rx + T::CHECK_BOX + T::SP_8;
             let h = t.h;
+            mk.push((b(cx_, ry, tw, h), SharedString::from(td.text.clone()), false));
             d.text(t, point(cx_, ry));
             cx_ += tw + T::SP_8;
-            if let (Some(m), Some(w)) = (media.as_deref(), mw) { button(&mut d, cx_, ry, Some(m), IconName::Paperclip, Look::Default, &format!("tmedia:{}", td.id), window, cx); cx_ += w + T::SP_8; }
+            if let (Some(m), Some(w)) = (media.as_deref(), mw) { button(&mut d, cx_, ry, Some(m), IconName::Paperclip, Look::Default, &format!("tmedia:{}", td.id), "Subtask media", &mut mk, window, cx); cx_ += w + T::SP_8; }
             // The "…" at its faint opacity (times the card's).
             let was = d.opacity;
             d.opacity = Some(was.unwrap_or(1.) * T::KANBAN_O_CARET);
-            button(&mut d, cx_, ry, None, IconName::Ellipsis, Look::Ghost, &format!("more:{}", td.id), window, cx);
+            button(&mut d, cx_, ry, None, IconName::Ellipsis, Look::Ghost, &format!("more:{}", td.id), "Subtask actions", &mut mk, window, cx);
             d.opacity = was;
             let _ = h;
             y += inner + T::SP_4 * 2.;
@@ -153,15 +172,15 @@ pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
     // The footer: the menu, then + Subtask (not on a compact card).
     if !cd.compact {
         y += T::SP_10;
-        button_tint(&mut d, x0, y, None, IconName::Menu, menu_look(true, cd.menu_open), "menu", window, cx);
-        button(&mut d, x0 + T::ICON_BTN + T::SP_6, y, Some("Subtask"), IconName::Plus, Look::Default, "sub", window, cx);
+        button_tint(&mut d, x0, y, None, IconName::Menu, menu_look(true, cd.menu_open), "menu", "Task actions", &mut mk, window, cx);
+        button(&mut d, x0 + T::ICON_BTN + T::SP_6, y, Some("Subtask"), IconName::Plus, Look::Default, "sub", "Add a subtask", &mut mk, window, cx);
         y += T::ICON_BTN.max(T::BTN_H);
     }
     let h = y + T::SP_10 + px(1.);
     if let Op::Bg { b: bb, .. } = &mut d.ops[card_bg] { bb.size.height = h; }
     d.border(b(px(0.), px(0.), cw, h), T::R_CARD, px(1.), T::border());
     d.h = h;
-    d
+    (d, mk)
 }
 
 /// The card at rest, one element: a measured leaf (its height from its
@@ -174,13 +193,14 @@ impl IntoElement for CardEl {
 }
 
 impl CardEl {
-    fn draw(&self, width: Pixels, window: &mut Window, cx: &App) -> Rc<Draw> {
+    fn draw(&self, width: Pixels, window: &mut Window, cx: &App) -> (Rc<Draw>, Rc<Marks>) {
         let mut key = self.key.clone();
         key.width = width;
-        if let Some((k, d)) = self.cache.borrow().get(&key.card.id) { if *k == key { return d.clone(); } }
-        let d = Rc::new(lay(&key, window, cx));
-        self.cache.borrow_mut().insert(key.card.id.clone(), (key, d.clone()));
-        d
+        if let Some((k, d, m)) = self.cache.borrow().get(&key.card.id) { if *k == key { return (d.clone(), m.clone()); } }
+        let (d, m) = lay(&key, window, cx);
+        let (d, m) = (Rc::new(d), Rc::new(m));
+        self.cache.borrow_mut().insert(key.card.id.clone(), (key, d.clone(), m.clone()));
+        (d, m)
     }
 }
 
@@ -193,12 +213,14 @@ impl Element for CardEl {
         let me = CardEl { key: self.key.clone(), cache: self.cache.clone(), status: self.status.clone(), boxes: self.boxes.clone() };
         let id = window.request_measured_layout(Style::default(), move |known, avail, window, cx| {
             let w = known.width.or(match avail.width { AvailableSpace::Definite(w) => Some(w), _ => None }).unwrap_or(px(0.));
-            size(w, me.draw(w, window, cx).h)
+            size(w, me.draw(w, window, cx).0.h)
         });
         (id, ())
     }
     fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), window: &mut Window, cx: &mut App) -> Option<(Rc<Draw>, Hitbox)> {
-        let d = self.draw(bounds.size.width, window, cx);
+        let (d, marks) = self.draw(bounds.size.width, window, cx);
+        // Its words, for Cru's highlight (F202).
+        crate::paint::prepaint_marks(&self.key.card.id, &marks, bounds.origin, window, cx);
         // Its box, as painted (the drop target, a press's grab).
         let bx = super::board::Box4 { x: f32::from(bounds.origin.x), y: f32::from(bounds.origin.y), w: f32::from(bounds.size.width), h: f32::from(bounds.size.height) };
         let mut bxs = self.boxes.borrow_mut();
@@ -216,25 +238,29 @@ impl Element for CardEl {
         let (id, title) = (self.key.card.id.clone(), self.key.card.title.clone());
         // A press on a control at rest: its click (down and up on the same
         // control) does what the live control does (a click right after a
-        // scroll, before the pointer moved and made this card live).
-        let pressed: Rc<RefCell<Option<String>>> = Rc::default();
+        // scroll, before the pointer moved and made this card live). The
+        // control pressed is kept in the board's boxes: a frame drawn before
+        // the release paints this card again, with new handlers.
         let origin = bounds.origin;
         let at = move |p: Point<Pixels>, d: &Draw| d.hits.iter().find(|(bb, _)| bb.contains(&(p - origin))).map(|(_, n)| n.clone());
-        let (d1, p1, h1, b1) = (d.clone(), pressed.clone(), hit.clone(), self.boxes.clone());
+        let (d1, h1, b1) = (d.clone(), hit.clone(), self.boxes.clone());
         window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble || e.button != MouseButton::Left || !h1.is_hovered(window) { return; }
-            *p1.borrow_mut() = at(e.position, &d1);
-            b1.borrow_mut().pressing = true;
             super::press(&id, &title, e.position, cx);
+            let mut b = b1.borrow_mut();
+            b.rest_press = at(e.position, &d1).map(|c| (id.clone(), c));
+            b.pressing = true;
         });
         let (d2, id2, cw, h2, b2) = (d.clone(), self.key.card.id.clone(), bounds.size.width, hit.clone(), self.boxes.clone());
         window.on_mouse_event(move |e: &MouseUpEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble || e.button != MouseButton::Left { return; }
-            b2.borrow_mut().pressing = false;
+            // (Every card at rest hears the release: the one pressed takes it.)
+            let was = { let mut b = b2.borrow_mut(); b.pressing = false; if b.rest_press.as_ref().is_some_and(|p| p.0 == id2) { b.rest_press.take().map(|p| p.1) } else { None } };
             // Its own release lets go of the card: a press and release in one
             // frame come before the overlay listens for the release (F213).
-            if h2.is_hovered(window) { super::pointer_up(cx); }
-            let Some(was) = pressed.borrow_mut().take() else { return };
+            // Released off it, it lets go of itself if it is the one held.
+            if h2.is_hovered(window) { super::pointer_up(cx); } else { super::release(&id2, cx); }
+            let Some(was) = was else { return };
             if !h2.is_hovered(window) || at(e.position, &d2).as_deref() != Some(was.as_str()) { return; }
             let Some((hb, _)) = d2.hits.iter().find(|(_, n)| *n == was) else { return };
             let bx = super::board::Box4 { x: f32::from(origin.x + hb.origin.x), y: f32::from(origin.y + hb.origin.y), w: f32::from(hb.size.width), h: f32::from(hb.size.height) };

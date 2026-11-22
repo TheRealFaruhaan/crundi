@@ -70,7 +70,7 @@ fn meta_chip(id: String, kind: &str, text: &str, todo: i32, tip: &str, z: f32, l
         .when(kind == "inherited", |d| d.border_1().border_dashed().border_color(T::text_muted()))
         .when_some(icon, |d, i| d.child(w::icon(i, T::ICON_SM * z)))
         .when(todo > 0, |d| d.child(w::icon(if todo == 2 { IconName::SquareCheck } else { IconName::Square }, T::ICON_SM * z)))
-        .child(div().min_w_0().truncate().child(text.to_string()));
+        .child(div().relative().min_w_0().truncate().child(text.to_string()).child(w::find::mark(text.to_string())));
     if !live { return d.into_any_element(); }
     w::tip(d.id(SharedString::from(id)), tip.to_string()).into_any_element()
 }
@@ -88,7 +88,7 @@ fn card(r: &Row, mode: Mode, z: f32, edit: Option<&Entity<w::TextareaState>>, ho
     let border = if strong { T::accent() } else if r.linked { T::green() } else if r.root || r.scoped { T::accent() } else { T::border() };
     let words = div().min_w_0().text_size(T::TEXT_13 * z).font_weight(T::W_SEMIBOLD).text_color(T::text()).line_height(relative(T::LH_UI));
     let body: AnyElement = match mode {
-        Mode::Normal => words.line_clamp(2).text_ellipsis().child(r.text.clone()).into_any_element(),
+        Mode::Normal => words.relative().line_clamp(2).text_ellipsis().child(r.text.clone()).child(w::find::mark(r.text.clone())).into_any_element(),
         Mode::Open => div().id(SharedString::from(format!("mm-open-{}", r.id))).max_h(T::TEXT_13 * z * T::LH_UI * 7.).overflow_y_scroll()
             .child(words.child(r.text.clone())).into_any_element(),
         Mode::Editing => keys_first(div()).children(edit.map(|e| w::textarea(e).appearance(false).text_size(T::TEXT_13 * z).font_weight(T::W_SEMIBOLD))).into_any_element(),
@@ -156,7 +156,7 @@ fn ghost(r: &Row, z: f32, hot: bool) -> AnyElement {
         // Hovered (the map's hit test; pressed through the map too).
         .when(hot, |d| d.opacity(1.).border_color(T::accent()).text_color(T::accent_hover()))
         .child(w::icon(IconName::Plus, T::ICON_MD * z))
-        .child(div().text_size(T::TEXT_12 * z).font_weight(T::W_MEDIUM).child("add idea"))
+        .child(div().relative().text_size(T::TEXT_12 * z).font_weight(T::W_MEDIUM).child("add idea").child(w::find::mark("add idea")))
         .child(measure(r.id.clone(), z))
         .into_any_element()
 }
@@ -588,7 +588,7 @@ pub struct MapView {
     store: Entity<M>, pan: Entity<Pan>, edges: Option<Edges>, hot: Option<Hot>, pressed: Option<Hot>,
     /// The ideas at rest, laid out (idea_el.rs), and the ghost's drawing per zoom.
     ideas: super::idea_el::Cache,
-    ghost: Option<(u32, Rc<crate::paint::Draw>)>,
+    ghost: Option<(u32, super::idea_el::Laid)>,
     /// The pan and zoom as last drawn.
     last_pan: Option<(f32, f32, f32)>,
     _subs: Vec<Subscription>,
@@ -720,7 +720,7 @@ impl Render for MapView {
         // must stay divs (a glow, a cut chip), are divs over it.
         let mut rest: Vec<super::idea_el::Item> = vec![];
         let mut divs: Vec<AnyElement> = vec![];
-        let ghost_draw = match &self.ghost { Some((zb, d)) if *zb == z.to_bits() => d.clone(), _ => { let d = Rc::new(super::idea_el::lay_ghost(z, window, cx)); self.ghost = Some((z.to_bits(), d.clone())); d } };
+        let ghost_draw = match &self.ghost { Some((zb, d)) if *zb == z.to_bits() => d.clone(), _ => { let d = super::idea_el::lay_ghost(z, window, cx); self.ghost = Some((z.to_bits(), d.clone())); d } };
         for r in &s.rows {
             if !seen(r.x, r.y, r.h) { continue; }
             match r.kind {
@@ -730,10 +730,10 @@ impl Render for MapView {
                     if !h && !s.all_div {
                         let k = super::idea_el::key(r, z);
                         let cached = self.ideas.borrow().get(&r.id).filter(|(kk, _)| *kk == k).map(|(_, d)| d.clone());
-                        let d = match cached { Some(d) => d, None => { let d = super::idea_el::lay_idea(r, z, window, cx).map(Rc::new); self.ideas.borrow_mut().insert(r.id.clone(), (k, d.clone())); d } };
-                        if let Some(d) = d {
+                        let d = match cached { Some(d) => d, None => { let d = super::idea_el::lay_idea(r, z, window, cx); self.ideas.borrow_mut().insert(r.id.clone(), (k, d.clone())); d } };
+                        if let Some((d, marks)) = d {
                             let top = crate::paint::r(px((r.y * z - r.h * z / 2.).max(f32::from(T::SP_4) * z)));
-                            rest.push(super::idea_el::Item { id: r.id.clone(), left: crate::paint::r(px(r.x * z)), top, draw: d });
+                            rest.push(super::idea_el::Item { id: r.id.clone(), left: crate::paint::r(px(r.x * z)), top, draw: d, marks });
                             continue;
                         }
                     }
@@ -741,7 +741,7 @@ impl Render for MapView {
                 }
                 "ghost" if !r.hidden => {
                     let h = matches!(&self.hot, Some(Hot::Ghost(i, _)) if *i == r.id);
-                    if !h && !s.all_div { rest.push(super::idea_el::Item { id: r.id.clone(), left: crate::paint::r(px(r.x * z)), top: crate::paint::r(px(r.y * z - r.h * z / 2.)), draw: ghost_draw.clone() }); }
+                    if !h && !s.all_div { rest.push(super::idea_el::Item { id: r.id.clone(), left: crate::paint::r(px(r.x * z)), top: crate::paint::r(px(r.y * z - r.h * z / 2.)), draw: ghost_draw.0.clone(), marks: ghost_draw.1.clone() }); }
                     else { divs.push(ghost(r, z, h)); }
                 }
                 "drop" => divs.push(drop_box(r, z)),

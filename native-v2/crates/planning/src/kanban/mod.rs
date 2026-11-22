@@ -66,6 +66,10 @@ pub(crate) struct Boxes {
     /// A press began on a card at rest: it stays at rest until the release
     /// (its click is its own, card_el.rs).
     pub pressing: bool,
+    /// The control of a card at rest the press began on: (card id, control).
+    /// Kept here, not in the painted card, so a frame drawn between the press
+    /// and the release (the column redrawn by the pointer's move) keeps it.
+    pub rest_press: Option<(String, String)>,
     /// A press began on a subtask row (its own drag; the card's press skips it).
     pub sub_press: bool,
 }
@@ -540,7 +544,8 @@ pub(crate) fn open_media(id: &str, cx: &mut App) {
 // ─── Drag to move ───
 
 pub(crate) fn press(id: &str, title: &str, at: Point<Pixels>, cx: &mut App) {
-    let card = with(cx, |k| k.boxes.borrow().cards.iter().find(|(_, c, _)| c == id).map(|x| x.2).unwrap_or_default());
+    // (A press on a card at rest names its control after this.)
+    let card = with(cx, |k| { let mut b = k.boxes.borrow_mut(); b.rest_press = None; b.cards.iter().find(|(_, c, _)| c == id).map(|x| x.2).unwrap_or_default() });
     drag_with(cx, |d| d.press = Some(Press { id: id.into(), title: title.into(), at, card }));
 }
 
@@ -612,6 +617,15 @@ pub(crate) fn own_edge<V: 'static>(s: w::Scroller, bounds: impl Fn() -> Bounds<P
             running.set(false);
         }).detach();
     })
+}
+
+/// A release anywhere lets go of card `id` if it is the one held: a press,
+/// moves and the release in one frame (a quick flick onto a terminal) end
+/// before the overlay listens for the release, and the press would stay
+/// armed (the next move would drag the card).
+pub(crate) fn release(id: &str, cx: &mut App) {
+    let mine = { let d = store(cx).read(cx).drag.read(cx); d.press.as_ref().is_some_and(|p| p.id == id) || d.drag.as_ref().is_some_and(|g| g.id == id) };
+    if mine { pointer_up(cx); }
 }
 
 pub(crate) fn pointer_up(cx: &mut App) {

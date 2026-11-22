@@ -250,8 +250,15 @@ export async function run(T_, t) {
         t.check('…the box empty after Reject', A(a3).pin === '', A(a3));
         // F229: after an approve the next card is armed, whichever comes
         // first, the server's push or the POST's answer.
-        await T.act('factories-transcript-head', 'ask-set', JSON.stringify([rq('rqd', 'pin', 'Delta'), rq('rqe', 'pin', 'Epsilon')]));
-        await T.until('two requests, the first armed', (p) => A(p).cards?.length === 2 && A(p).cards[0].id === 'rqd' && A(p).cards[0].armed, 6000);
+        // (The server's own list, loaded a moment late, can replace the one set here:
+        // set again until it holds.)
+        const two = (p) => A(p).cards?.length === 2 && A(p).cards[0].id === 'rqd' && A(p).cards[0].armed;
+        for (let i = 0; i < 3; i++) {
+          await T.act('factories-transcript-head', 'ask-set', JSON.stringify([rq('rqd', 'pin', 'Delta'), rq('rqe', 'pin', 'Epsilon')]));
+          await sleep(500);
+          if (two(await T.props())) break;
+        }
+        await T.until('two requests, the first armed', two, 6000);
         await T.act('factories-transcript-head', 'ask-set', JSON.stringify([rq('rqe', 'pin', 'Epsilon')]));
         await T.until('the push first: the next card armed', (p) => A(p).cards?.[0]?.id === 'rqe' && A(p).cards[0].armed, 6000);
         await T.act('factories-transcript-head', 'ask-approved', 'rqd');

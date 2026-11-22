@@ -83,7 +83,7 @@ export async function run(T, t) {
     const more = moreOf(s);
     const cb = K(s).boxes.cards.find((x) => x.id === cardId);
     if (more && cb) await dropOnTerm('a Kanban subtask', cb.x + 50, more.y + more.h / 2, `[Kanban Subtask ID: ${todo.id}]`);
-    else t.check('the card\'s subtask row is on show', false, { todo, controls: K(s).boxes.controls.filter((c) => c.id === cardId) });
+    else t.check('the card\'s subtask row is on show', false, { todo, controls: K(s).boxes.controls.filter((c) => c.id === cardId), card: cb, leaf: leaf(s, 'panel:kanban'), drag: K(s).drag, held: K(s).held, cards: K(s).boxes.cards.length });
   }
   await T.ui('workbench:pane-close', 'panel:kanban');
   await T.until('the Kanban pane closes', (p) => !p.panes?.includes('panel:kanban'));

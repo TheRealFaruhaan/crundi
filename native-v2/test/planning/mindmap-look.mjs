@@ -47,4 +47,41 @@ export async function run(T_, t) {
     }
     t.check('an idea at rest looks as its div (pixels differing on the map)', n === 0, { n, crop });
   } else console.log('(no snapshots: skipped the picture check)');
+  // F202: Cru's highlight finds an idea's words drawn at rest (idea_el) and its chip's,
+  // and rings them inside the idea.
+  {
+    const D = (p) => p.areas?.desktop || {};
+    await T.mouse('move', 60, 600);
+    // (A big map, left by the suites before: panned to the idea first.)
+    const view = (p) => { const [cx, cy] = M(p).canvas, [vw, vh] = M(p).view; return { x: cx, y: cy, w: vw, h: vh }; };
+    const shown = (p, text) => { const v = view(p), b = M(p).nodes.find((x) => x.text === text)?.box; return b && b.x >= v.x && b.y >= v.y && b.x + b.w <= v.x + v.w && b.y + b.h <= v.y + v.h; };
+    const showIdea = async (text) => {
+      const q0 = await T.state();
+      if (shown(q0, text)) return;
+      const v = view(q0), b = M(q0).nodes.find((x) => x.text === text).box;
+      const [dx, dy] = [b.x - (v.x + v.w / 3), b.y - (v.y + v.h / 2)];
+      await T.act('mindmap-pan', String(dx), String(dy));
+      if (!shown(await T.state(), text)) await T.act('mindmap-pan', String(-2 * dx), String(-2 * dy));
+      await T.until(`"${text}" on show to find`, (p) => shown(p, text), 4000);
+    };
+    await showIdea('Scoped to the project');
+    await t.sleep(400);
+    await T.act('cru-ui-go', JSON.stringify({ id: 'ml1', tab: 'mindmap', highlight: 'Scoped to the project', note: 'This idea' }));
+    const q = await T.until('Cru\'s highlight finds an idea at rest by its words (F202)', (p) => D(p).cru?.lastAck?.id === 'ml1' && D(p).cru.lastAck.found === true, 8000);
+    if (q) {
+      const r = D(q).cruSpot?.ring?.at, n = M(q).nodes.find((x) => x.text === 'Scoped to the project')?.box;
+      t.check('…the ring is on its words, inside the idea', !!(r && n && r.x >= n.x - 1 && r.y >= n.y - 1 && r.x + r.w <= n.x + n.w + 1 && r.h < n.h), { r, n });
+    }
+    await t.sleep(500);
+    await T.mouse('click', 60, 600);
+    await T.until('…a press: the ring goes', (p) => !D(p).cruSpot?.ring, 4000);
+    await showIdea('With notes');
+    await T.mouse('move', 60, 600);
+    await t.sleep(400);
+    await T.act('cru-ui-go', JSON.stringify({ id: 'ml2', tab: 'mindmap', highlight: '2 notes', note: 'Its notes' }));
+    await T.until('…and a chip\'s words (F202)', (p) => D(p).cru?.lastAck?.id === 'ml2' && D(p).cru.lastAck.found === true, 8000);
+    await t.sleep(500);
+    await T.mouse('click', 60, 600);
+    await T.until('…the ring goes', (p) => !D(p).cruSpot?.ring, 4000);
+  }
 }
