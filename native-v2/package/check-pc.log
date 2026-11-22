@@ -1,0 +1,123 @@
+
+== Build tools image (0 s)
+
+== Node 22 (0 s)
+v22.23.5
+
+== Worker (Ubuntu 24.04, the PC's Rust toolchain) (0 s)
+-rwxr-xr-x 2 farhan farhan 4662800 Nov 22 22:57 /home/farhan/.cache/crundi-pack/worker-target/release/crundi-worker
+
+== Server node_modules (built by the bundled Node, Ubuntu 24.04) (2 s)
+the client binary needs glibc 2.43: upgrade test on Ubuntu 26.04
+
+== Stage and .deb (full) (2 s)
+/home/farhan/.cache/crundi-pack/stage-full
+/home/farhan/.cache/crundi-pack/dist/Crundi-1.21.8-dev.8-linux-x64.deb
+
+== Stage and .deb (client) (63 s)
+/home/farhan/.cache/crundi-pack/stage-client
+/home/farhan/.cache/crundi-pack/dist/Crundi-Client-1.21.8-dev.8-linux-x64.deb
+
+== Docker upgrade test (full): Crundi-1.21.7-linux-x64.deb -> Crundi-1.21.8-dev.8-linux-x64.deb (124 s)
+== apt
+== Electron: old.deb
+ok    Electron crundi installed (1.21.7)
+Electron says: {"file":"/home/tester/.config/autostart/crundi.desktop","name":"crundi","exe":"/opt/Crundi/crundi"}
+ok    Electron made its autostart file /home/tester/.config/autostart/crundi.desktop
+[Desktop Entry]
+Type=Application
+Name=crundi
+Exec="/opt/Crundi/crundi"
+Terminal=false
+X-GNOME-Autostart-enabled=true
+  config: /home/tester/.config/autostart/
+  config: /home/tester/.config/crundi-desktop/
+ok    Electron's userData is /home/tester/.config/crundi-desktop
+user data: 5 files
+== Native: new.deb
+ok    apt installs the new .deb over Electron's
+  took 57 s
+ok    one crundi package, version 1.21.8-dev.8
+ok    Electron's files are gone (app.asar, libffmpeg)
+ok    /opt/Crundi/crundi is the native client
+ok    crundi-browser-host installed
+ok    crundi-worker installed
+ok    libcef.so installed
+ok    icudtl.dat installed
+ok    /usr/bin/crundi starts /opt/Crundi/crundi
+ok    desktop entry starts it
+ok    every library the binaries need is there
+ok    node/bin/node is Node 22 (v22.23.5)
+ok    server/src/index.js installed
+ok    server/app/vendor installed
+ok    server/skills/crundi installed
+ok    server/node_modules/node-pty installed
+ok    server/node_modules/cloudflared/bin/cloudflared installed
+ok    server/.env.example installed
+ok    node-pty loads in the bundled Node
+ok    data and config kept (5 files)
+ok    launch at login kept, unchanged
+ok    it starts the native client
+ok    one autostart entry
+ok    the server from /opt/Crundi/server answers on :4861
+client running after 20 s: yes
+client started the bundled server: yes
+== Remove
+ok    remove takes the files
+ok    remove keeps the data
+size: native 208 MB (.deb), Electron 353 MB
+
+Linux upgrade test passed (full)
+
+== Docker upgrade test (client): Crundi-Client-1.21.7-linux-x64.deb -> Crundi-Client-1.21.8-dev.8-linux-x64.deb (254 s)
+== apt
+== Electron: old.deb
+ok    Electron crundi-client installed (1.21.7)
+Electron says: {"file":"/home/tester/.config/autostart/Crundi Client.desktop","name":"Crundi Client","exe":"/opt/Crundi Client/crundi-client"}
+ok    Electron made its autostart file /home/tester/.config/autostart/Crundi Client.desktop
+[Desktop Entry]
+Type=Application
+Name=Crundi Client
+Exec="/opt/Crundi Client/crundi-client"
+Terminal=false
+X-GNOME-Autostart-enabled=true
+  config: /home/tester/.config/Crundi Client/
+  config: /home/tester/.config/autostart/
+ok    Electron's userData is /home/tester/.config/Crundi Client
+user data: 5 files
+== Native: new.deb
+ok    apt installs the new .deb over Electron's
+  took 6 s
+ok    one crundi-client package, version 1.21.8-dev.8
+ok    Electron's files are gone (app.asar, libffmpeg)
+ok    /opt/Crundi Client/crundi-client is the native client
+ok    crundi-browser-host installed
+ok    crundi-worker installed
+ok    libcef.so installed
+ok    icudtl.dat installed
+ok    /usr/bin/crundi-client starts /opt/Crundi Client/crundi-client
+ok    desktop entry starts it
+ok    every library the binaries need is there
+ok    no server in the client
+ok    data and config kept (5 files)
+ok    launch at login kept, unchanged
+ok    it starts the native client
+ok    one autostart entry
+client running after 20 s: yes
+== Remove
+ok    remove takes the files
+ok    remove keeps the data
+size: native 137 MB (.deb), Electron 87 MB
+
+Linux upgrade test passed (client)
+
+== Sizes (310 s)
+Crundi-1.21.8-dev.8-linux-x64.deb             207 MB
+Crundi-Client-1.21.8-dev.8-linux-x64.deb      136 MB
+Crundi-1.21.7-linux-x64.deb                   352 MB
+Crundi-Client-1.21.7-linux-x64.deb             86 MB
+installed full     native   766 MB
+installed client   native   429 MB
+
+package check passed (310 s)
+exit 0

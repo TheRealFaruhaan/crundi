@@ -6,7 +6,7 @@
 //   crundi-browser-host[.exe] + CEF's files
 //   crundi-worker[.exe]                  the worker from worker/
 //   node/                                Node 22 (Linux node/bin/node, Windows node/node.exe); all-in-one only
-//   server/                              src/, app/vendor/, scripts/, skills/, assets/, package.json,
+//   server/                              src/, app/vendor/ and app/homepool-node.js, scripts/, skills/, assets/, package.json,
 //                                        .env.example and the production node_modules (built for that Node)
 //
 //   node native-v2/package/stage.mjs --out DIR --edition full|client
@@ -54,10 +54,16 @@ put(join(bin, exe('crundi-browser-host')), join(out, exe('crundi-browser-host'))
 put(worker, join(out, exe('crundi-worker')));
 
 // CEF next to the host, as native-gpui/scripts/stage-cef.mjs stages it (real copies).
-const skip = new Set(['include', 'cmake', 'libcef_dll', 'CMakeLists.txt', 'CREDITS.html', 'archive.json', 'README.txt', 'LICENSE.txt']);
+const skip = new Set(['include', 'cmake', 'libcef_dll', 'CMakeLists.txt', 'CREDITS.html', 'archive.json', 'README.txt', 'LICENSE.txt',
+  // The browser host runs CEF with no_sandbox (browser-host/src/host.rs): no setuid helper.
+  'chrome-sandbox']);
 for (const f of readdirSync(cef)) {
   if (skip.has(f) || /\.lib$/i.test(f) || /^cef_sandbox/i.test(f)) continue;
   cpSync(join(cef, f), join(out, f), { recursive: true, dereference: true });
+  // CEF's Linux libraries come with their symbols (libcef.so is 1.4 GB): strip the copies.
+  if (!win && /\.so(\.\d+)*$/.test(f) && process.env.STAGE_NO_STRIP !== '1') {
+    try { execFileSync('strip', ['--strip-unneeded', join(out, f)]); } catch { /* no strip */ }
+  }
 }
 // Only the English UI locale, as Electron's packages ship (electronLanguages).
 const locales = join(out, 'locales');
@@ -76,6 +82,8 @@ if (full) {
   const notTests = (src) => !/[\\/]app[\\/]voice-wake[\\/]test-[^\\/]*\.mjs$/.test(src) && !/[\\/]\.env$/.test(src);
   for (const d of ['src', 'scripts', 'skills', 'assets']) cpSync(join(repo, d), join(server, d), { recursive: true, filter: notTests });
   cpSync(join(repo, 'app', 'vendor'), join(server, 'app', 'vendor'), { recursive: true });
+  // The server imports the homepool frame format from app/ (src/homepool.js, homepool-service.js).
+  copyFileSync(join(repo, 'app', 'homepool-node.js'), join(server, 'app', 'homepool-node.js'));
   for (const f of ['package.json', 'package-lock.json', '.env.example']) copyFileSync(join(repo, f), join(server, f));
 
   if (args.modules) {
