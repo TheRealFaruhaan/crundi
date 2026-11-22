@@ -95,6 +95,8 @@ pub struct St {
     voice: Voice,
     // The Desktop App.
     launch: bool, launch_hint: String, auto_update: bool, upd_channel: i32, upd_avail: bool, upd_status: String,
+    /// The updater's download: under way, finished (the action button's words).
+    upd_downloading: bool, upd_downloaded: bool,
     f: Fields,
     page: Option<Entity<Page>>,
     /// The signed-in server's address (Session), kept here for drawing.
@@ -141,9 +143,10 @@ impl Default for St {
             pair_focus: None, pair_scroll: ScrollHandle::new(),
             sess_open: false, sess_state: "loading".into(), sess_error: String::new(), sessions: vec![], sess_others: 0,
             voice: Voice::default(),
-            launch: local::launch(), launch_hint: local::launch_hint(), auto_update: l.auto_update.unwrap_or(true),
-            upd_channel: if l.channel == "dev" { 1 } else { 0 }, upd_avail: false,
-            upd_status: format!("Up to date \u{2014} v{}", env!("CARGO_PKG_VERSION")),
+            launch: local::launch(), launch_hint: local::launch_hint(), auto_update: local::auto_update(),
+            upd_channel: if local::channel() == "dev" { 1 } else { 0 }, upd_avail: false,
+            upd_status: format!("Up to date \u{2014} v{}", crundi_shell::lifecycle::version()),
+            upd_downloading: false, upd_downloaded: false,
             f: Fields::default(),
             page: None,
             server: String::new(),
@@ -206,11 +209,25 @@ pub fn set_open(cx: &mut App, key: &str, on: bool) -> bool {
 
 pub fn is_open(cx: &mut App, key: &str) -> bool { get(cx, |s| s.open.get(key).copied().unwrap_or(false)) }
 
-/// The PC client's own update (the ship phase's updater): the Desktop App
-/// section's status line.
-pub fn set_update_available(cx: &mut App, available: bool, label: &str) {
-    let label = label.to_string();
-    upd(cx, |s| { s.upd_avail = available; if !label.is_empty() { s.upd_status = label; } });
+/// The PC client's own update (the desktop area's updater, Electron's
+/// update:status): the Desktop App section's status row (updStatusRowHtml)
+/// and the Settings tab's dot.
+pub fn set_update_state(cx: &mut App, u: &Value) {
+    let b = |k: &str| u.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    let st = |k: &str| u.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let (avail, dl, ready, enabled) = (b("available"), b("downloading"), b("downloaded"), b("enabled"));
+    let status = if dl {
+        format!("Downloading\u{2026} {}%", u.get("percent").and_then(|v| v.as_u64()).unwrap_or(0))
+    } else if avail {
+        let v = st("version");
+        let head = if st("channel") == "dev" { if st("latestKind") == "production" { format!("Production release available \u{2014} v{v}") } else { format!("Dev build available \u{2014} v{v}") } } else { format!("Update available \u{2014} v{v}") };
+        if ready { format!("{head} (ready)") } else { head }
+    } else {
+        let cur = st("current");
+        if cur.is_empty() { "Up to date".to_string() } else { format!("Up to date \u{2014} v{cur}") }
+    };
+    let chan = if st("channel") == "dev" { 1 } else { 0 };
+    upd(cx, |s| { s.upd_avail = avail; s.upd_downloading = dl; s.upd_downloaded = ready; s.upd_status = status; s.auto_update = enabled; s.upd_channel = chan; });
 }
 
 /// The terminal's newline key ("shift" or "ctrl"), for the terminal panels.
@@ -1211,13 +1228,11 @@ fn voice_reset(cx: &mut App) {
 // ─── The Desktop App (this client) ───
 
 fn desktop_show(cx: &mut App) {
-    let l = local::load();
     upd(cx, |s| {
         s.launch = local::launch();
         s.launch_hint = local::launch_hint();
-        s.auto_update = l.auto_update.unwrap_or(true);
-        s.upd_channel = if l.channel == "dev" { 1 } else { 0 };
-        if !s.upd_avail { s.upd_status = format!("Up to date \u{2014} v{}", env!("CARGO_PKG_VERSION")); }
+        s.auto_update = local::auto_update();
+        s.upd_channel = if local::channel() == "dev" { 1 } else { 0 };
     });
 }
 
@@ -1229,24 +1244,30 @@ fn launch_toggle(cx: &mut App, on: bool) {
 }
 
 fn update_toggle(cx: &mut App, on: bool) {
-    local::update(|l| l.auto_update = Some(on));
+    // update:setEnabled: saved, and on turning it on, checked at once.
+    crundi_shell::lifecycle::set_auto_update(on);
     upd(cx, |s| s.auto_update = on);
+    crundi_shell::lifecycle::updater(if on { "enabled-on" } else { "enabled-off" });
 }
 
 fn desktop_channel(cx: &mut App, i: i32) {
     if get(cx, |s| s.upd_channel) == i { return; }
     let go = move |cx: &mut App| {
-        local::update(|l| l.channel = if i == 1 { "dev".into() } else { "production".into() });
+        // update:setChannel: saved, the offer forgotten, checked again.
+        crundi_shell::lifecycle::set_channel(i == 1);
         upd(cx, |s| s.upd_channel = i);
+        crundi_shell::lifecycle::updater("channel");
     };
     if i == 1 { confirm_dev(cx, "the desktop app", go); } else { go(cx); }
 }
 
 fn update_check(cx: &mut App) {
-    c::toast(cx, "Checking for updates\u{2026}");
-    // The ship phase brings the updater; until then this build has none to ask.
-    c::after(cx, 600, |cx| c::toast(cx, "This build cannot update itself yet: install the newer one by hand"));
+    // update:check (the updater answers with its status, or a prompt).
+    if !crundi_shell::lifecycle::updater("check") { c::toast(cx, "Update checks run in the installed app only."); }
 }
+
+/// update:install: Download & install, or Restart & install once downloaded.
+fn update_install(_cx: &mut App) { crundi_shell::lifecycle::updater("install"); }
 
 /// The signed-in server's address (kit::base).
 fn base(cx: &App) -> String { crundi_shell::api(cx).map(|a| a.base().to_string()).unwrap_or_default() }
@@ -1932,7 +1953,10 @@ fn desktop_body(want: Want, cx: &mut App) -> Parts {
         .part(|| row().gap(T::SP_12)
             .child(row().flex_1().min_w_0().child(w::dot(if s.upd_avail { T::accent() } else { T::green() }))
                 .child(div().text_size(T::TEXT_13).text_color(if s.upd_avail { T::accent_hover() } else { T::text_secondary() }).child(s.upd_status.clone())))
-            .child(w::button("update-check", "Check now").on_click(|_, _, cx| update_check(cx))))
+            .child(if s.upd_avail {
+                w::disabled(w::primary("update-install", if s.upd_downloaded { "Restart & install" } else if s.upd_downloading { "Downloading\u{2026}" } else { "Download & install" }), s.upd_downloading)
+                    .on_click(|_, _, cx| update_install(cx))
+            } else { w::button("update-check", "Check now").on_click(|_, _, cx| update_check(cx)) }))
 }
 
 /// Connect a phone (crundi-phone.js connect()): the picture, the line under
@@ -2032,6 +2056,7 @@ pub fn test_ui(name: &str, args: &[String], _window: &mut Window, cx: &mut App) 
             "update-toggle" => update_toggle(cx, a(1) == "true"),
             "upd-set-channel" => desktop_channel(cx, a(1).parse().unwrap_or(0)),
             "update-check" => update_check(cx),
+            "update-install" => update_install(cx),
             _ => return Some(json!({ "ok": false, "error": "no such control" })),
         },
         _ => return None,
@@ -2069,7 +2094,7 @@ pub fn props(_window: &mut Window, cx: &mut App) -> Value {
         "voice": { "shown": s.voice.shown, "model": s.voice.sel.get("model").map(|e| e.1).unwrap_or(-1), "models": s.voice.sel.get("model").map(|e| e.0.len()).unwrap_or(0),
             "status": s.voice.status, "admin": s.voice.admin, "spend": s.voice.spend, "spendNote": s.voice.spend_note, "keysNote": s.voice.keys_note,
             "away": s.voice.away, "awayClasses": s.voice.away_classes.len() },
-        "desktop": { "launch": s.launch, "autoUpdate": s.auto_update, "channel": s.upd_channel, "status": s.upd_status, "dot": s.upd_avail },
+        "desktop": { "launch": s.launch, "autoUpdate": s.auto_update, "channel": s.upd_channel, "status": s.upd_status, "dot": s.upd_avail, "downloading": s.upd_downloading, "downloaded": s.upd_downloaded },
         "modal": s.pair_open,
         "opened": c::s(&s.data, "opened"),
         "ptt": crate::ptt::label(&crate::ptt::get()), "pttCapturing": s.ptt_capturing,

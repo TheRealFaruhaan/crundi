@@ -1,8 +1,8 @@
 //! The tray (specs/desktop/inbox-tray-bubble.md A.2-A.3; app/main.js
 //! createTray, updateTrayMenu): the head icon, the tooltip "Crundi —
 //! <status>", and the menu in the PC client's order and wording, as far as
-//! it applies to this client: no Start/Stop (no bundled server: A.3's note),
-//! no updates (phase 7). The PC lock's "Lock (visible)" and "Lock (full)".
+//! it applies to this client: no Start/Stop (no bundled server: A.3's note);
+//! "Check for Updates…", or "Restart to Install Update" once one is downloaded. The PC lock's "Lock (visible)" and "Lock (full)".
 //! Kid mode as the PC client's: "Locked", the locks and Quit off while the
 //! window is locked (kid mode or the PC lock: Electron's kidLocked). "Hey Cru" (voiceWakeTrayItems)
 //! with its note. A click (Linux; double click elsewhere) shows the window.
@@ -28,6 +28,8 @@ pub struct State {
     pub kid_locked: bool,
     /// "Hey Cru": (on, trained, its note).
     pub wake: Option<(bool, bool, String)>,
+    /// An update is downloaded (Restart to Install Update).
+    pub update_ready: bool,
 }
 
 /// One item: (id, label, enabled, checked: Some for a check item); "-" is a separator.
@@ -57,6 +59,8 @@ pub fn menu(s: &State) -> Vec<Item> {
         else if !note.is_empty() { m.push(("wake-note", format!("    {note}"), false, None)); }
         m.push(sep());
     }
+    m.push(("update", if s.update_ready { "Restart to Install Update".into() } else { "Check for Updates\u{2026}".into() }, true, None));
+    m.push(sep());
     m.push(("quit", "Quit".into(), !s.kid_locked, None));
     m
 }
@@ -93,6 +97,7 @@ pub fn act(id: &str) {
         // Electron's showServerScreen: the server step over the signed-in app
         // (its address, Cancel and Save; F131).
         "server" => { ctx::raise(); ctx::on_app(|win, cx| crundi_shell::show_server_screen(true, win, cx)); }
+        "update" => crate::updater::tray_pick(),
         "wake" => { let on = crate::wake::status()["enabled"].as_bool().unwrap_or(false); crate::wake::set(!on); }
         // Not while the kid screen is locked: only the PIN ends it.
         "quit" if !locked => ctx::on_app(|_, cx| cx.quit()),
@@ -112,7 +117,7 @@ fn icon_rgba() -> Option<(Vec<u8>, u32, u32)> {
 fn now(status: String) -> State {
     let w = crate::wake::status();
     let b = |k: &str| w[k].as_bool().unwrap_or(false);
-    State { status, kid_locked: crate::cru_kid::on() || crate::pclock::on(), wake: Some((b("enabled"), b("trained"), w["label"].as_str().filter(|_| b("enabled")).unwrap_or("").to_string())) }
+    State { status, kid_locked: crate::cru_kid::on() || crate::pclock::on(), wake: Some((b("enabled"), b("trained"), w["label"].as_str().filter(|_| b("enabled")).unwrap_or("").to_string())), update_ready: crate::updater::downloaded() }
 }
 
 /// Make the tray (once, at start).
@@ -266,9 +271,9 @@ mod tests {
     #[test]
     fn the_menu_and_its_words() {
         let s = State { status: "Running".into(), ..Default::default() };
-        assert_eq!(labels(&s), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", "Quit"]);
+        assert_eq!(labels(&s), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", "Check for Updates…", "", "Quit"]);
         let m = menu(&s);
-        assert!(!m[0].2 && !m[2].2 && m[4].2 && m[5].2 && m[6].2 && m[7].2 && m[10].2);
+        assert!(!m[0].2 && !m[2].2 && m[4].2 && m[5].2 && m[6].2 && m[7].2 && m[10].2 && m[12].2);
         assert_eq!(tooltip("Stopped"), "Crundi — Stopped");
         assert_eq!(status_label(true), "Running");
         assert_eq!(status_label(false), "Stopped");
@@ -276,8 +281,16 @@ mod tests {
     }
 
     #[test]
+    fn the_update_item() {
+        let s = State { status: "Running".into(), update_ready: true, ..Default::default() };
+        let m = menu(&s);
+        let u = m.iter().find(|x| x.0 == "update").unwrap();
+        assert_eq!((u.1.as_str(), u.2), ("Restart to Install Update", true));
+    }
+
+    #[test]
     fn kid_mode_locks_it() {
-        let s = State { status: "Running".into(), kid_locked: true, wake: None };
+        let s = State { status: "Running".into(), kid_locked: true, wake: None, update_ready: false };
         let m = menu(&s);
         let kid = m.iter().find(|x| x.0 == "kid").unwrap();
         assert_eq!((kid.1.as_str(), kid.2), ("Locked", false));
@@ -287,8 +300,8 @@ mod tests {
 
     #[test]
     fn hey_cru() {
-        let untrained = State { status: "Running".into(), kid_locked: false, wake: Some((false, false, String::new())) };
-        assert_eq!(labels(&untrained), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", WAKE_LABEL, "    Train it first in Settings, Voice assistant", "", "Quit"]);
+        let untrained = State { status: "Running".into(), kid_locked: false, wake: Some((false, false, String::new())), update_ready: false };
+        assert_eq!(labels(&untrained), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", WAKE_LABEL, "    Train it first in Settings, Voice assistant", "", "Check for Updates…", "", "Quit"]);
         let m = menu(&untrained);
         assert_eq!((m[10].2, m[10].3), (false, Some(false)));
         let on = State { wake: Some((true, true, "Listening".into())), ..untrained.clone() };
@@ -296,6 +309,6 @@ mod tests {
         assert_eq!((m[10].2, m[10].3), (true, Some(true)));
         assert_eq!(m[11].1, "    Listening");
         let off = State { wake: Some((false, true, String::new())), ..untrained };
-        assert_eq!(labels(&off), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", WAKE_LABEL, "", "Quit"]);
+        assert_eq!(labels(&off), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", WAKE_LABEL, "", "Check for Updates…", "", "Quit"]);
     }
 }

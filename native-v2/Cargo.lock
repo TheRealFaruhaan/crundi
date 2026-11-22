@@ -2006,6 +2006,7 @@ dependencies = [
  "crundi-core",
  "crundi-theme",
  "crundi-widgets",
+ "env_logger",
  "futures",
  "gpui-component",
  "gpui-pre",

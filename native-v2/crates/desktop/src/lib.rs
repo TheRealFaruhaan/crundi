@@ -50,8 +50,9 @@ mod pclock;
 mod pointer;
 mod pwstore;
 pub mod rules;
-pub mod startup;
+mod hotkeys;
 mod tray;
+pub mod updater;
 mod ui;
 pub mod wake;
 
@@ -126,6 +127,11 @@ pub fn init(cx: &mut App) {
     // Settings › Voice assistant › On this device: "Hey Cru" on this PC (F129).
     crundi_operations::register_settings_part(cx, "voice-device", wake::settings_part);
     tray::start(false);
+    // The app's own updates (8 s after launch, then daily) and the lock's system-wide keys.
+    updater::start();
+    hotkeys::start();
+    // A second launch shows this copy's window (second-instance).
+    crundi_shell::lifecycle::on_second_instance(|| tray::test_pick("open"));
     // Cru's screen: a layer over the window (the shell reads its overlays when it makes the Shell,
     // before the window's views are made); its typing box comes with the window (init_window).
     // The PC lock's screen under Cru's ("Hey Cru" works while locked).
@@ -193,6 +199,8 @@ pub fn init(cx: &mut App) {
                 w::menu_at(cx, point(px(n(0)), px(n(1))), vec![w::MenuEntry::new("left-open", "Left open")], |id, _, _| TEST_MENU_PICK.with(|p| *p.borrow_mut() = id));
                 return Some(json!({ "ok": true }));
             }
+            // A message box's button, by its label (the updater's prompts).
+            if name == "dialog-pick" { return Some(json!({ "ok": w::ask_pick(&args.first().cloned().unwrap_or_default(), window, cx) })); }
             let r = test_ui(name, args);
             // The driver's action runs now, as a click would: its effects too.
             if r.is_some() { pump(window, cx); }
@@ -322,7 +330,7 @@ const FRAME: Duration = crundi_shell::live_hub::FRAME;
 /// When the pump must run with nothing waking it: the webview's timers and
 /// deadlines, and the area's own (Cru's, the voice's).
 fn next_due() -> Option<Instant> {
-    [web::next_due(), cru::next_due(), wake::next_due(), notify::next_due(), drawer::next_due()].into_iter().flatten().min()
+    [web::next_due(), cru::next_due(), wake::next_due(), notify::next_due(), drawer::next_due(), updater::next_due()].into_iter().flatten().min()
 }
 
 /// The pump (woken, at most once a frame): CEF's deferred calls and the
@@ -340,6 +348,7 @@ pub fn pump(window: &mut Window, cx: &mut App) {
         if ctx::has_main() { why.push("main".into()); }
         if host::waiting() { why.push("host".into()); }
         if tray::has_picks() { why.push("tray".into()); }
+        if hotkeys::has_presses() { why.push("keys".into()); }
         for (k, d) in [("cru", cru::next_due()), ("wake", wake::next_due()), ("notify", notify::next_due()), ("drawer", drawer::next_due())] { if d.is_some_and(|t| t <= Instant::now()) { why.push(format!("{k}-due")); } }
         if why.is_empty() { why.push("?".into()); }
         PUMP_WHY.with(|w| { let mut w = w.borrow_mut(); w.push_back(why.join(",")); while w.len() > 24 { w.pop_front(); } });
@@ -357,6 +366,9 @@ pub fn pump(window: &mut Window, cx: &mut App) {
     let (live, unread) = cru::mark();
     crundi_shell::set_cru_mark(cx, live, unread);
     for p in tray::take_picks() { tray::act(&p); }
+    // The lock's system-wide keys (pcLockAsk from globalShortcut).
+    for m in hotkeys::take() { pclock::ask(m, "shortcut"); }
+    updater::pump(window, cx);
     // The tray's menu follows the kid lock and "Hey Cru" (told only of a change).
     tray::refresh();
     for f in ctx::take_effects() { f(window, cx); }
@@ -582,7 +594,15 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "lock-key" => { if let Some(v) = views_global() { let k: &'static str = pin_key(&a(0)); ctx::on_app(move |win, cx| v.update(cx, |l, cx| l.press(k, win, cx))); } ok() }
         // The auto lock's idle reading (seconds, screen locked) instead of the OS's, and a look now.
         "lock-idle" => { idle::fake(a(0).parse().ok().map(|s: u64| (s, a(1) == "true"))); idle::check(); ok() }
-        "startup" => Some(json!({ "ok": true, "enabled": startup::enabled() })),
+        // Launch at startup (crundi_shell::lifecycle: Electron's names): read, or set to on/off.
+        "startup" => {
+            if !a(0).is_empty() { if let Err(e) = crundi_shell::lifecycle::set_launch(a(0) == "true") { return Some(json!({ "ok": false, "error": e })); } }
+            Some(json!({ "ok": true, "enabled": crundi_shell::lifecycle::launch_enabled(), "entry": crundi_shell::lifecycle::launch_entry().to_string_lossy() }))
+        }
+        // The updater: a check now (manual), the automatic one due now, a Settings command.
+        "update-check" => { updater::check(true); ok() }
+        "update-due" => { updater::test_due_now(); ok() }
+        "update-cmd" => { updater::command(&a(0)); ok() }
         // Cru's live screen: an event as the voice socket brings it ({type: "screen", screen}).
         "cru-event" => { if let Ok(v) = serde_json::from_str::<Value>(&a(0)) { cru_screen::event(&v); } ok() }
         "cru-screen-close" => { cru_screen::close_screen(); ok() }
@@ -647,7 +667,7 @@ fn props() -> Value {
         "due": due_ms(),
         "drawer": drawer::props(), "drawerActive": active, "evals": EVALS.with(|e| Value::Object(e.borrow().1.clone())),
         "browsers": browsers::props(),
-        "inbox": inbox::props(), "cru": cru::props(), "cruScreen": cru_screen::props(), "kid": cru_kid::props(), "lock": pclock::props(), "windowLocked": ctx::window_locked(), "hideHow": ctx::hide_how_name(), "wake": wake::status(), "homepool": homepool::status(), "hp": hpdrawer::props(), "tray": tray::props(), "passwords": passwords::props(), "notifications": notify::props(), "hidden": hidden,
+        "inbox": inbox::props(), "cru": cru::props(), "cruScreen": cru_screen::props(), "kid": cru_kid::props(), "lock": pclock::props(), "windowLocked": ctx::window_locked(), "hideHow": ctx::hide_how_name(), "wake": wake::status(), "homepool": homepool::status(), "hp": hpdrawer::props(), "tray": tray::props(), "updater": updater::props(), "globalKeys": hotkeys::props(), "logFile": crundi_shell::lifecycle::log_path().to_string_lossy(), "passwords": passwords::props(), "notifications": notify::props(), "hidden": hidden,
         "host": { "features": host::features() },
         "browserHost": web::host_props(),
     })

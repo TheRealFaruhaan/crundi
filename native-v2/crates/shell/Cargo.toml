@@ -15,6 +15,7 @@ serde_json.workspace = true
 open.workspace = true
 log.workspace = true
 chrono.workspace = true
+env_logger.workspace = true
 crundi-core.workspace = true
 crundi-theme.workspace = true
 crundi-widgets.workspace = true
