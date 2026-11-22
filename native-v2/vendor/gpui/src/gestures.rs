@@ -531,6 +531,12 @@ pub(crate) struct TouchGestureRecognizer {
     state: TouchGestureState,
     momentum: Option<Momentum>,
     last_tap: Option<CompletedTap>,
+    /// crundi patch (f), PATCH.md: a touchpad's precise scroll (pixel
+    /// deltas) under way: its accumulated travel sampled for the release
+    /// velocity, where it points, and whether the momentum running is its
+    /// (so its steps go out as the pointer's, not a touchscreen's).
+    precise: Option<(VelocityTracker, Point<Pixels>, Point<Pixels>)>,
+    momentum_pointer: bool,
 }
 
 /// A semantic event recognized from raw touches, ready to dispatch through
@@ -620,8 +626,48 @@ impl TouchGestureRecognizer {
             state: TouchGestureState::Idle,
             momentum: None,
             last_tap: None,
+            precise: None,
+            momentum_pointer: false,
         }
     }
+
+    /// crundi patch (f): one step of a touchpad's precise scroll. A glide
+    /// running stops (new input catches it); the step is sampled.
+    pub(crate) fn precise_scroll(&mut self, position: Point<Pixels>, delta: Point<Pixels>, age: Duration) {
+        self.momentum = None;
+        let now = Instant::now() - age;
+        let (tracker, travel, at) = self.precise.get_or_insert_with(|| (VelocityTracker::default(), Point::default(), position));
+        *travel = *travel + delta;
+        *at = position;
+        tracker.push(now, *travel);
+    }
+
+    /// crundi patch (f): the precise scroll went quiet (the fingers lifted):
+    /// it glides on at the speed of its last ~100 ms, decaying as a touch
+    /// pan's fling does. True when a glide starts.
+    pub(crate) fn precise_scroll_ended(&mut self) -> bool {
+        let Some((tracker, _, position)) = self.precise.take() else { return false };
+        let velocity = tracker.velocity();
+        let speed = (velocity.x.powi(2) + velocity.y.powi(2)).sqrt();
+        if speed < self.tuning.min_fling_velocity { return false; }
+        let direction = point(velocity.x / speed, velocity.y / speed);
+        let speed = speed.min(MAX_FLING_VELOCITY);
+        let duration = self.tuning.scroll_physics.fling_duration(speed);
+        if duration.is_zero() { return false; }
+        self.momentum = Some(Momentum { position, direction, speed, started_at: Instant::now(), duration, emitted_distance: 0. });
+        self.momentum_pointer = true;
+        true
+    }
+
+    /// crundi patch (f): a wheel's line scroll, a press or a key: the
+    /// touchpad's glide (and its sampling) stops where it is.
+    pub(crate) fn stop_pointer_momentum(&mut self) {
+        self.precise = None;
+        if self.momentum_pointer { self.momentum = None; self.momentum_pointer = false; }
+    }
+
+    /// crundi patch (f): the touchpad's glide is running.
+    pub(crate) fn pointer_momentum(&self) -> bool { self.momentum_pointer && self.momentum.is_some() }
 
     pub(crate) fn handle_event(
         &mut self,
@@ -638,6 +684,7 @@ impl TouchGestureRecognizer {
         let mut recognized = SmallVec::new();
         match event.phase {
             TouchPhase::Started => {
+                self.momentum_pointer = false;
                 let caught_fling = if let Some(momentum) = self.momentum.take() {
                     recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
                         momentum.position,
@@ -1050,19 +1097,15 @@ impl TouchGestureRecognizer {
             px(momentum.direction.y * step),
         );
         let position = momentum.position;
+        // (crundi patch (f): a touchpad's glide goes out as the pointer's.)
+        let pointer = self.momentum_pointer;
+        let event = |phase| { let mut e = scroll_event(position, delta, phase); if pointer { e.source = ScrollSource::Pointer; } RecognizedTouchGesture::Scroll(e) };
         if elapsed >= momentum.duration {
             self.momentum = None;
-            Some(RecognizedTouchGesture::Scroll(scroll_event(
-                position,
-                delta,
-                TouchPhase::Ended,
-            )))
+            self.momentum_pointer = false;
+            Some(event(TouchPhase::Ended))
         } else {
-            Some(RecognizedTouchGesture::Scroll(scroll_event(
-                position,
-                delta,
-                TouchPhase::Moved,
-            )))
+            Some(event(TouchPhase::Moved))
         }
     }
 }
