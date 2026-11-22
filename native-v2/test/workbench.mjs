@@ -219,8 +219,8 @@ t.check('…and the lit pane is the one now under the pointer', !s.drag.target |
 s = await T.until('…up to its end', (s) => s.drag && Math.abs(s.grid.scroll - s.grid.max) < 1, 5000);
 // Each tick moves the grid by whole pixels: the panes' bodies are replayed
 // moved, not drawn again (F213): the chat's log, its composer and Mini's
-// layers render far less than once a tick (a pane crossing the grid's edge
-// is clipped differently each tick and renders).
+// layers render far less than once a tick (a pane coming into view across
+// the grid's edge renders: what was cut off is drawn).
 {
   const er1 = s.renders || {}, frames = T.frames.since(ef).frames;
   const d = Object.fromEntries(Object.keys(er1).map((k) => [k, (er1[k] || 0) - (er0[k] || 0)]).filter(([, v]) => v));
@@ -239,6 +239,54 @@ s = await T.state();
 t.check('…and the grid stays where it is', Math.abs(s.grid.scroll - sc) < 1, { before: sc, after: s.grid.scroll });
 await T.mouse('up', g.x + g.w / 2, ry);
 await T.until('let go, the move ends', (s) => !s.drag, 3000);
+
+// A pane leaving across the grid's edge (F241): the chat swapped into the
+// first column, four columns again, then a pane held at the right edge scrolls the grid, and the
+// chat moves out across its left edge. Each tick brings nothing of it into
+// view that was cut off, so it is replayed moved, not drawn: its log and
+// composer render far less than once a tick.
+{
+  await t.sleep(300);
+  s = await T.state();
+  const ck = s.leaves.find((l) => l.key?.startsWith('live:'));
+  const first = s.leaves.filter((l) => l.key).sort((p, q) => p.x - q.x)[0];
+  if (ck && first && first.id !== ck.id) {
+    const [x0, y0] = [ck.x + 60, ck.y + 12], [x1, y1] = [first.x + first.w / 2, first.y + 200];
+    await T.mouse('move', x0, y0); await T.mouse('down', x0, y0);
+    for (let i = 1; i <= 6; i++) { await T.mouse('move', x0 + (x1 - x0) * i / 6, y0 + (y1 - y0) * i / 6, { buttons: ['left'] }); await t.sleep(30); }
+    await T.mouse('up', x1, y1);
+    s = await T.until('(the chat moved to the first column)', (s) => !s.drag && s.leaves.find((l) => l.key === ck.key)?.x <= first.x + 2, 3000);
+  }
+  // (The last move took a column: four again, wider than the grid.)
+  s = await T.state();
+  if (!(s.grid?.max > 100)) {
+    const n = s.leaves.length;
+    await T.ui('pane-split', s.leaves.filter((l) => l.key).sort((p, q) => q.x - p.x)[0].key, 'right');
+    s = await T.until('(four columns again)', (s) => s.leaves.length > n && s.grid?.max > 100, 5000);
+  }
+  await t.sleep(300);
+  s = await T.state();
+  const g2 = s.grid, other = s.leaves.filter((l) => l.key && !l.key.startsWith('live:') && l.x >= g2.x).sort((p, q) => p.x - q.x)[0];
+  const px0 = Math.max(other.x + 60, g2.x + 80), py0 = other.y + 12, py = py0 + 200, prx = g2.x + g2.w - 15;
+  await T.mouse('move', px0, py0); await T.mouse('down', px0, py0);
+  for (let i = 1; i <= 5; i++) { await T.mouse('move', px0 + (prx - px0) * i / 6, py, { buttons: ['left'] }); await t.sleep(30); }
+  await t.sleep(300);
+  const r0 = (await T.state()).renders || {}, f0 = T.frames.mark();
+  await T.mouse('move', prx, py, { buttons: ['left'] });
+  s = await T.until('held at the right edge again, the grid scrolls to its end', (s) => s.drag && Math.abs(s.grid.scroll - s.grid.max) < 1, 5000);
+  const r1 = s.renders || {}, frames = T.frames.since(f0).frames;
+  const d = Object.fromEntries(Object.keys(r1).map((k) => [k, (r1[k] || 0) - (r0[k] || 0)]).filter(([, v]) => v));
+  const c = s.leaves.find((l) => l.key?.startsWith('live:')), cx0 = c && c.x;
+  console.log(`  edge scroll, the chat leaving (${frames} frames, chat ${Math.round(cx0)}..${Math.round(cx0 + c?.w)}, grid ${g2.x}..):`, JSON.stringify(d));
+  t.check('during an edge scroll the chat crossing the grid\'s edge is moved, not drawn: its log and composer not on every tick (F241)', c && cx0 < g2.x && cx0 + c.w > g2.x && frames >= 5 && (d.log || 0) < frames / 2 && (d.composer || 0) < frames / 2, { d, frames, chat: c, g: s.grid });
+  const plx = g2.x + 15;
+  for (let i = 1; i <= 6; i++) { await T.mouse('move', prx + (plx - prx) * i / 6, py, { buttons: ['left'] }); await t.sleep(30); }
+  s = await T.until('…and held at the left edge, back', (s) => s.drag && s.grid.scroll < 1, 5000);
+  await T.mouse('move', g2.x + g2.w / 2, py, { buttons: ['left'] });
+  await t.sleep(200);
+  await T.mouse('up', g2.x + g2.w / 2, py);
+  await T.until('let go, that move ends', (s) => !s.drag, 3000);
+}
 await T.d.send({ cmd: 'resize', w: 1440, h: 900 });
 
 // (No idle check here: the launcher on screen animates UI Mode, by the owner's call.)

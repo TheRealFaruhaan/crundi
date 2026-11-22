@@ -608,6 +608,12 @@ impl DispatchTree {
         self.focusable_node_ids.get(&target).copied()
     }
 
+    /// crundi patch (b), PATCH.md: whether `target`'s node lies in `range`
+    /// (a cached view's dispatch nodes).
+    pub(crate) fn focus_in(&self, target: FocusId, range: std::ops::Range<usize>) -> bool {
+        self.focusable_node_id(target).is_some_and(|n| range.contains(&n.0))
+    }
+
     pub fn root_node_id(&self) -> DispatchNodeId {
         debug_assert!(!self.nodes.is_empty());
         DispatchNodeId(0)

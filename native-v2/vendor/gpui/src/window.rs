@@ -4390,6 +4390,27 @@ impl Window {
                 .can_offset(paint.start.scene_index..paint.end.scene_index)
     }
 
+    /// crundi patch (b), PATCH.md: what a cached view's last paint covers,
+    /// unclipped, in window pixels (`None`: it drew nothing).
+    pub(crate) fn painted_extent(&self, paint: &Range<PaintIndex>) -> Option<Bounds<Pixels>> {
+        let sf = self.scale_factor();
+        self.rendered_frame.scene.extent(paint.start.scene_index..paint.end.scene_index).map(|b| Bounds {
+            origin: point(px(b.origin.x.0 / sf), px(b.origin.y.0 / sf)),
+            size: size(px(b.size.width.0 / sf), px(b.size.height.0 / sf)),
+        })
+    }
+
+    /// crundi patch (b): whether a cached view's last prepaint deferred a draw.
+    pub(crate) fn deferred_in(&self, prepaint: &Range<PrepaintStateIndex>) -> bool {
+        prepaint.start.deferred_draws_index != prepaint.end.deferred_draws_index
+    }
+
+    /// crundi patch (b): whether the focused element was drawn by a cached
+    /// view whose last prepaint is `prepaint`.
+    pub(crate) fn focus_drawn_in(&self, prepaint: &Range<PrepaintStateIndex>) -> bool {
+        self.focus.is_some_and(|f| self.rendered_frame.dispatch_tree.focus_in(f, prepaint.start.dispatch_tree_index..prepaint.end.dispatch_tree_index))
+    }
+
     /// crundi patch (b): `reuse_prepaint`, the hitboxes moved by `delta` and
     /// their clips kept inside the current content mask.
     pub(crate) fn reuse_prepaint_at(&mut self, range: Range<PrepaintStateIndex>, delta: Point<Pixels>) {

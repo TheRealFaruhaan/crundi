@@ -336,6 +336,10 @@ struct ViewElementState {
     /// (an element that lays a child out but doesn't draw it) leaves them
     /// stale, so it renders again rather than replay them.
     painted_in: u64,
+    /// crundi patch (b): neither rendered nor painted, being wholly outside
+    /// its clip; what it last drew, unclipped, relative to its origin. It
+    /// renders when any of that would be in view again.
+    skipped: Option<Bounds<Pixels>>,
 }
 
 struct ViewElementCacheKey {
@@ -558,6 +562,21 @@ fn inside(mask: &Bounds<Pixels>, b: &Bounds<Pixels>) -> bool {
     b.left() >= mask.left() && b.top() >= mask.top() && b.right() <= mask.right() && b.bottom() <= mask.bottom()
 }
 
+/// crundi patch (b): `ext` (what a view drew, unclipped) moved by `delta`
+/// shows nothing under `mask` that was clipped before the move: the part of
+/// it now in view, taken back by `delta`, was in view (tolerance: a hundredth
+/// of a pixel). The scene kept only that, so it can be replayed moved.
+fn reveals_nothing(mask: &Bounds<Pixels>, ext: &Bounds<Pixels>, delta: crate::Point<Pixels>) -> bool {
+    let back = Bounds { origin: mask.origin - delta, size: mask.size };
+    let now = ext.intersect(&back);
+    if now.is_empty() { return true; }
+    let e = crate::px(0.01);
+    now.left() >= mask.left() - e && now.top() >= mask.top() - e && now.right() <= mask.right() + e && now.bottom() <= mask.bottom() + e
+}
+
+/// crundi patch (b): `b` and `mask` share no area.
+fn outside(mask: &Bounds<Pixels>, b: &Bounds<Pixels>) -> bool { b.intersect(mask).is_empty() }
+
 #[inline(never)]
 fn prepaint_view(
     entity_id: EntityId,
@@ -582,9 +601,51 @@ fn prepaint_view(
                 let text_style = window.text_style();
                 let opacity = window.element_opacity();
 
+                // crundi patch (b), PATCH.md: a view wholly outside its clip (and
+                // all it drew last, its overflow included) is neither rendered
+                // nor painted, dirty or not, unless the window refreshes (a
+                // focus change does) or it holds the focus, drew something
+                // deferred (an anchored popover is placed in window
+                // coordinates) or changed size. It renders once in view again.
+                let mut element_state = element_state;
+                // (Its bounds are part of its extent: only a view whose bounds
+                // are outside its clip is looked at further, so the common
+                // case costs two comparisons.)
+                if let Some(st) = element_state.as_mut()
+                    && !window.refreshing
+                    && st.cache_key.bounds.size == bounds.size
+                    && outside(&content_mask.bounds, &bounds)
+                {
+                    let local = match st.skipped {
+                        Some(local) => Some(local),
+                        None if st.painted_in + 1 == window.frame_seq
+                            && !window.deferred_in(&st.prepaint_range)
+                            && !window.focus_drawn_in(&st.prepaint_range) =>
+                        {
+                            let old = st.cache_key.bounds;
+                            let ext = window.painted_extent(&st.paint_range).map_or(old, |e| e.union(&old));
+                            Some(Bounds { origin: ext.origin - old.origin, size: ext.size })
+                        }
+                        None => None,
+                    };
+                    if let Some(local) = local
+                        && outside(&content_mask.bounds, &Bounds { origin: local.origin + bounds.origin, size: local.size })
+                    {
+                        let at = window.prepaint_index();
+                        st.skipped = Some(local);
+                        st.prepaint_range = at.clone()..at;
+                        st.cache_key.bounds = bounds;
+                        st.cache_key.content_mask = content_mask;
+                        st.moved = false;
+                        st.paint_offset = None;
+                        return (None, element_state.unwrap());
+                    }
+                }
+
                 // Opacity is compared by bits so that a NaN opacity still matches itself
                 // and the view keeps using its cache.
                 if let Some(mut element_state) = element_state
+                    && element_state.skipped.is_none()
                     && element_state.cache_key.content_mask == content_mask
                     && element_state.cache_key.text_style == text_style
                     && element_state.cache_key.opacity.to_bits() == opacity.to_bits()
@@ -605,8 +666,9 @@ fn prepaint_view(
                     }
                     // crundi patch (b), PATCH.md: the view only moved (its size,
                     // clip, text style and opacity as before, by whole device
-                    // pixels, inside its clip before and after): its last frame
-                    // replayed at the offset. It renders again once still.
+                    // pixels, and the move brings into view nothing its clip cut
+                    // off before): its last frame replayed at the offset. It
+                    // renders again once still.
                     let delta = bounds.origin - old.origin;
                     let sf = window.scale_factor();
                     let whole = |v: Pixels| {
@@ -618,8 +680,11 @@ fn prepaint_view(
                         && old.size == bounds.size
                         && whole(delta.x)
                         && whole(delta.y)
-                        && inside(&mask, &old)
-                        && inside(&mask, &bounds)
+                        && ((inside(&mask, &old) && inside(&mask, &bounds))
+                            // (The extent holds the bounds: test them alone
+                            // first, and scan the scene only if they pass.)
+                            || (reveals_nothing(&mask, &old, delta)
+                                && reveals_nothing(&mask, &window.painted_extent(&element_state.paint_range).map_or(old, |e| e.union(&old)), delta)))
                         && window.offset_reusable(&element_state.prepaint_range, &element_state.paint_range)
                     {
                         let prepaint_start = window.prepaint_index();
@@ -662,6 +727,7 @@ fn prepaint_view(
                         moved: false,
                         paint_offset: None,
                         painted_in: 0,
+                        skipped: None,
                         cache_key: ViewElementCacheKey {
                             bounds,
                             content_mask,
@@ -720,6 +786,12 @@ fn paint_view(
                         element_state.accessed_entities.extend(accessed_entities);
                         window.refreshing = refreshing;
                         element_state.cache_key.opacity = opacity;
+                    } else if element_state.skipped.is_some() {
+                        // (crundi patch (b): outside its clip, nothing is painted,
+                        // and `painted_in` stays behind, so its ranges aren't reused.)
+                        let at = window.paint_index();
+                        element_state.paint_range = at.clone()..at;
+                        return ((), element_state);
                     } else {
                         // (crundi patch (b): at the offset its prepaint was replayed at.)
                         window.reuse_paint_at(element_state.paint_range.clone(), element_state.paint_offset.take());

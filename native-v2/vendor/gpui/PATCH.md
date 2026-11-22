@@ -26,7 +26,11 @@ the lines marked `crundi patch (a)`, `crundi patch (b)` or `crundi patch (c)` in
   `reuse_paint_at` (`reuse_paint` calls it); `frame_seq` counts up where
   the frames are swapped in `draw`
 - `src/text_system/line_layout.rs`: `LineLayoutIndex::shifted`
-- `src/scene.rs`: `can_offset` and `replay_offset`
+- `src/scene.rs`: `can_offset`, `extent` and `replay_offset`
+- `src/key_dispatch.rs`: `DispatchTree::focus_in`
+- (b) in `src/view.rs` also `reveals_nothing`, `outside` and
+  `ViewElementState::skipped`; in `src/window.rs` `painted_extent`,
+  `deferred_in` and `focus_drawn_in`
 - `src/elements/div.rs` (c): `paint_mouse_listeners` (the pending press,
   its release, the active style), `clear_active_tooltip_if_not_hoverable`,
   `register_tooltip_mouse_handlers` and `show_tooltip`
@@ -34,7 +38,9 @@ the lines marked `crundi patch (a)`, `crundi patch (b)` or `crundi patch (c)` in
 `crates/shell/tests/gpui_patch.rs` checks both behaviours in `cargo test`
 on every OS: a clean cached child isn't rendered when its parent is, a moved
 one is replayed and then settles with one render, and a resized one
-renders.
+renders; one moving out across its clip's edge is replayed, one moving back
+in renders, and one wholly outside isn't rendered, even when it changes,
+until it is in view again.
 
 Both changes are platform-independent (no `cfg`). They touch only the frame
 building, not any OS's window or renderer.
@@ -99,10 +105,16 @@ these hold:
 - the move is a whole number of device pixels on both axes, so glyph sprites
   keep their subpixel variant and land on the same pixel grid (a fractional
   move renders again);
-- the view lies wholly inside its content mask before and after the move.
-  The scene drops primitives outside the mask when they are inserted, so a
-  view that was partly clipped may lack what is now in view: it renders
-  again;
+- the move brings into view nothing its content mask cut off before
+  (F241). The scene keeps only what lies inside the mask (a primitive wholly
+  outside is dropped when it is inserted, an element may skip what it can't
+  see), so a view coming into view across its clip's edge renders again. A
+  view wholly inside its mask before and after qualifies at once. Otherwise
+  its extent (its bounds and what its last paint drew, unclipped:
+  `Window::painted_extent`, `Scene::extent`) is taken back by the move, and
+  the part of it now in view must have been in view before
+  (`reveals_nothing`). A pane crossing the grid's edge on its way out, or
+  moving further out of it, is replayed; one coming in renders;
 - its last frame has no deferred draws (an anchored popover is placed in
   window coordinates) and no sprite drawn through a transformation (its
   matrix is in window coordinates): `Window::offset_reusable`.
@@ -115,9 +127,34 @@ What is moved:
   bounds and layer bounds (`Scene::replay_offset`), and the test-support
   debug bounds.
 
+A replayed primitive's clip is moved, then intersected with the current
+mask, which is right where it is needed: inside the part now in view, which
+was in view before.
+
 Dispatch nodes, tab stops, cursor requests, tooltips and element states have
 no positions and are replayed as they are. The cached views nested in a
 moved one have their recorded bounds moved too.
+
+**Wholly outside its clip (F241).** A cached view none of whose extent (its
+bounds and, at the last paint, what it drew unclipped) is inside its content
+mask is neither rendered nor painted, whether it is dirty or not
+(`ViewElementState::skipped` keeps that extent, relative to its origin).
+Its prepaint and paint ranges are empty, its entities aren't accessed, so a
+change in them doesn't wake the window: a terminal printing in a pane out of
+the grid's view draws nothing. It renders as soon as any of its extent is in
+view again, or the window refreshes. Not skipped: a view with a deferred draw
+last frame (an anchored popover may be anywhere), one holding the focus (its
+dispatch nodes must stay in the tree for keys and blur;
+`Window::focus_drawn_in`, `DispatchTree::focus_in`), one whose size changed,
+and any view during a window refresh (a focus change refreshes the window,
+so a view given the focus while hidden renders).
+
+**What the checks cost.** Both tests look at the view's bounds first (a few
+comparisons) and scan its scene operations for the extent only when the
+bounds alone pass: a view whose bounds are outside its clip, or whose move
+reveals nothing of its bounds. A first version scanned every cached view's
+operations on every frame and cost planning+stream+scroll about 10% of its
+frames under 7 ms on the PC (perf/pc-2026-11-22-architect-f241.md).
 
 **Settling.** Listeners an element registered while painting may have
 captured window positions: a text input's bounds, say, for mapping a click

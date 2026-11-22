@@ -80,3 +80,68 @@ fn cached_views_keep_clean_children_and_replay_moves(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(leaf_n.get(), l1 + 1, "a resized view renders");
 }
+
+/// Holds the leaf, cached, at `top` inside a 200 px clip (F241).
+struct Clip { leaf: Entity<Leaf>, top: Pixels }
+impl Render for Clip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().relative().w(px(200.)).h(px(200.)).overflow_hidden().child(
+            div().absolute().top(self.top).left(px(10.)).w(px(100.)).h(px(40.))
+                .child(self.leaf.clone().cached(StyleRefinement::default().size_full())),
+        )
+    }
+}
+struct ClipRoot { clip: Entity<Clip> }
+impl Render for ClipRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(self.clip.clone().cached(StyleRefinement::default().size_full()))
+    }
+}
+
+fn settle(cx: &mut VisualTestContext) {
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    draw(cx);
+}
+
+#[gpui::test]
+fn partly_clipped_moves_replay_and_hidden_views_skip(cx: &mut TestAppContext) {
+    let leaf_n = Rc::new(Cell::new(0));
+    let l = leaf_n.clone();
+    let (root, cx) = cx.add_window_view(move |_, cx| {
+        let leaf = cx.new(|_| Leaf { renders: l });
+        ClipRoot { clip: cx.new(|_| Clip { leaf, top: px(20.) }) }
+    });
+    let (clip, leaf) = root.read_with(cx, |r, cx| (r.clip.clone(), r.clip.read(cx).leaf.clone()));
+    let at = |cx: &mut VisualTestContext, top: f32| { clip.update(cx, |c, cx| { c.top = px(top); cx.notify(); }); draw(cx); };
+    draw(cx);
+    draw(cx);
+    let n = leaf_n.get();
+
+    // Moving across the clip's edge, and further out: nothing new comes into
+    // view, so it is replayed (patch b, F241).
+    at(cx, 170.);
+    assert_eq!(leaf_n.get(), n, "a move that crosses the clip's edge is replayed");
+    at(cx, 180.);
+    assert_eq!(leaf_n.get(), n, "…and one further out of it");
+    // Back in: what the clip cut off must be drawn, so it renders.
+    at(cx, 160.);
+    assert_eq!(leaf_n.get(), n + 1, "a partly clipped view moving into view renders");
+    settle(cx);
+    let n = leaf_n.get();
+
+    // Wholly outside its clip: neither rendered nor painted, even when it changes.
+    at(cx, 300.);
+    assert_eq!(leaf_n.get(), n, "a view moved out of its clip isn't rendered");
+    leaf.update(cx, |_, cx| cx.notify());
+    draw(cx);
+    at(cx, 320.);
+    assert_eq!(leaf_n.get(), n, "…nor when it changes or moves while outside");
+    settle(cx);
+    assert_eq!(leaf_n.get(), n, "…nor when the moves settle");
+    // In view again, it renders.
+    at(cx, 20.);
+    assert_eq!(leaf_n.get(), n + 1, "it renders once in view again");
+    draw(cx);
+    assert_eq!(leaf_n.get(), n + 1, "and is cached again after");
+}

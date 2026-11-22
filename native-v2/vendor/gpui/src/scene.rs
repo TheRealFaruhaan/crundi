@@ -160,6 +160,19 @@ impl Scene {
         })
     }
 
+    /// crundi patch (b), PATCH.md: the union of these operations' primitives'
+    /// bounds before their clip (what they would draw if nothing clipped them).
+    pub(crate) fn extent(&self, range: Range<usize>) -> Option<Bounds<ScaledPixels>> {
+        let mut out: Option<Bounds<ScaledPixels>> = None;
+        for op in &self.paint_operations[range] {
+            if let PaintOperation::Primitive(p) = op {
+                let b = *p.bounds();
+                out = Some(out.map_or(b, |o| o.union(&b)));
+            }
+        }
+        out
+    }
+
     /// crundi patch (b): `replay`, every primitive moved by `delta` (whole
     /// device pixels: a glyph keeps its subpixel variant) and its clip kept
     /// inside `mask` (the current content mask).

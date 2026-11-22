@@ -295,7 +295,8 @@ Root (gpui-component)
   (list.rs `StateInner::scroll`: `cx.notify(current_view)`; Zed's lists do
   the same), and upstream a cached view is reused only at the same
   bounds. The patch replays a cached view that only moved (by whole device
-  pixels, wholly inside its clip) at the offset (PATCH.md (b)), so a list
+  pixels, bringing into view nothing its clip cut off) at the offset, and
+  skips a view wholly outside its clip (PATCH.md (b), F241), so a list
   of views scrolls by replay. A row that is not a view of its own (the
   log's rows are elements) is still built, laid out and painted again on
   each frame that scrolls. So the work per row is what has to be small. As Zed's editor
