@@ -466,7 +466,7 @@ pub fn key_text(key: &str, key_char: Option<&str>, ctrl: bool) -> Option<String>
 /// when the view scrolls or output moves it up, as xterm.js's selection
 /// does (F251); `alt`: made on the alternate screen (shown only there).
 #[derive(Clone, Copy, Default, PartialEq)]
-struct Sel { c0: usize, r0: usize, c1: usize, r1: usize, on: bool, alt: bool }
+struct Sel { c0: usize, r0: usize, c1: usize, r1: usize, on: bool, screen: u64 }
 
 fn mono(bold: bool, italic: bool) -> Font {
     let mut f = font(T::MONO);
@@ -572,10 +572,11 @@ impl TermScreen {
         TermScreen { state, focus: cx.focus_handle(), cache: RowCache::default(), shown: Rc::new(vec![]), lines: HashMap::new(), drawn: None, cell: (8., 16.), cell_for: (px(0.), 0), origin: Rc::new(StdCell::new(point(px(0.), px(0.)))), clipped: Rc::new(StdCell::new(false)), hidden: Rc::new(StdCell::new(false)), printing: false, last_change: None, quiet: None, made_views: false, own_marks: Rc::new(vec![]), marks_for: None, pressing: false, sel: Sel::default(), _sub }
     }
 
-    /// The place of the view's first row, and whether it is the alternate screen.
-    fn top(&self, cx: &App) -> (usize, bool) {
+    /// The place of the view's first row, and the screen on show (its
+    /// count of main/alternate switches).
+    fn top(&self, cx: &App) -> (usize, u64) {
         let t = self.state.read(cx);
-        (t.term.view_top(t.back), t.term.is_alt())
+        (t.term.view_top(t.back), t.term.switches)
     }
 
     /// The driver's look at the selection: the rows on show it covers and
@@ -583,7 +584,7 @@ impl TermScreen {
     fn sel_props(&self, cx: &App) -> Value {
         let t = self.state.read(cx);
         let view = t.term.view(t.back);
-        let rows = sel_rows(self.sel, t.term.cols, t.term.view_top(t.back), view.len(), t.term.is_alt());
+        let rows = sel_rows(self.sel, t.term.cols, t.term.view_top(t.back), view.len(), t.term.switches);
         Value::Array(rows.iter().map(|(r, a, b)| json!({ "row": r, "text": selection_text(&view, *a, *r, *b, *r) })).collect())
     }
 
@@ -599,8 +600,10 @@ impl TermScreen {
 
 /// A selection's rows on show (of `rows` from the place `top`) and, for
 /// each, its first and last cell (in order).
-fn sel_rows(sel: Sel, cols: usize, top: usize, rows: usize, alt: bool) -> Vec<(usize, usize, usize)> {
-    if !sel.on || sel.alt != alt { return vec![]; }
+/// A selection made before the screen last switched (main/alternate) shows
+/// nothing: xterm.js clears it when the buffer changes.
+fn sel_rows(sel: Sel, cols: usize, top: usize, rows: usize, screen: u64) -> Vec<(usize, usize, usize)> {
+    if !sel.on || sel.screen != screen { return vec![]; }
     let ((c0, r0), (c1, r1)) = if (sel.r1, sel.c1) < (sel.r0, sel.c0) { ((sel.c1, sel.r1), (sel.c0, sel.r0)) } else { ((sel.c0, sel.r0), (sel.c1, sel.r1)) };
     (r0.max(top)..=r1.min((top + rows).saturating_sub(1))).filter_map(|r| {
         let from = if r == r0 { c0 } else { 0 };
@@ -661,7 +664,7 @@ impl Render for TermScreen {
         let (cw, ch) = self.cell;
         let (back, cols) = (st.back, st.term.cols);
         let id = st.id.clone();
-        let sel = sel_rows(self.sel, cols, st.term.view_top(back), self.shown.len(), st.term.is_alt());
+        let sel = sel_rows(self.sel, cols, st.term.view_top(back), self.shown.len(), st.term.switches);
         let origin = self.origin.clone();
         let state = self.state.downgrade();
         let pad = T::SP_4;
@@ -736,11 +739,11 @@ impl Render for TermScreen {
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, window, cx| {
                 this.focus.focus(window, cx);
                 let (c, r) = this.cell_at(e.position);
-                let (top, alt) = this.top(cx);
+                let (top, screen) = this.top(cx);
                 let r = top + r;
                 this.pressing = true;
                 let was = this.sel.on;
-                this.sel = Sel { c0: c, r0: r, c1: c, r1: r, on: false, alt };
+                this.sel = Sel { c0: c, r0: r, c1: c, r1: r, on: false, screen };
                 if was { cx.notify(); }
             }))
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {

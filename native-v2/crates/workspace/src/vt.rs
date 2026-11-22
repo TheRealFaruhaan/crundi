@@ -52,6 +52,10 @@ pub struct Term {
     /// counted from the first ever (`trimmed` + its index) stays the same
     /// while the view scrolls and output comes (a selection holds to it).
     pub trimmed: usize,
+    /// Switches between the main and the alternate screen so far: a
+    /// selection made on one screen is gone after a switch (as xterm.js
+    /// clears it when the buffer changes).
+    pub switches: u64,
     st: Style,
     mode: Mode,
     params: String,
@@ -91,7 +95,7 @@ impl Term {
     pub fn new(cols: usize, rows: usize) -> Term {
         let (cols, rows) = (cols.max(2), rows.max(1));
         let scr = Screen { rows: vec![blank_row(cols); rows], cx: 0, cy: 0, saved: (0, 0, Style::default()), top: 0, bottom: rows - 1 };
-        Term { cols, rows, main: scr, alt: None, scrollback: vec![], max_scrollback: 5000, trimmed: 0, st: Style::default(), mode: Mode::Ground,
+        Term { cols, rows, main: scr, alt: None, scrollback: vec![], max_scrollback: 5000, trimmed: 0, switches: 0, st: Style::default(), mode: Mode::Ground,
             params: String::new(), osc: String::new(), cursor_on: true, app_cursor: false, bracketed: false, autowrap: true, wrap_next: false,
             replies: vec![], title: String::new(), generation: 0 }
     }
@@ -309,8 +313,10 @@ impl Term {
                             if on && self.alt.is_none() {
                                 if *m == 1049 { let st = self.st; let s = &mut self.main; s.saved = (s.cx, s.cy, st); }
                                 self.alt = Some(Screen { rows: vec![blank_row(cols); rows], cx: self.main.cx, cy: self.main.cy, saved: self.main.saved, top: 0, bottom: rows - 1 });
+                                self.switches += 1;
                             } else if !on && self.alt.is_some() {
                                 self.alt = None;
+                                self.switches += 1;
                                 if *m == 1049 { let (x, y, st) = self.main.saved; self.main.cx = x; self.main.cy = y; self.st = st; }
                             }
                         }
@@ -518,6 +524,10 @@ mod tests {
         assert_eq!(t.screen_text()[0], "alt");
         t.feed("\x1b[?1049l");
         assert_eq!(t.screen_text()[0], "main");
+        // Each switch counts (a selection is tied to the screen it was made on).
+        assert_eq!(t.switches, 2);
+        t.feed("\x1b[?1049l");
+        assert_eq!(t.switches, 2);
         // A scroll region: line 2-3 scroll, line 1 stays.
         let mut t = Term::new(6, 3);
         t.feed("top\x1b[2;3r\x1b[2;1Ha\r\nb\r\nc");

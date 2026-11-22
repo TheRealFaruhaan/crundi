@@ -219,8 +219,9 @@ t.check('…and the lit pane is the one now under the pointer', !s.drag.target |
 s = await T.until('…up to its end', (s) => s.drag && Math.abs(s.grid.scroll - s.grid.max) < 1, 5000);
 // Each tick moves the grid by whole pixels: the panes' bodies are replayed
 // moved, not drawn again (F213): the chat's log, its composer and Mini's
-// layers render far less than once a tick (a pane coming into view across
-// the grid's edge renders: what was cut off is drawn).
+// layers render far less than once a tick. A pane crossing the grid's edge:
+// leaving, it is replayed too (F241, below); entering, it renders (what the
+// clip cut off is drawn), at most once a tick (below).
 {
   const er1 = s.renders || {}, frames = T.frames.since(ef).frames;
   const d = Object.fromEntries(Object.keys(er1).map((k) => [k, (er1[k] || 0) - (er0[k] || 0)]).filter(([, v]) => v));
@@ -279,9 +280,22 @@ await T.until('let go, the move ends', (s) => !s.drag, 3000);
   const c = s.leaves.find((l) => l.key?.startsWith('live:')), cx0 = c && c.x;
   console.log(`  edge scroll, the chat leaving (${frames} frames, chat ${Math.round(cx0)}..${Math.round(cx0 + c?.w)}, grid ${g2.x}..):`, JSON.stringify(d));
   t.check('during an edge scroll the chat crossing the grid\'s edge is moved, not drawn: its log and composer not on every tick (F241)', c && cx0 < g2.x && cx0 + c.w > g2.x && frames >= 5 && (d.log || 0) < frames / 2 && (d.composer || 0) < frames / 2, { d, frames, chat: c, g: s.grid });
+  // The chat entering across the left edge as the grid scrolls back.
   const plx = g2.x + 15;
-  for (let i = 1; i <= 6; i++) { await T.mouse('move', prx + (plx - prx) * i / 6, py, { buttons: ['left'] }); await t.sleep(30); }
+  for (let i = 1; i <= 5; i++) { await T.mouse('move', prx + (plx - prx) * i / 6, py, { buttons: ['left'] }); await t.sleep(30); }
+  await t.sleep(300);
+  const r2 = (await T.state()).renders || {}, f2 = T.frames.mark();
+  await T.mouse('move', plx, py, { buttons: ['left'] });
   s = await T.until('…and held at the left edge, back', (s) => s.drag && s.grid.scroll < 1, 5000);
+  {
+    const r3 = s.renders || {}, frames = T.frames.since(f2).frames;
+    const d = Object.fromEntries(Object.keys(r3).map((k) => [k, (r3[k] || 0) - (r2[k] || 0)]).filter(([, v]) => v));
+    console.log(`  edge scroll, the chat entering (${frames} frames):`, JSON.stringify(d));
+    // Entering brings into view what the grid's clip cut off: the scene
+    // holds none of it, so the chat renders (once a tick at most, never
+    // more). Replaying it would need F247's wider clip.
+    t.check('during an edge scroll the chat entering across the grid\'s edge renders at most once a tick (F213)', frames >= 5 && ['log', 'composer', 'mini-panes', 'chat-mini'].every((k) => (d[k] || 0) <= frames), { d, frames });
+  }
   await T.mouse('move', g2.x + g2.w / 2, py, { buttons: ['left'] });
   await t.sleep(200);
   await T.mouse('up', g2.x + g2.w / 2, py);

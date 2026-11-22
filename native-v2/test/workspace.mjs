@@ -408,6 +408,30 @@ await T.until('a selection over the terminal copies what it covers', (s) => W(s)
   await T.mouse('click', g.x + 0.5 * g.cw, cy);
   await T.until('a click clears the selection', (s) => (TS(s)?.sel || []).length === 0, 3000);
 }
+// F254: a selection made on the alternate screen is gone once the screen
+// switches (xterm.js clears it when the buffer changes): select on one
+// full-screen run, quit, start another over different text: nothing is
+// highlighted.
+{
+  const fullScreen = (tag) => `printf '\\033[?1049h\\033[H\\033[2J'; for i in 1 2 3 4 5 6 7 8; do echo ${tag}-$i; done; read x; printf '\\033[?1049l'`;
+  await act('term-send', key, fullScreen('alt-one'));
+  s = await T.until('a program on the alternate screen', (s) => TS(s)?.alt && TS(s).screen.some((l) => l.trim() === 'alt-one-8'));
+  let tt = TS(s);
+  const g = tt.grid;
+  const r0 = tt.screen.findIndex((l) => l.trim() === 'alt-one-5');
+  await T.mouse('drag', g.x + 0.5 * g.cw, g.y + (r0 + 0.5) * g.ch, { toX: g.x + 6.5 * g.cw, toY: g.y + (r0 + 2.5) * g.ch });
+  s = await T.until('a drag on the alternate screen selects three rows', (s) => TS(s)?.sel?.length === 3 && TS(s).sel[0].row === r0, 4000);
+  await act('term-key', key, '\n', '');
+  s = await T.until('the program quits: back on the main screen', (s) => TS(s) && !TS(s).alt);
+  t.check('…the selection is gone', (TS(s).sel || []).length === 0, TS(s).sel);
+  await act('term-send', key, fullScreen('alt-two'));
+  s = await T.until('the alternate screen again, over other text', (s) => TS(s)?.alt && TS(s).screen.some((l) => l.trim() === 'alt-two-8'));
+  await t.sleep(200);
+  tt = TS(await T.state());
+  t.check('nothing is highlighted on the new alternate screen', (tt.sel || []).length === 0, tt.sel);
+  await act('term-key', key, '\n', '');
+  await T.until('the second program quits', (s) => TS(s) && !TS(s).alt);
+}
 await snap('terminal');
 
 // Streaming: a long burst of output, batched (at most one update a frame),
