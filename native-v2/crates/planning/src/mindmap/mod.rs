@@ -215,6 +215,11 @@ pub struct M {
     pub(crate) all_div: bool,
     /// The ideas the map drew in its last frame (for the driver).
     pub(crate) drawn: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    /// The last press the map took (window point, what its hit test said),
+    /// for the driver (F260).
+    pub(crate) last_press: std::rc::Rc<std::cell::RefCell<Option<(f32, f32, String)>>>,
+    /// How many drags of an idea have started (for the driver, F260).
+    drags: u32,
 }
 
 impl M {
@@ -354,6 +359,10 @@ pub fn init(cx: &mut App) {
         chat: false,
         make: std::rc::Rc::new(|_, _, window, cx| {
             let host = host(true, window, cx);
+            // The map again as the pane opens, as the tab's (its events are
+            // let go while it is not on show; a pane opened on the
+            // workbench changes no tab, F260).
+            load(cx);
             crundi_workbench::PaneParts {
                 body: std::rc::Rc::new(move |cx| host.body(cx)),
                 info: std::rc::Rc::new(|_| crundi_workbench::HeadInfo { title: "Mindmap".into(), long: String::new(), state: "idle".into() }),
@@ -1165,7 +1174,7 @@ fn drag_start(id: &str, window: &mut Window, cx: &mut App) {
     if with(cx, |s| s.edit.is_some()) { finish_edit(true, window, cx); }
     if with(cx, |s| s.draft.is_some()) { end_draft(window, cx); }
     clear_sel(cx);
-    with(cx, |s| { s.target = None; s.want.clear(); s.want_gen += 1; s.drag_id = id.to_string(); s.hover = None; });
+    with(cx, |s| { s.target = None; s.want.clear(); s.want_gen += 1; s.drag_id = id.to_string(); s.hover = None; s.drags += 1; });
     render(window, cx);
 }
 
@@ -1600,6 +1609,8 @@ pub fn test_ui(_: &Stores, name: &str, args: &[String], window: &mut Window, cx:
         "mindmap-measure" => json!({ "ok": true }),
         // Pan by (dx, dy) canvas pixels (+: further right, further down).
         "mindmap-all-div" => { let on = a(0) == "true"; with(cx, |s| s.all_div = on); redraw(cx); json!({ "ok": true }) }
+        // What the map's own hit test finds at a window point (F260).
+        "mindmap-hit" => { let (x, y) = (a(0).parse().unwrap_or(0.0), a(1).parse().unwrap_or(0.0)); json!({ "hit": draw::hit_name(x, y, cx) }) }
         "mindmap-pan" => { scroll_by(-a(0).parse().unwrap_or(0.0), -a(1).parse().unwrap_or(0.0), cx); json!({ "ok": true }) }
         "mindmap-flash" => { let id = id_of(&a(0), cx); flash_node(&id, a(1) == "true", window, cx); json!({ "ok": true }) }
         _ => return None,
@@ -1656,5 +1667,7 @@ pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
     put("relayouts", json!(s.relayouts));
     // The ideas the map drew in its last frame (it draws only those on screen).
     put("drawn", json!(drawn));
+    put("drags", json!(s.drags));
+    put("lastPress", s.last_press.borrow().as_ref().map(|(x, y, h)| json!({ "x": x, "y": y, "hit": h })).unwrap_or(Value::Null));
     Value::Object(m)
 }

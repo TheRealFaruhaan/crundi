@@ -118,7 +118,7 @@ export async function run(T, t) {
     for (let i = 1; i <= 12; i++) await T.mouse('move', gx + (tx - gx) * i / 12, gy + (ty - gy) * i / 12, { buttons: ['left'] });
     const dg = await T.until('over the terminal, the idea\'s clone is there with the pointer', (p) => M(p).drag?.id === idea.id
       && M(p).drag.x > tl.x - 200 && M(p).drag.x < tx && M(p).drag.y > tl.y - 60 && M(p).drag.y < ty);
-    if (!dg) { const z = await T.props(); console.log('   clone at', M(z).drag, 'terminal', tl, 'pressed at', gx, gy, 'idea box', r0.box, 'map', leaf(z, 'panel:mindmap'), 'canvas', M(z).canvas, 'view', M(z).view, 'scroll', M(z).scroll, 'drawn', M(z).drawn?.includes(idea.id)); }
+    if (!dg) { const z = await T.props(); console.log('   clone at', M(z).drag, 'terminal', tl, 'pressed at', gx, gy, 'idea box', r0.box, 'map', leaf(z, 'panel:mindmap'), 'canvas', M(z).canvas, 'view', M(z).view, 'scroll', M(z).scroll, 'drawn', M(z).drawn?.includes(idea.id), 'last press', M(z).lastPress, 'hit there', await T.ui('mindmap-hit', String(gx), String(gy)), 'edit', M(z).edit, 'hover', M(z).hover, 'draft', M(z).draft, 'sel', M(z).sel); }
     await T.mouse('move', gx, gy, { buttons: ['left'] });
     await T.mouse('up', gx, gy);
     await T.until('let go where it was taken, nothing moves', (p) => !M(p).drag);

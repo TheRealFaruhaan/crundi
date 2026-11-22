@@ -636,32 +636,7 @@ enum Hot { Node(String), Fold(String), Ghost(String, String) }
 impl MapView {
     /// What is under a window point (the map's own hit test: the ideas at
     /// rest have no handlers). The last drawn is on top.
-    fn hit(&self, at: Point<Pixels>, cx: &App) -> Option<Hot> {
-        let s = self.store.read(cx);
-        let p = self.pan.read(cx);
-        let z = s.zoom.max(0.01);
-        let (ux, uy) = ((f32::from(at.x) - s.canvas_x + p.x) / z, (f32::from(at.y) - s.canvas_y + p.y) / z);
-        if f32::from(at.x) < s.canvas_x || f32::from(at.y) < s.canvas_y || f32::from(at.x) > s.canvas_x + s.view_w || f32::from(at.y) > s.canvas_y + s.view_h { return None; }
-        let nw = f32::from(T::MINDMAP_NODE);
-        for r in s.rows.iter().rev() {
-            match r.kind {
-                "node" => {
-                    let top = (r.y - r.h / 2.).max(f32::from(T::SP_4));
-                    if r.kids {
-                        let (fx, fs, cy) = (r.x + nw - f32::from(T::SP_10), f32::from(T::SP_16 + T::SP_2), top + r.h / 2.);
-                        if ux >= fx && ux <= fx + fs && uy >= cy - fs / 2. && uy <= cy + fs / 2. { return Some(Hot::Fold(r.id.clone())); }
-                    }
-                    if ux >= r.x && ux <= r.x + nw && uy >= top && uy <= top + r.h { return Some(Hot::Node(r.id.clone())); }
-                }
-                "ghost" if !r.hidden => {
-                    let (top, h) = (r.y - r.h / 2., r.h.max(f32::from(T::SP_40)));
-                    if ux >= r.x && ux <= r.x + nw && uy >= top && uy <= top + h { return Some(Hot::Ghost(r.id.clone(), r.parent.clone())); }
-                }
-                _ => {}
-            }
-        }
-        None
-    }
+    fn hit(&self, at: Point<Pixels>, cx: &App) -> Option<Hot> { hit_in(self.store.read(cx), self.pan.read(cx), at) }
 
     fn hover_at(&mut self, at: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         let h = self.hit(at, cx);
@@ -693,6 +668,45 @@ impl MapView {
         }
         if let Some(r) = now.and_then(|n| rows.iter().find(|r| r.id == n)) { let c = clamped(&r.text, z, window); super::hover(r, true, c, cx); }
     }
+}
+
+/// What is under a window point, by the map's store and pan (the map's
+/// own hit test: the ideas at rest have no handlers). The last drawn is on top.
+fn hit_in(s: &M, p: &Pan, at: Point<Pixels>) -> Option<Hot> {
+    let z = s.zoom.max(0.01);
+    let (ux, uy) = ((f32::from(at.x) - s.canvas_x + p.x) / z, (f32::from(at.y) - s.canvas_y + p.y) / z);
+    if f32::from(at.x) < s.canvas_x || f32::from(at.y) < s.canvas_y || f32::from(at.x) > s.canvas_x + s.view_w || f32::from(at.y) > s.canvas_y + s.view_h { return None; }
+    let nw = f32::from(T::MINDMAP_NODE);
+    for r in s.rows.iter().rev() {
+        match r.kind {
+            "node" => {
+                let top = (r.y - r.h / 2.).max(f32::from(T::SP_4));
+                if r.kids {
+                    let (fx, fs, cy) = (r.x + nw - f32::from(T::SP_10), f32::from(T::SP_16 + T::SP_2), top + r.h / 2.);
+                    if ux >= fx && ux <= fx + fs && uy >= cy - fs / 2. && uy <= cy + fs / 2. { return Some(Hot::Fold(r.id.clone())); }
+                }
+                if ux >= r.x && ux <= r.x + nw && uy >= top && uy <= top + r.h { return Some(Hot::Node(r.id.clone())); }
+            }
+            "ghost" if !r.hidden => {
+                let (top, h) = (r.y - r.h / 2., r.h.max(f32::from(T::SP_40)));
+                if ux >= r.x && ux <= r.x + nw && uy >= top && uy <= top + h { return Some(Hot::Ghost(r.id.clone(), r.parent.clone())); }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The hit test at a window point, named (for the driver, F260).
+pub(super) fn hit_name(x: f32, y: f32, cx: &App) -> String {
+    let Some(h) = cx.try_global::<super::Handle>().map(|h| h.0.clone()) else { return String::new() };
+    let s = h.read(cx);
+    let p = s.pan().read(cx);
+    hot_name(&hit_in(s, p, point(px(x), px(y))))
+}
+
+fn hot_name(h: &Option<Hot>) -> String {
+    match h { Some(Hot::Node(i)) => format!("node:{i}"), Some(Hot::Fold(i)) => format!("fold:{i}"), Some(Hot::Ghost(g, _)) => format!("ghost:{g}"), None => "none".into() }
 }
 
 /// The links as paths at the map's origin, for one zoom, by their end points.
@@ -858,7 +872,6 @@ impl Render for MapView {
         let Some(u) = s.ui.as_ref() else { return div().into_any_element() };
         let clone = (!s.drag_id.is_empty()).then(|| clone_box(s, z));
         let lh = window.line_height();
-        let held = s.press.is_some();
         // The canvas's scrollbars (the web's .mindmap-canvas overflow: auto),
         // over the map in their own layer (a thumb lies over the ideas).
         let (vw, vh) = (s.view_w, s.view_h);
@@ -881,23 +894,17 @@ impl Render for MapView {
             // here (they are drawn without handlers: a pan frame rebuilds
             // every idea on screen). The boxes open over the map (the idea
             // opened up, the one being edited, the draft) take their own.
-            .on_mouse_move(cx.listener(move |this, e: &MouseMoveEvent, window, cx| {
-                this.hover_at(e.position, window, cx);
-                // (A held press's moves are taken window-wide, `held` below,
-                // once a frame has been drawn with it; before that, here:
-                // F256.)
-                if !held || !super::pressing(cx) { super::pointer_move(f32::from(e.position.x), f32::from(e.position.y), window, cx) }
-            }))
+            // (A held press's moves are taken window-wide: the canvas below.)
+            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, window, cx| this.hover_at(e.position, window, cx)))
             // A press anywhere else lets go of the ring (the web's document pointerdown).
             .on_mouse_down_out(|_, _, cx| super::press_outside(cx))
             .on_hover(cx.listener(|this, on: &bool, window, cx| if !*on { this.set_hot(None, window, cx); }))
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, window, cx| {
                 let h = this.hit(e.position, cx);
+                *this.store.read(cx).last_press.borrow_mut() = Some((f32::from(e.position.x), f32::from(e.position.y), hot_name(&h)));
                 this.pressed = h.clone();
                 match h {
-                    // (The frame draws again, its content cached, so the
-                    // next takes the press's moves window-wide: `held`; F256.)
-                    Some(Hot::Node(id)) => { super::node_down(&id, f32::from(e.position.x), f32::from(e.position.y), cx); cx.notify(); }
+                    Some(Hot::Node(id)) => super::node_down(&id, f32::from(e.position.x), f32::from(e.position.y), cx),
                     Some(_) => {}
                     // The bare canvas: a press lets go of the ring and closes a box.
                     None => super::canvas_press(window, cx),
@@ -936,9 +943,15 @@ impl Render for MapView {
                 // While a press on an idea is held, its moves and its release
                 // are taken window-wide: a drag may leave the map, and a
                 // release outside it ends the drag (nothing moves there).
-                if !held { return; }
+                // Taken on every frame, not only on one drawn with the press
+                // held, and in the capture phase: the idea under the pointer
+                // carries the shared drag layer's drag (for a chat or a
+                // terminal), which takes the move that starts it, so a press
+                // and a flick off the map before the next frame started
+                // nothing here, and its release over the idea was a click
+                // (F256, F260).
                 window.on_mouse_event(|e: &MouseMoveEvent, phase, window, cx| {
-                    if phase == DispatchPhase::Bubble && super::pressing(cx) { super::pointer_move(f32::from(e.position.x), f32::from(e.position.y), window, cx); }
+                    if phase == DispatchPhase::Capture && super::pressing(cx) { super::pointer_move(f32::from(e.position.x), f32::from(e.position.y), window, cx); }
                 });
                 window.on_mouse_event(move |e: &MouseUpEvent, phase, window, cx| {
                     if phase == DispatchPhase::Bubble && e.button == MouseButton::Left && !b.contains(&e.position) && super::pressing(cx) { super::release_outside(window, cx); }
