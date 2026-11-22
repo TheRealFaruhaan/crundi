@@ -7,6 +7,7 @@ Rules: `package/CONTRACT.md`. Gap list: `PARITY-ELECTRON.md` (mark each line don
 | Step | Where | Took | Result |
 |---|---|---|---|
 | Prep | PC farhan-RP-15 | about 25 min (release build 701 s, test build 190 s, references 184 s, Docker image 122 s) | Warm builds, Electron v1.21.7 references in ~/.cache/crundi-electron-ref, image crundi-upgrade-test |
+| Packaging | PC farhan-RP-15 | about 75 min; `package/check.sh both` 310 s warm (first run 589 s, build image 254 s) | Linux green on the PC (package/check-pc.log). Windows CI job written, NSIS compiles (makensis 3.09 in Docker), not yet run: this PC's GitHub token has no `workflow` scope |
 
 ## Change request
 | Item | Stream | Done | Tested |
@@ -16,10 +17,17 @@ Rules: `package/CONTRACT.md`. Gap list: `PARITY-ELECTRON.md` (mark each line don
 | PC worker through worker/ | local | | |
 | Electron install moved over (data, config, start at login, shortcuts) | local, updates, pack | | |
 | Updates for the combined install | updates | | |
-| Windows .exe and Linux .deb replacing Electron's | pack | | |
-| Docker (Linux) upgrade test from the latest Electron release | pack | | |
-| windows-latest upgrade test from the latest Electron setup | pack | | |
+| Windows .exe and Linux .deb replacing Electron's | pack | yes (.deb built; .exe script compiles) | .deb: Docker upgrade test, both editions; .exe: waits for the CI run |
+| Docker (Linux) upgrade test from the latest Electron release | pack | yes | yes, v1.21.7 → 1.21.8-dev.8, all-in-one and client (check-pc.log) |
+| windows-latest upgrade test from the latest Electron setup | pack | yes (upgrade-test/windows.ps1, workflow job `windows`) | not run: workflow not pushable from the PC |
 | Quitting leaves no process behind | local, tester | | |
 | Every PARITY-ELECTRON.md line done and tested | all | | |
 | UI review approves | reviewer | | |
 | Owner has tried it | owner | | |
+
+## Packaging sizes (Linux, against Electron v1.21.7)
+| Package | Native | Electron |
+|---|---|---|
+| Crundi .deb | 207 MB (766 MB installed) | 352 MB (1153 MB installed) |
+| Crundi Client .deb | 136 MB (429 MB installed) | 86 MB |
+Windows sizes come from the CI job's summary.

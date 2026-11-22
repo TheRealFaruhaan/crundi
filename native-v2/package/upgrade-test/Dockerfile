@@ -1,4 +1,7 @@
-FROM ubuntu:24.04
+# BASE: the oldest Ubuntu the package runs on (24.04); check.sh picks a newer
+# one only when the client binary was built against a newer glibc.
+ARG BASE=ubuntu:24.04
+FROM ${BASE}
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb xauth dbus-x11 procps psmisc ca-certificates curl xz-utils \

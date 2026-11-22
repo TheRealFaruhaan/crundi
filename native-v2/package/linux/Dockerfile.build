@@ -1,0 +1,10 @@
+# Build tools for the parts of the .deb that need system headers the PC
+# does not have (the worker's tray: GTK), on the oldest Ubuntu the package
+# targets (24.04), so what it links runs there. The Rust toolchain is the
+# host's (~/.rustup, ~/.cargo mounted), Node 22 is the bundled one.
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential pkg-config python3 ca-certificates curl git xz-utils \
+    libgtk-3-dev libxdo-dev libayatana-appindicator3-dev libssl-dev \
+ && rm -rf /var/lib/apt/lists/*
