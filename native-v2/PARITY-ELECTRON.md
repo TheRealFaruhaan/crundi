@@ -1,0 +1,187 @@
+# Electron desktop app vs native-v2: gap report
+
+Paths used below:
+- **Electron** means `app/` on the checked-out branch `native-client` (`main.js` is 2726 lines). "dev:" marks code that exists only on the `dev` branch (`dev:app/main.js` is 2867 lines, and it is the only place the worker lives).
+- **native-v2** means `native-v2/crates/` in this repo. Paths in the native column are relative to that folder.
+
+**The main finding:** native-v2 only connects to a server running somewhere else, like the Electron "Client" build. Anything Electron does in **local** mode is missing: starting and stopping a bundled server, the setup wizard, `.env`, and data migration. The worker is missing too, and so is a working self-updater.
+
+## 1. Server process, client mode, setup
+
+| Feature | Electron (file:function/line) | native-v2 | How to test |
+|---|---|---|---|
+| Client config: mode local/remote and serverUrl in `<dataDir>/client.json` (voiceWake is kept in the same file) | main.js `readClientConfig` 657, `readClientConfigRaw` 672, `writeClientConfig` 676 | PARTIAL: remote only. The server URL is kept in `session.json` (core/src/store.rs `Saved.server`). There is no local mode and no `client.json`, and nothing reads Electron's `client.json` | Fresh profile: sign-in asks for a server. Check nothing offers "This PC" |
+| Is a server bundled (`serverBundled` = `src/index.js` exists) | main.js 655 | MISSING (no server ever ships) | n/a |
+| IPC `client:getConfig` / `client:setConfig` (validates http(s), drops the native-host socket, `restartRequired`) / `client:setToken` (page hands over its token, socket reconnects) | main.js 1631-1655 | PARTIAL: shell/src/signin.rs server step, shell/src/lib.rs `show_server_screen`. The token comes from the client's own sign-in (core live socket) | Tray > Server… > enter a bad URL (expect error) then a good one (expect reconnect) |
+| Start the local server: `startBot` (spawns `node --no-deprecation src/index.js` with an IPC pipe; env `ELECTRON_RUN=1`, `DOTENV_PATH`, `DATA_DIR`, `CRUNDI_DEVICE_ID`, `CRUNDI_DEV`; strips `NODE_OPTIONS`; parses `HTTP server on 0.0.0.0:<port>`, `[crundi] API_KEY=`, `[crundi] Ready`; then loads `http://localhost:<port>?key=…[&restore=1]`) | main.js 744-900 | MISSING | Electron all-in-one: the window goes from the status screen to the web UI |
+| Remote mode in `startBot` (no URL: show the server screen; URL: `loadURL`) | main.js 750-763 | PARTIAL (sign-in server step) | Clear the server and start: the server step appears |
+| `bundledNode()` = `resources/node/bin/node` (Linux only; Windows uses `node` on PATH) | main.js 721 | MISSING | n/a |
+| `serverPath()` + `loginShellPath()` (PATH taken from `$SHELL -ilc`, then `~/.local/bin`, `/usr/local/bin`, bundled node last) | main.js 701-742 | MISSING (only matters for a local server) | Launch from the desktop menu: the server finds `claude` |
+| Crash, exit and restart handling: exit 0 → stopped, other codes → error; `restart-server` IPC message → respawn (restoring a backup) | main.js 868-899, 2010-2015 | MISSING | Kill the server PID: the status shows Error |
+| `killTree` (Windows `taskkill /T /F`; Unix `kill -pgid SIGKILL`) | main.js 904 | MISSING | n/a |
+| `stopServerProcess` (destroys hidden browsers, sends IPC `shutdown`, waits 6 s, then `killTree`) / `stopBot` | main.js 918-940 | MISSING | Tray > Stop: no orphaned cloudflared or services |
+| `gracefulShutdownAndExit` (stops voice wake, stops the server, `app.exit(0)`); `before-quit` is deferred until it finishes | main.js 943, 2721 | PARTIAL: app/src/main.rs `QuitMode::Explicit`, `crundi_webview::shutdown()`. No server to stop | Tray > Quit: the process exits and the browser host goes with it |
+| IPC `bot:getStatus`, `bot:getLogs`, `bot:getLogPath`, `bot:start`, `bot:stop`, `bot:restart`; events `bot:status`, `bot:log` | main.js 1720-1726, 614-630 | MISSING | n/a |
+| Setup wizard `showSetupWizard` → `show:setup` (index.html, 7 steps): Telegram token, username, projects dir (single/multi + Browse), Cloudflare tunnel token/URL, `/setdomain` help, RDP capture (Windows), update + launch consent; "Restore from a backup"; Skip/Back | main.js 1453; index.html 404-537 | MISSING. The native sign-in has first-run password setup and backup restore (shell/src/signin.rs), which belong to the server | Fresh Electron profile: the wizard opens |
+| IPC `setup:save` (writes `.env`: `TELEGRAM_BOT_TOKEN`, `ALLOWED_USERNAME`, `PROJECTS_DIR`, `WEB_PORT` (8888 with a tunnel, else 0), `CLOUDFLARE_TUNNEL_*`, `DATA_DIR=`; sets autoUpdate and launch-at-startup, both default on), `setup:check`, `setup:browse` (folder picker) | main.js 1657-1693 | MISSING | n/a |
+| Pre-fill from the old "Claude Telegram Bot" config (`getOldAppDataDir`: `%APPDATA%\Claude Telegram Bot`, `~/Library/Application Support/Claude Telegram Bot`, `~/.config/claude-telegram-bot`) | main.js 634, 765-787 | MISSING (not applicable) | n/a |
+| `migrateLegacyData` (copies `<appRoot>/data/*` into `<userData>/data` without overwriting) | main.js 104 | MISSING. There is also no import of Electron's userData (homepool key, deviceId, drawer history and passwords, voice profile, server URL) | Install native over a used Electron: settings are not carried over |
+| Linux userData override to `~/.config/crundi-desktop` (packaged all-in-one only) | main.js 41-47 | n/a (native uses `~/.config/crundi-native`) | — |
+| Status screen (Start/Stop/Restart, live log) and server screen (local/remote radio) | index.html `status-screen`, `server-screen` | PARTIAL (server step only) | — |
+
+## 2. Window, tray, lifecycle
+
+| Feature | Electron | native-v2 | How to test |
+|---|---|---|---|
+| Main window: 1100x750, min 800x500, frameless, `#0a0a0f`, icon; close hides it (unless quitting); external links go to the system browser | main.js `createWindow` 168-227 | PRESENT: app/src/main.rs `open_main` (frameless, `app_id "crundi"`, icon); desktop/src/lib.rs `window-close` action; ctx.rs `hide_window`. Hidden by unmap on X11, minimise on Windows/Wayland, close+reopen on Wayland | Click ×: it hides to the tray. Tray > Open: it comes back |
+| IPC `window:minimize/maximize/close/isMaximized/show` | main.js 1728-1736 | PRESENT: shell/src/views.rs top-bar buttons, double-click zoom (576, 171) | Click the buttons |
+| `showWindow`, `bringToFront` (steal focus; Linux on-top for 300 ms) | main.js 124, 155 | PARTIAL: ctx.rs `raise()` (show + activate). No steal or 300 ms always-on-top workaround for GNOME | Click a notification on GNOME: the window is raised, not just "is ready" |
+| Tray: icon (`icon_32x32` scaled to 16), tooltip "Crundi — <status>", double-click (and single click on Linux) opens | main.js `createTray` 523 | PRESENT: desktop/src/tray.rs (ksni on Linux, id `crundi-v2`; tray-icon on Windows/macOS) | Check the tooltip, then click |
+| Tray menu: Crundi / status / Open / Lock (visible) / Lock (full) / Kid mode (→ "Locked") / Server… / Start / Stop / Hey Cru checkbox + note / Check for Updates… or Restart to Install Update / Quit (disabled while kid-locked) | main.js `updateTrayMenu` 542-610 | PARTIAL: tray.rs `menu`. No Start/Stop and no update item. Status is derived from the connection (Running/Stopped) | Compare menus. `cargo test -p crundi-desktop tray` |
+| Single instance (`requestSingleInstanceLock`; `second-instance` focuses the first copy) | main.js 2664-2672 | MISSING (no lock anywhere in the crates) | Launch twice: expect one window and one tray |
+| Deep links / protocol handler | not in Electron either (no `setAsDefaultProtocolClient`) | n/a | — |
+| `window-all-closed` stays in the tray; `activate` (macOS) shows the window | main.js 2715-2719 | PRESENT (`QuitMode::Explicit`) | Close the window: the tray stays |
+| `uncaughtException` / `unhandledRejection` logged, app stays up | main.js 2678-2683 | n/a (Rust); panics are not logged to a file | — |
+| Open a chat in its own window or bubble | none in Electron; `openChatInWindow` 147 only switches the main window's chat (used on notification click) | n/a; the bubble was dropped (PLAN.md 229 "no chat bubble: the owner's decision") | — |
+
+## 3. Updater and launch at startup
+
+| Feature | Electron | native-v2 | How to test |
+|---|---|---|---|
+| Update settings in `<userData>/update-config.json` `{autoUpdate (default true), channel}` | main.js 962-990 | PARTIAL: operations/src/settings/local.rs (`ops-settings.json` `auto_update`, `channel`). Saved but nothing uses it | Toggle in Settings > Desktop App; check the file |
+| Channels: production uses the GitHub provider with no prereleases; dev picks the newest release of either kind from `api.github.com/.../releases?per_page=30` that carries `<channel><-linux\|-mac>.yml`, points a generic feed at it, never downgrades. `versionGt` puts dev.3 < dev.10 < release. `feedInfo` reads `resources/app-update.yml` (channel `latest` or `client`) | main.js 1007-1085 | MISSING: only the segmented control exists (settings.rs `desktop_channel`, confirm_dev) | Switch to Dev: Electron offers the newest dev build |
+| Check 8 s after launch and every 24 h, opt-in respected; manual check; modal "Download & Install / Later" once per version; progress events `update:status` | main.js 1096-1198, 2700-2703 | MISSING: settings.rs `update_check` only shows the toast "This build cannot update itself yet" | Settings > Check now |
+| Install: Windows NSIS `quitAndInstall(true,true)` after stopping the server; full download only (`disableDifferentialDownload`); `autoInstallOnAppQuit` off on Linux | main.js 1103-1107, 1444-1448 | MISSING | — |
+| Linux .deb install: `sudo -n true` → background `sudo -n sh -c 'dpkg -i "$1" \|\| apt-get install -f -y'`; else `pkexec` (after 20 s offer a terminal or copy the command; give up after 10 min; codes 126/127 mean cancelled); else `findTerminal` (x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, kitty, alacritty, foot, wezterm, xterm) running `sudo apt install -y <file>` then relaunch; `app.relaunch()` on success | main.js 1265-1443 | MISSING | Linux: Restart & Install with and without passwordless sudo |
+| IPC `update:getState/setEnabled/check/install/setChannel`, `startup:set` | main.js 1739-1744 | PARTIAL (UI only, see above) | — |
+| Launch at startup. Linux: `~/.config/autostart/<app.getName()>.desktop` = `Crundi.desktop` (Exec = `$APPIMAGE` or exe, escaped). Windows/macOS: `app.setLoginItemSettings` (Windows default is HKCU Run, value named after the AppUserModelId `com.crundi.app`) | main.js 1205-1233 | PARTIAL, two copies that disagree. Settings uses operations/src/settings/local.rs `set_launch`: `crundi-native.desktop`, HKCU Run value `"Crundi Native"`, `com.crundi.native.plist`. desktop/src/startup.rs (`Crundi.desktop`, Run `"Crundi"`, `com.crundi.client.plist`) is used only by the driver's `startup`. Neither matches Electron's file, so an upgrade leaves the old entry behind | Toggle; check `~/.config/autostart/` and `reg query HKCU\...\Run` |
+| First-run consent defaults (autoUpdate and launch on) | main.js 1678-1680 | MISSING (launch is off until toggled) | Fresh install: is an autostart entry created? |
+
+## 4. Locks, kid mode, power, shortcuts
+
+| Feature | Electron | native-v2 | How to test |
+|---|---|---|---|
+| Kid lock IPC `kid:lock` → `kidLockWindow`: show, skip taskbar, always-on-top at `screen-saver` level, fullscreen, kiosk, not minimisable or closable, closes DevTools | main.js 433-464, 494 | PARTIAL: ctx.rs `lock_window`, kidlock.rs `window` (X11 EWMH ABOVE/SKIP_TASKBAR; Win32 TOPMOST/TOOLWINDOW; nothing on Wayland or macOS), cru_kid.rs. The server-driven kid state comes from `voice-kid` events | Tray > Kid mode: you cannot leave without the PIN |
+| `wireKidLock`: key blocklist (F5/F11/F12/Esc/Alt+F4/Alt+Tab/Ctrl+R/W/Q/N/T…, Meta), re-focus on blur after 150 ms, re-fullscreen, un-minimise, un-hide; `kidWatchdog` every 700 ms | main.js 418-431, 467-492 | PARTIAL: re-activate on losing activation (lib.rs 222), `w::hold_keys`, close guarded. No periodic watchdog and no re-fullscreen or restore when the window is minimised or leaves fullscreen | While kid-locked: Super+D, minimise, F11 |
+| Windows keyboard filter (hidden PowerShell low-level hook: Win, Alt+Tab, Alt+Esc, Ctrl+Esc; dies with the parent; restarted up to 5 times) | main.js `kidKeys` 248-290 | PRESENT: kidlock.rs `windows_keys` 207 | Windows kid mode: the Win key does nothing |
+| Linux desktop shortcuts off (GNOME gsettings list; KDE Meta via kwriteconfig5/6 + qdbus reconfigure), saved to `kid-keys-restore.json`, restored at the next start after a crash | main.js `kidKeysLinux` 295-340 | PRESENT: kidlock.rs `linux_keys` 82, `restore_left_over` (lib.rs 102) | Kill -9 while locked, restart: the shortcuts come back |
+| Windows touchpad gestures off (HKCU PrecisionTouchPad), restored | main.js `kidTouchpad` 345-376 | PRESENT: kidlock.rs `windows_touchpad` 229 | Three-finger swipe while locked |
+| PC lock: `pcLockAsk` → page `pc-lock`; tray items; in-window keys Ctrl+Shift+L (visible) / Super+Shift+L (full) | main.js 382-413 | PRESENT: pclock.rs `ask`/`apply`/`try_pin` (POST `/api/lock/start`, `/unlock`); lib.rs 141 `bind_keys` | Press Ctrl+Shift+L |
+| **System-wide** shortcuts (`globalShortcut.register` for both accelerators; logs "taken by another app") | main.js 401-406 | MISSING: keys work only while the window has focus | Focus another app, press Ctrl+Shift+L |
+| Auto lock (IPC `pc-lock:auto {on, minutes, mode}`; `powerMonitor.getSystemIdleTime` every 15 s, once per idle stretch; `powerMonitor` 'lock-screen') | main.js 390-400 | PARTIAL: idle.rs (X11 screensaver ext, Mutter IdleMonitor / ScreenSaver D-Bus, GetLastInputInfo, CGEventSource). The settings come from the server (pclock.rs `set_auto`). OS screen-lock detection exists on Linux only (Windows/macOS return false) | `desktop:lock-idle` driver; Win+L on Windows should trigger it |
+| Power and sleep (voice wake: on-ac/on-battery, lock/unlock-screen, suspend/resume) | voice-wake/controller.js 483-490, 147 | PARTIAL: wake/mod.rs `read_power` (Linux `/sys/class/power_supply` Mains, macOS pmset; **Windows assumed on AC**), `read_locked` (Linux loginctl only); no suspend/resume | Unplug a Windows laptop: "Paused: on battery" is expected but never shows |
+
+## 5. Voice wake ("Hey Cru")
+
+| Feature | Electron | native-v2 | How to test |
+|---|---|---|---|
+| Setting `voiceWake` in `client.json`; IPC `voice-wake:get/set/status` + `voice-wake:status` event; tray checkbox and note | main.js 1477-1546, 1523 | PRESENT: wake/mod.rs (`voice-wake/settings.json`); tray.rs `wake` item; Settings part "voice-device" (lib.rs 127) | Toggle in the tray and in Settings |
+| Training `voice-wake:check/train-begin/train-end/train/forget` (5 samples, `profile.json` 0600) | main.js 1541-1546; voice-wake/enroll.js, controller.js | PRESENT: wake/enroll.rs, wake/mod.rs `train_start/take/forget` | Settings > Voice assistant > train 5 samples |
+| Engine: sherpa-onnx WASM in a utility process, hidden mic window (`partition crundi-voice-wake`, network refused); model downloaded and SHA-checked into `<userData>/voice-wake` | voice-wake/{controller,install,manifest,worker,spotter,owner,voiceprint}.js | PRESENT: wake/engine.rs (static sherpa-onnx, same model id and hashes, owner voice print) | `desktop:wake-hear <wav>` |
+| On a hit: bring to front, open the voice screen; paused while the voice screen is open | controller.js 361-371 | PRESENT (opens Cru: `cru` with `voice_open`) | Say "Hey Cru" while minimised |
+
+## 6. Native host, browsers, drawer, network
+
+| Feature | Electron | native-v2 | How to test |
+|---|---|---|---|
+| Native-host socket: `ws(s)://<server>/ws?token=`, `register-native-host {capabilities:[notify,browser-touch,browser-drawer,browser-mouse], deviceId}`, `native-host-ready` features, reconnect every 5 s, results returned as `native-host-result` | main.js `connectNativeHost` 2086-2155 | PRESENT: desktop/src/host.rs (`registration`, `CAPABILITIES`, `pump`); carried on core live socket | Server: `worker_list`/browser tools see this PC |
+| dev: register also sends `name: osHostname(), clientKind:'electron', version`; sends `native-host-active` on `browser-window-focus` | dev:app/main.js 2259, 2200 | MISSING: registration has no name/clientKind/version (host.rs 90), and nothing is sent on focus | With two PCs: focus one and check which gets new pages |
+| Local IPC path (`handleBotMessage`: notify, netTunnel frames, browser requests with timeouts) vs remote (`handleNativeHostMessage`, browser handlers only) | main.js 2000-2052 | PARTIAL (remote only) | — |
+| Hidden browsers (`browserOpen`, max 20, 1280x720 default) and handlers `browserClose/Navigate/Screenshot/ReadPage/Source/Click/Type/Fill/Select/Eval/Mouse/Touch/Resize/Scroll/Wait/GoBack/GoForward/Console/Network/Cookies/Snapshot/Elements/Pdf`; per-type timeouts (`browserActionTimeout`); `loadUrlWithGrace` 15 s | main.js 2251-2653, 1913-1957 | PRESENT: host.rs `handle` 268-447 (`MAX_HIDDEN` 20, same timeouts 215-218), browsers.rs (Browsers tab) | MCP `browser_*` tools against the PC |
+| `browserTouch` `listenersAt` (CDP `DOMDebugger.getEventListeners` up the ancestor chain, `touchListenersAt`) | main.js 2161-2198, 2471-2507 | MISSING: pointer.rs `touch` returns only `{ok,url}` | `browser_touch` with `listenersAt`: the listeners field is absent |
+| `browserMouse` as CDP input + drawn cursor | browser-pointer.js `runMouse` | PRESENT: pointer.rs `mouse` (`ACTIONS`) | `browser_mouse drag` |
+| Interactive panel `wbrowser:open/sync/navigate/nav/emulate/devtools/close` (WebContentsView, `persist:crundi-browser`, CDP device emulation, mobile UA) | main.js 1751-1872 | PARTIAL: superseded by the drawer (drawer.rs devices `browser::DEVICES`, webview engine `devtools` 890); no separate wbrowser | Drawer > Device > a phone; DevTools button |
+| Browser drawer IPC `drawer:ready/reply/attach/detach/navigate/nav/emulate/devtools/capture/describe/visible/history/clear/info` + `drawer:state/info/request`; `hardenWindow` (only drawer partitions, sandboxed) | browser-drawer.js 153-406, 245 | PRESENT: desktop/src/drawer.rs, ui.rs, marks.rs (annotate, describe), CEF host | `desktop:new-tab`, annotate, send a shot to a chat |
+| Server-side drawer handlers `browserDrawerList/Open/SetNetwork/Annotate/Annotations`; redaction of drawer passwords in results | browser-drawer.js 569-616, 750 | PRESENT: host.rs 268, 421, 435-436, 227-230 | `browser_drawer_open`, then `read_page` on a login page |
+| Sleep (freeze 5 min, discard 1 h; env `CRUNDI_DRAWER_SLEEP_MS/UNLOAD_MS`) | browser-drawer.js 435-466 | PRESENT: drawer.rs 693-760 (env `*_SECS`) | Leave a tab hidden for 5 min |
+| History in `drawer-history.json`; Clear browsing data (history, cookies+storage, cache; per site) across all profiles | browser-drawer.js 96-111, 350-404 | PRESENT: drawer.rs 107-163, `clear_run` 645, `shot::clear_data` | Clear for one site, then check cookies |
+| Drawer networks: client / server (loopback proxy with a per-launch password over the native-host socket) / `hp:<net>`; `app.on('login')` answers the proxy auth | drawer-net.js, net-tunnel-client.js; main.js 2207-2225 | PRESENT: webview/src/net.rs (`set_link`, `hp:` 95), browser-host `auth_credentials` (views.rs 567), hpdrawer.rs | Drawer tab on the server network opens `http://localhost:<serverport>` |
+| Saved passwords: safeStorage (DPAPI/Keychain/keyring) in `drawer-passwords.json`; IPC `drawer:pw-status/list/answer/fill/fill-dismiss/reveal/update/remove/unnever/clear`; capture/fill in an isolated world; PIN to reveal | drawer-passwords.js; browser-drawer.js 709-747 | PRESENT: passwords.rs, pwstore.rs (AES-256-GCM, key in the OS keyring "Crundi Client"). Electron's encrypted file is **not importable** | Save a login, restart, autofill |
+| Downloads: one Save dialog per download (Downloads folder default), session wired once | main.js `wireDownloads` 506-519 | PARTIAL: chat media and Inbox save to Downloads (chat/src/log/media.rs 495, inbox.rs 256). **No CEF download handler for drawer pages**, so a download link in a drawer tab does nothing | Click a .zip link in a drawer tab |
+| Clipboard image and file paths (`clipboard:getImage` to a tmp PNG; `getFilePaths` via FileNameW / `text/uri-list`); iframe bridge; drop-files overlay | main.js 1875-1901; index.html 783-841 | PRESENT: chat/src/composer/attach.rs `paste_handler` (Image, ExternalPaths), cru_ui.rs paste, workspace/terms.rs `on_drop` | Copy a file in the file manager and paste into the composer |
+| `getPathForFile` (webUtils) | preload.js | n/a | — |
+
+## 7. Notifications, homepool, worker, RPA, logging
+
+| Feature | Electron | native-v2 | How to test |
+|---|---|---|---|
+| Server notifications `{type:'notify', title(120), body(400), url}`; kept alive until clicked (6 h cap); click → `bringToFront` + `/chat/<id>` | main.js `showServerNotification` 1973-1998 | PARTIAL: notify.rs. Linux uses gdbus Notify + a monitor for the click. **Windows** uses a PowerShell toast with no click action. **macOS** uses osascript and a click opens nothing | Server: send to the "Desktop app" channel, click it |
+| Homepool node: `homepool-node.json` (0600: server, key `hpn_…`, enabled, deviceId); IPC `homepool:status/share/start/stop/forget`; auto-start when enabled; stop on quit; 'refused' turns it off; public IP from api.ipify.org every 10 min | main.js 1556-1627; homepool-node.js | PARTIAL: desktop/src/homepool.rs (status/share/start/stop/forget, private-address refusal, refused → disabled). **`public_ip` is never fetched**, so it is always "". deviceId moved to `config/device-id`, so Electron's deviceId is not reused | Homepool tab > This PC > share; check `publicIp` in status |
+| deviceId `pc-…` (in homepool-node.json; passed to the server as `CRUNDI_DEVICE_ID`) | main.js `hpDeviceId` 1567 | PRESENT but different: host.rs `device_id` 94 (new id, Electron's not migrated) | Compare server device lists before and after the switch |
+| **Worker (dev only)**: `worker.json` (0600: server, key `cw_w…`, id, workDir, enabled); runs `crundi-worker --embedded --server --key --work-dir (~/crundi-work) --name <hostname>` from `resources/crundi-worker/` or dev builds; JSON stdout status/job/chat/log; notifications on job/chat start and end; exit 3 = refused (forget key), exit 4 = replaced (no restart), otherwise backoff 2 s to 60 s; stop by closing stdin then kill after 3 s; IPC `worker:status/enable/setDir/disable/start` + `worker:status` event; page calls POST `/api/workers {action:'join-self', kind:'electron'}` (src/webapp-html.js 5847) | dev:app/main.js 1629-1761; dev:app/preload.js `worker`; dev:src/workers.js 38 (KINDS includes `native`), 75 (`updatesOf` native → 'app'), 449 | MISSING (no worker code, no bundled binary, no Settings switch). The server already accepts kind `native` | Settings > Use this PC as a worker; `worker_list` shows kind native |
+| RPA / locked-screen capture (Windows): IPC `rdp:status`, `rdp:setup` → `src/rpa.js` `isTaskInstalled/isRdpSession/createTask` (DisconnectRDP scheduled task; the NSIS installer creates it) | main.js 1695-1718; build/installer.nsh | MISSING | Windows: Settings shows DisconnectRDP status |
+| Logging: `<userData>/crundi.log` (ISO timestamp, trimmed to 1000 lines after 2000), 1000-entry ring for the UI, `preload:log`, `shell:log`, lifecycle lines at boot | main.js 70-101, 614, 1723, 1764 | MISSING: env_logger/eprintln to stderr only (app/src/main.rs), no log file | Look for a log file in `~/.config/crundi-native` |
+
+Native-only extras (served by the web UI in Electron, so not app gaps): Inbox (inbox.rs), Cru screen and kid screen (cru*.rs), Browsers tab, Panels host (hosts.rs).
+
+## Package layout facts (Electron)
+
+**Build config** (dev:package.json `build`; the client build is `build/electron-builder-client.yml`):
+- **All-in-one**
+  - `appId com.crundi.app`, `productName Crundi`.
+  - `files`: `app/**`, `src/**`, `scripts/**`, `package.json`; excludes `**/.env` and `app/voice-wake/test-*.mjs`.
+  - `asarUnpack`: `src/**`, `app/vendor/**`, `app/voice-wake/**`, `scripts/**`, `node_modules/**`, `package.json`.
+  - `extraResources`: `.env.example` → `resources/.env.example`, `assets` → `resources/assets`, `skills` → `resources/skills`.
+  - Linux adds `build/linux-node` → `resources/node` (so `resources/node/bin/node`, the CI runner's Node 22 that node-pty was built against) and `build/worker` → `resources/crundi-worker`. Windows adds `build/worker` → `resources/crundi-worker`. The worker lines are on dev only.
+- **Client build**
+  - `appId com.crundi.client`, `productName "Crundi Client"`, `extraMetadata.name crundi-client`.
+  - No `src/` (that is how it knows it is a client).
+  - No `app/vendor`; `node_modules` is an allowlist (electron-updater, ws, onnxruntime-node linux/win x64).
+  - Update channel `client`.
+
+**Runtime paths**
+- `appRoot` = `<exe dir>/resources/app.asar.unpacked`, so the server is `…/app.asar.unpacked/src/index.js` and the vendor files are `…/app.asar.unpacked/app/vendor`.
+- `assetsDir` = `resources/assets`.
+- `app-update.yml` sits in `resources/`.
+
+**Native payloads**
+- Windows uses node-pty prebuilds at `node_modules/node-pty/prebuilds/win32-x64/` (CI checks `winpty-agent.exe`). Linux builds `node_modules/node-pty/build/Release/pty.node` on the runner (CI checks it in the deb). Both sit under `app.asar.unpacked`.
+- cloudflared: `node_modules/cloudflared/bin/cloudflared[.exe]`.
+- Windows uses the system `node` (no bundled Node).
+
+**Release assets**
+- Windows: `Crundi-Setup-<v>.exe` + `.blockmap` + `latest.yml` (release.yml).
+- Client: `Crundi-Client-Setup-<v>.exe` + `client.yml`.
+- Linux: `Crundi-<v>-linux-x64.deb` + `latest-linux.yml`, and `Crundi-Client-<v>-linux-x64.deb` + `client-linux.yml` (release-extra.yml `desktop-linux` job).
+- Tags containing "-" are published as prereleases (`EP_PRE_RELEASE`).
+
+**Data and config folders (Electron userData)**
+- Linux packaged all-in-one: `~/.config/crundi-desktop` (forced, main.js 41).
+- Linux client: `~/.config/Crundi Client`.
+- Windows: `%APPDATA%\Crundi` (client: `%APPDATA%\Crundi Client`).
+- macOS: `~/Library/Application Support/Crundi`.
+- Dev (unpackaged): the repo root.
+- Contents:
+  - `.env`, `data/` (including `data/client.json`), `crundi.log`, `update-config.json`
+  - `homepool-node.json`, `worker.json` (dev), `drawer-history.json`, `drawer-profiles.json`, `drawer-passwords.json`
+  - `kid-keys.ps1`, `kid-keys-restore.json`, `kid-touchpad-restore.json`, `voice-wake/`
+  - Chromium `Partitions/` (`persist:crundi-browser`, `persist:crundi-browser-srv`, hp profiles)
+- The NSIS uninstaller offers to delete `%APPDATA%\${PRODUCT_NAME}` and `~/.claude/skills/crundi`.
+
+**native-v2 config folder**
+- Paths: `~/.config/crundi-native`, `%APPDATA%\Crundi Native`, `~/Library/Application Support/Crundi Native`; `CRUNDI_CONFIG_DIR` overrides all three.
+- Files: `session.json`, `ops-settings.json`, `device-id`, `homepool-node.json`, `drawer-history.json`, `desktop-drawer.json`, `drawer-passwords.json`, `voice-wake/`, `kid-device`, `cru.json`, `ptt.json`, and others.
+
+**Autostart file per OS**
+- **Electron**
+  - Linux: `$XDG_CONFIG_HOME|~/.config/autostart/Crundi.desktop` (named from `app.getName()`, which is the productName; the client gets `Crundi Client.desktop`).
+  - Windows: `app.setLoginItemSettings`, which writes HKCU Run. By Electron's default the value is named after the AppUserModelId `com.crundi.app`; this is not set explicitly in the repo.
+- **native-v2 Settings** (what is actually used): `~/.config/autostart/crundi-native.desktop`, HKCU Run value `Crundi Native`, `~/Library/LaunchAgents/com.crundi.native.plist`.
+- **native-v2 `desktop/src/startup.rs`** (unused by Settings): `Crundi.desktop`, Run `Crundi`, `com.crundi.client.plist`.
+
+**Windows identity**
+- App id / AUMID: `com.crundi.app` (client `com.crundi.client`).
+- NSIS is one-click and per-user, so the install dir is `%LOCALAPPDATA%\Programs\Crundi` (confirmed in `skills/crundi/reference/platform-windows.md:76`; the client goes to `…\Programs\Crundi Client`).
+- Uninstall registry entry: no GUID is set in the repo, so electron-builder's default applies: `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\<UUIDv5 of appId>`, DisplayName "Crundi <version>". This comes from electron-builder, not the repo, so check it on an installed machine.
+- The installer creates the scheduled task `DisconnectRDP` (`build/installer.nsh`), and the uninstaller deletes it.
+
+**Linux deb**
+- `deb.packageName`: `crundi` (client `crundi-client`).
+- `executableName`: `crundi` (client `crundi-client`).
+- Category Development, x64 only.
+- electron-builder's default layout is `/opt/Crundi/` (client `/opt/Crundi Client/`); not set in the repo.
+
+**native-v2 packaging today**
+- Only a tarball, `crundi-v2-linux-x86_64.tar.gz` (`crundi-v2` + `crundi-browser-host` + CEF, from `.github/workflows/native-v2.yml`).
+- No deb, NSIS installer, updater feed or bundled worker yet.
+- Window `app_id` is `crundi`; tray id is `crundi-v2`.
