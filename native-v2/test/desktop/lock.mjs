@@ -49,6 +49,9 @@ export async function run(T, t) {
   for (const k of ['1', '1', '1', '1', 'OK']) await T.act('lock-key', k);
   p = await T.until('a wrong PIN on the keypad: "That is not the PIN", the box shakes', (p) => /not the PIN/.test(L(p).error) && L(p).shakes >= 1 && L(p).on, 10000);
   await T.snap('desktop', 'pc-lock-wrong');
+  // F248/F253: Tab and Tab Tab stay in the lock (the web drops keys outside #pc-lock, WH:6533):
+  // the focus never reaches the title bar's Minimize or Maximize, and the PIN still goes in.
+  await tabsKeepPin(T, t, L, 'the full lock');
   // F233: the PIN typed on the keyboard reaches the box (the web lets keys inside the lock
   // through, WH:6524): the right one and Enter unlock.
   await T.key('2468');
@@ -70,6 +73,7 @@ export async function run(T, t) {
   await T.key('l', ['ctrl', 'shift']);
   await T.until('the visible lock again', (p) => L(p).on && L(p).mode === 'visible', 15000);
   await t.sleep(400);
+  await tabsKeepPin(T, t, L, 'the visible lock');
   await T.key('2468');
   await T.key('Enter');
   await T.until('…the PIN typed with real keys and Enter unlocks the visible lock', (p) => !L(p).on && !D(p).windowLocked, 10000);
@@ -99,4 +103,22 @@ export async function run(T, t) {
   await T.act('lock-idle', '');
   await T.until('auto lock off: the watch stops', (p) => !L(p).on && !L(p).auto.on, 10000);
   await T.ui('tab', 'workbench');
+}
+
+// Tab, then Tab Tab, then Shift+Tab: the PIN box keeps the keys each time (Minimize and Maximize,
+// the title bar's tab stops, never get them), and the keys typed after a Tab still reach it.
+async function tabsKeepPin(T, t, L, which) {
+  const pin = async () => L(await T.state()).pinFocused === true;
+  t.check(`${which}: the PIN box has the keys`, await pin(), L(await T.state()));
+  await T.key('Tab');
+  await t.sleep(250);
+  t.check(`…after Tab the PIN box still has them (not Minimize)`, await pin(), L(await T.state()));
+  await T.key('Tab');
+  await T.key('Tab');
+  await t.sleep(250);
+  t.check(`…after Tab Tab too (not Maximize)`, await pin(), L(await T.state()));
+  await T.key('Tab', ['shift']);
+  await t.sleep(250);
+  t.check(`…and after Shift+Tab`, await pin(), L(await T.state()));
+  await T.key('Tab');
 }
