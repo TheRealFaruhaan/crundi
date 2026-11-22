@@ -11,8 +11,8 @@ Every stream builds to this. A change is a question for the Manager.
 - `crundi[.exe]`: the native client (all-in-one; `crundi-client[.exe]` for the client edition).
 - `crundi-browser-host[.exe]` and CEF files.
 - `crundi-worker[.exe]`: the worker binary from worker/.
-- `node/`: Node 22 for that OS. Linux: `node/bin/node`; Windows: `node/node.exe`. Bundled on both; Windows falls back to the system node.
-- `server/`: `src/`, `app/vendor/`, `scripts/`, `skills/`, `assets/`, `package.json`, `.env.example`, and the production `node_modules`. node-pty and the other native modules are built for that Node; cloudflared is in its usual `node_modules` place.
+- `node/`: Node 22 for that OS. Linux: `node/bin/node`; Windows: `node/node.exe`. Bundled on both in the all-in-one; Windows falls back to the system node. The client edition ships no `node/`.
+- `server/`: `src/`, `app/vendor/`, `app/homepool-node.js` (the server imports it), `scripts/`, `skills/`, `assets/`, `package.json`, `.env.example`, and the production `node_modules`. node-pty and the other native modules are built for that Node; cloudflared is in its usual `node_modules` place.
 - The client finds the server at `<exe dir>/server/src/index.js` and Node at `<exe dir>/node/...`. Overrides `CRUNDI_SERVER_DIR` and `CRUNDI_NODE` are for tests.
 
 ## Where things live (Electron's, so an install moves over in place)
@@ -32,7 +32,7 @@ Every stream builds to this. A change is a question for the Manager.
   - appId and AUMID `com.crundi.app` (client `com.crundi.client`), with the same uninstall key electron-builder used (read it from an installed Electron setup in the CI upgrade test).
   - Shortcuts as `build/installer.nsh` makes them; the DisconnectRDP task as it does.
 - **Linux:** a .deb with package name `crundi` (client `crundi-client`), executable `crundi` (client `crundi-client`), installed in `/opt/Crundi/` (client `/opt/Crundi Client/`). It replaces the Electron package of the same name.
-- **Launch at startup:** Linux `~/.config/autostart/Crundi.desktop` (client `Crundi Client.desktop`); Windows HKCU Run with Electron's value name (read it from the CI upgrade test). There is one implementation, and it replaces Electron's entry rather than adding a second one.
+- **Launch at startup:** Linux `~/.config/autostart/crundi.desktop` (Electron's app.getName() is the package name; seen in the Docker upgrade test; client `Crundi Client.desktop`); Windows HKCU Run with Electron's value name (read it from the CI upgrade test). There is one implementation, and it replaces Electron's entry rather than adding a second one.
 
 ## Release asset names (so Electron installs update into the native client by themselves)
 - Windows: `Crundi-Setup-<v>.exe` and `latest.yml`. Client edition: `Crundi-Client-Setup-<v>.exe` and `client.yml`.
@@ -42,3 +42,4 @@ Every stream builds to this. A change is a question for the Manager.
 ## Checks each stream hands over green
 - **local, updates and gaps:** `flock $HOME/.cache/crundi-build.lock native-v2/tools/build.sh test --workspace` plus their part of `node native-v2/test/electron.mjs` under xvfb-run (local creates the suite; the others add to it).
 - **pack:** `native-v2/package/check.sh` builds the .debs and runs the Docker upgrade test from the latest Electron release, plus the Windows CI job (`.github/workflows/native-v2-package.yml`) green, with its upgrade test from the latest Electron setup.
+- Release .debs are built on Ubuntu 24.04 (the CI linux job), so their glibc dependency matches Electron's users; a PC build (glibc 2.43) is tested on an ubuntu:26.04 image only.

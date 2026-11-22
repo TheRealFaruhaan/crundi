@@ -20,7 +20,13 @@ use gpui_component::Root;
 fn main() {
     // Started as the browser host or a CEF helper: become the host (never returns).
     crundi_webview::init_process();
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,zbus=off")).init();
+    // The log: stderr and crundi.log in the config folder (Electron's), with the boot lines.
+    crundi_shell::lifecycle::init_log("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,zbus=off");
+    // One copy at a time (requestSingleInstanceLock): a second launch shows the first's window and goes.
+    if !crundi_shell::lifecycle::claim() {
+        crundi_shell::lifecycle::log_line("[lifecycle] Another instance is running; showing it");
+        return;
+    }
     // The app quits when asked (Quit, the × without a tray), never because its
     // window closed: on Wayland the × closes it to hide it in the tray (F127).
     gpui_platform::application().with_assets(crundi_theme::AllAssets).with_quit_mode(QuitMode::Explicit).run(move |cx: &mut App| {
@@ -76,6 +82,9 @@ fn main() {
         }
     });
     crundi_webview::shutdown();
+    // An update installed: the new version starts (or its installer runs) now the app is gone.
+    crundi_desktop::updater::after_quit();
+    crundi_shell::lifecycle::log_line("[lifecycle] Quit");
 }
 
 /// Open the window (at start, and again after Wayland's hide closed it):

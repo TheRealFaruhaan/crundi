@@ -6,6 +6,7 @@
 //! SignIn view while signed out.
 
 pub mod conn;
+pub mod lifecycle;
 pub mod live_hub;
 pub mod nav;
 pub mod projects;

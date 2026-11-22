@@ -53,7 +53,12 @@ impl MenuEntry {
 type Then = Rc<dyn Fn(Option<String>, &mut Window, &mut App)>;
 type Picked = Rc<dyn Fn(String, &mut Window, &mut App)>;
 
-struct Pending { a: Ask, input: Option<Entity<InputState>>, then: Then }
+struct Pending { a: Ask, input: Option<Entity<InputState>>, then: Then, buttons: Option<Buttons> }
+
+/// A message box's own buttons (Electron's dialog.showMessageBox): their
+/// labels in the given order, the one Enter presses, the one Esc presses.
+#[derive(Clone)]
+struct Buttons { labels: Vec<SharedString>, default_id: usize, cancel_id: usize }
 struct OpenMenu { at: Point<Pixels>, items: Vec<MenuEntry>, then: Picked }
 
 pub struct AskLayer {
@@ -86,6 +91,35 @@ pub fn ask_layer(cx: &mut App) -> AnyView { layer(cx).into() }
 /// Ask: `then(None)` on Cancel or Esc; `then(Some(""))` on OK for a confirm,
 /// `then(Some(text))` for a prompt (OK or Enter).
 pub fn ask(window: &mut Window, cx: &mut App, a: Ask, then: impl Fn(Option<String>, &mut Window, &mut App) + 'static) {
+    open(window, cx, a, None, Rc::new(then));
+}
+
+/// A message box with its own buttons (Electron's dialog.showMessageBox
+/// { buttons, defaultId, cancelId }): `then(i)` with the button pressed;
+/// Enter presses `default_id`, Esc and the scrim `cancel_id`. Drawn right
+/// to left, so the default (first) button is the rightmost. Added by
+/// Desktop (the updater's prompts).
+pub fn ask_buttons(window: &mut Window, cx: &mut App, title: &str, message: &str, labels: &[&str], default_id: usize, cancel_id: usize, then: impl Fn(usize, &mut Window, &mut App) + 'static) {
+    let b = Buttons { labels: labels.iter().map(|l| SharedString::from(l.to_string())).collect(), default_id, cancel_id };
+    let a = Ask { title: title.to_string().into(), message: message.to_string().into(), ..Default::default() };
+    open(window, cx, a, Some(b), Rc::new(move |r: Option<String>, w: &mut Window, cx: &mut App| {
+        let i = match r { None => cancel_id, Some(s) if s.is_empty() => default_id, Some(s) => s.parse().unwrap_or(cancel_id) };
+        then(i, w, cx)
+    }));
+}
+
+/// The driver's press on a message box's button, by its label (false: no
+/// such box or button).
+pub fn ask_pick(label: &str, window: &mut Window, cx: &mut App) -> bool {
+    let l = layer(cx);
+    let i = l.read(cx).pending.as_ref().and_then(|p| p.buttons.as_ref()).and_then(|b| b.labels.iter().position(|x| x.as_ref() == label));
+    let Some(i) = i else { return false };
+    let Some(p) = l.update(cx, |l, cx| { cx.notify(); l.pending.take() }) else { return false };
+    (p.then)(Some(i.to_string()), window, cx);
+    true
+}
+
+fn open(window: &mut Window, cx: &mut App, a: Ask, buttons: Option<Buttons>, then: Then) {
     let l = layer(cx);
     let old = l.update(cx, |l, _| l.pending.take());
     if let Some(o) = old { (o.then)(None, window, cx); }
@@ -99,7 +133,7 @@ pub fn ask(window: &mut Window, cx: &mut App, a: Ask, then: impl Fn(Option<Strin
     if !crate::overlay::keys_held() {
         if let Some(i) = &input { i.update(cx, |s, cx| { s.focus(window, cx); s.select_all(window, cx); }); } else { window.focus(&fh, cx); }
     }
-    l.update(cx, |l, cx| { l.pending = Some(Pending { a, input, then: Rc::new(then) }); cx.notify(); });
+    l.update(cx, |l, cx| { l.pending = Some(Pending { a, input, then, buttons }); cx.notify(); });
 }
 
 /// The lock's start: the open dialog lets go of the keys (F228).
@@ -141,10 +175,16 @@ pub fn ask_answer(ok: bool, value: Option<String>, window: &mut Window, cx: &mut
 
 /// For the driver: the open dialog (the Slint client's names), or Null.
 pub fn ask_props(cx: &App) -> Value {
-    let Some(p) = cx.try_global::<Handle>().and_then(|h| h.0.read(cx).pending.as_ref().map(|p| (p.a.clone(), p.input.clone()))) else { return Value::Null };
-    let (a, input) = p;
-    json!({ "title": a.title.to_string(), "message": a.message.to_string(), "ok": if a.ok.is_empty() { "OK".to_string() } else { a.ok.to_string() },
-        "danger": a.danger, "prompt": a.prompt.is_some(), "value": input.map(|i| i.read(cx).value().to_string()).unwrap_or_default() })
+    let Some(p) = cx.try_global::<Handle>().and_then(|h| h.0.read(cx).pending.as_ref().map(|p| (p.a.clone(), p.input.clone(), p.buttons.clone()))) else { return Value::Null };
+    let (a, input, buttons) = p;
+    let mut v = json!({ "title": a.title.to_string(), "message": a.message.to_string(), "ok": if a.ok.is_empty() { "OK".to_string() } else { a.ok.to_string() },
+        "danger": a.danger, "prompt": a.prompt.is_some(), "value": input.map(|i| i.read(cx).value().to_string()).unwrap_or_default() });
+    if let Some(b) = buttons {
+        v["buttons"] = json!(b.labels.iter().map(|l| l.to_string()).collect::<Vec<_>>());
+        v["ok"] = json!(b.labels.get(b.default_id).map(|l| l.to_string()).unwrap_or_default());
+        v["cancel"] = json!(b.labels.get(b.cancel_id).map(|l| l.to_string()).unwrap_or_default());
+    }
+    v
 }
 
 /// A context menu at a window point; `then(id)` when an item is picked
@@ -212,10 +252,19 @@ impl Render for AskLayer {
                 div().px(T::SP_10).pt(T::SP_10).text_size(T::TEXT_15).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(p.a.title.clone()).into_any_element(),
                 div().px(T::SP_10).pt(T::SP_8).text_size(T::TEXT_13).text_color(T::text_secondary()).when(p.a.message.is_empty(), |d| d.hidden()).child(p.a.message.clone()).into_any_element(),
                 div().px(T::SP_10).pt(T::SP_10).children(p.input.as_ref().map(|i| input(i))).into_any_element(),
-                div().flex().justify_end().gap(T::SP_8).p(T::SP_10)
-                    .child(button("ask-cancel", "Cancel").on_click(|_, w, cx| { ask_answer(false, None, w, cx); }))
-                    .child(ok_btn.on_click(|_, w, cx| { ask_answer(true, None, w, cx); }))
-                    .into_any_element(),
+                match &p.buttons {
+                    None => div().flex().justify_end().gap(T::SP_8).p(T::SP_10)
+                        .child(button("ask-cancel", "Cancel").on_click(|_, w, cx| { ask_answer(false, None, w, cx); }))
+                        .child(ok_btn.on_click(|_, w, cx| { ask_answer(true, None, w, cx); }))
+                        .into_any_element(),
+                    Some(b) => div().flex().justify_end().gap(T::SP_8).p(T::SP_10)
+                        .children(b.labels.iter().enumerate().rev().map(|(i, label)| {
+                            let l = label.to_string();
+                            let el = if i == b.default_id { primary(("ask-btn", i), label.clone()) } else { button(("ask-btn", i), label.clone()) };
+                            el.on_click(move |_, w, cx| { ask_pick(&l, w, cx); })
+                        }))
+                        .into_any_element(),
+                },
             ];
             let m = crate::Modal {
                 id: "ask-dialog", width: T::DIALOG_W, focus: self.focus.clone(), scroll: self.scroll.clone(),
