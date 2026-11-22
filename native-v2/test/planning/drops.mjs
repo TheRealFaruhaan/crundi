@@ -118,7 +118,7 @@ export async function run(T, t) {
     for (let i = 1; i <= 12; i++) await T.mouse('move', gx + (tx - gx) * i / 12, gy + (ty - gy) * i / 12, { buttons: ['left'] });
     const dg = await T.until('over the terminal, the idea\'s clone is there with the pointer', (p) => M(p).drag?.id === idea.id
       && M(p).drag.x > tl.x - 200 && M(p).drag.x < tx && M(p).drag.y > tl.y - 60 && M(p).drag.y < ty);
-    if (!dg) console.log('   clone at', M(await T.props()).drag, 'terminal', tl);
+    if (!dg) { const z = await T.props(); console.log('   clone at', M(z).drag, 'terminal', tl, 'pressed at', gx, gy, 'idea box', r0.box, 'map', leaf(z, 'panel:mindmap'), 'canvas', M(z).canvas, 'view', M(z).view, 'scroll', M(z).scroll, 'drawn', M(z).drawn?.includes(idea.id)); }
     await T.mouse('move', gx, gy, { buttons: ['left'] });
     await T.mouse('up', gx, gy);
     await T.until('let go where it was taken, nothing moves', (p) => !M(p).drag);
@@ -146,6 +146,25 @@ export async function run(T, t) {
     // With the pointer on the grip, the block is still the hovered one (its
     // "+" and grip shown), and a frame has drawn them there.
     if (pl) await dropOnTerm('a Notes block', pl.x + 21, pl.y, 'A **dropped** line', (p) => at(p).plus.some((x) => x.id === bid));
+    // A press on the grip with no frame drawn since the pointer came onto
+    // the block, then moves at once (F258): the grip takes the press while
+    // its gutter isn't shown yet (the web's .nt-gutter, opacity 0), and the
+    // drag starts on the first move. The pointer comes from the terminal,
+    // and the driver's "down" moves it there and presses in one go.
+    const tl = leaf(await T.props(), key);
+    if (pl && tl) {
+      await T.ui('toasts-clear');
+      await T.mouse('move', tl.x + tl.w / 2, tl.y + tl.h / 3);
+      await sleep(250);
+      const [gx, gy] = [pl.x + 21, pl.y];
+      await T.mouse('down', gx, gy);
+      for (const dx of [6, 12, 20]) await T.mouse('move', gx + dx, gy, { buttons: ['left'] });
+      t.check('a press on a Notes block\'s grip, moved at once, starts its drag (F258)', N(await T.props())?.drag === true, N(await T.props())?.drag);
+      const [tx, ty] = [tl.x + tl.w / 2, tl.y + tl.h / 3];
+      for (let i = 1; i <= 8; i++) await T.mouse('move', gx + 20 + (tx - gx - 20) * i / 8, gy + (ty - gy) * i / 8, { buttons: ['left'] });
+      await T.mouse('up', tx, ty);
+      await T.until('…dropped on the terminal, it is typed there again, "Sent to terminal"', (q) => q.toast === 'Sent to terminal' && screen(q).includes('A **dropped** line'), 10000);
+    }
   }
 
   // ── Dropped on a page's words, a reference is typed in there (F162: the

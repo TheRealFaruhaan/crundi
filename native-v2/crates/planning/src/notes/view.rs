@@ -813,8 +813,13 @@ impl PlaceView {
             pl.retain(|x| x.0 != bpl);
             pl.push((bpl.clone(), f32::from(bd.origin.x) + f32::from(T::SP_20) / 2., f32::from(bd.origin.y) + f32::from(bd.size.height) / 2.));
         }), |_, _, _, _| {}).absolute().left_0().top_0().w(T::SP_20).h_full();
+        // Shown while the block is hovered, as the web's .nt-gutter (opacity
+        // 0, not hidden): a press on the grip's spot takes the grip even
+        // before a frame has drawn it, so its drag starts on the first move
+        // (F258: hidden, it had no hitbox until the hover's frame landed,
+        // and the press went to the margin).
         let tools = div().absolute().left(margin - T::SP_40 - T::SP_2).top(top + T::SP_2).w(T::SP_40).h(T::SP_24).flex().gap(px(1.))
-            .when(!r.menu_open, |d| d.invisible().group_hover(group.clone(), |s| s.visible()))
+            .when(!r.menu_open, |d| d.opacity(0.).group_hover(group.clone(), |s| s.opacity(1.)))
             .child(plus_at)
             .child(w::square_button(sid(format!("nt-add-{key}-{}", b.id)), IconName::Plus, "Add a block below", w::SquareLook::Bare, T::SP_20, T::ICON_MD * k)
                 .on_click(move |e, window, cx| { let p = e.position(); let p = if p.x > px(0.) { p } else { window.mouse_position() }; super::add_below(&ka, &ba, Some((f32::from(p.x), f32::from(p.y))), cx) }))
@@ -827,7 +832,7 @@ impl PlaceView {
             div().id(sid(format!("nt-fold-{key}-{}", b.id))).absolute().left(margin - T::SP_40 - T::SP_2 - T::SP_14).top(top + T::SP_2).w(T::SP_14).h(T::SP_22)
                 .flex().items_center().justify_center().rounded(T::R_CHIP).cursor_pointer().text_color(T::text_muted())
                 .hover(|s| s.bg(T::bg_hover()).text_color(T::text()))
-                .when(!b.folded && !r.menu_open, |d| d.invisible().group_hover(group.clone(), |s| s.visible()))
+                .when(!b.folded && !r.menu_open, |d| d.opacity(0.).group_hover(group.clone(), |s| s.opacity(1.)))
                 .child(w::icon(if b.folded { IconName::ChevronRight } else { IconName::ChevronDown }, T::ICON_SM * k))
                 .tooltip(w::tooltip(if b.folded { "Unfold" } else { "Fold" }))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
