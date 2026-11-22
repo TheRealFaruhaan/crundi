@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url';
 
 // The order they run in: the updater first (its prompt comes 8 s after
 // launch), its install last (it quits the app and starts it again).
-const PARTS = ['updates', 'lifecycle', 'gaps', 'install'];
+const PARTS = ['updates', 'lifecycle', 'browserstart', 'gaps', 'install'];
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
 const parts = PARTS.filter((p) => !ONLY.length || ONLY.includes(p) || (p === 'install' && ONLY.includes('updates')));
 

@@ -906,6 +906,7 @@ pub fn props() -> Value {
             // Frames its page has sent, and whether the host has it hidden (no frames).
             "frames": t.panel.map(|i| browser::with(|st| st.panels.get(i).map(|p| p.frames).unwrap_or(0))).unwrap_or(0),
             "paused": t.panel.is_some_and(browser::is_hidden),
+            "loading": t.panel.is_some_and(|i| browser::with(|st| st.panels.get(i).is_some_and(|p| p.loading))),
         })).collect::<Vec<_>>()).unwrap_or_default(),
         "projects": d.projects.iter().map(|(k, p)| (k.clone(), json!(p.tabs.len()))).collect::<serde_json::Map<_, _>>(),
         "spots": spots(), "root": ROOT.with(|r| r.get()).to_vec(),

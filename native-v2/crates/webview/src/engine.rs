@@ -434,7 +434,9 @@ pub fn create_on(index: usize, url: &str, network: &str) {
     let proxy = crate::net::proxy_for(network);
     let (u, n) = (url.to_string(), network.to_string());
     let id = client::open_view(Owner::Panel(index), move |id| Cmd::Open { id, url: u, frame: false, network: n, proxy, origin: String::new(), w, h, dpr });
-    with(|st| { let p = &mut st.panels[index]; p.browser = id; p.sent = (w, h, dpr); p.crashed = false; p.hidden_sent = None; });
+    // Loading from now (the Reload arrow turns, .brd-loading), not from the
+    // host's first word: the first page waits for the host to start.
+    with(|st| { let p = &mut st.panels[index]; p.browser = id; p.sent = (w, h, dpr); p.crashed = false; p.hidden_sent = None; p.loading = id.is_some(); });
     if id.is_none() { eprintln!("[native] panel {index}: no browser (the browser host can't start)"); }
 }
 

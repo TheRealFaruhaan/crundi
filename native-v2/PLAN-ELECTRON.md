@@ -23,6 +23,7 @@ Rules: `package/CONTRACT.md`. Gap list: `PARITY-ELECTRON.md` (mark each line don
 | windows-latest upgrade test from the latest Electron setup | pack | yes (upgrade-test/windows.ps1, workflow job `windows`) | not run: workflow not pushable from the PC |
 | Quitting leaves no process behind | local, tester | | |
 | Every PARITY-ELECTRON.md line done and tested | all | | |
+| Owner: the first browser start froze the window ("not responding") | gaps | yes: webview client.rs starts the host on a thread of its own (commands wait in the link); the drawer tab shows its page loading from the start (Reload arrow turning, Electron's .brd-loading) | yes (test/electron.mjs browserstart: host start slowed to 3 s, real Tab presses answered within 200 ms, the tab loading meanwhile) |
 | UI review approves | reviewer | | |
 | Owner has tried it | owner | | |
 
