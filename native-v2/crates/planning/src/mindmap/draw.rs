@@ -881,10 +881,12 @@ impl Render for MapView {
             // here (they are drawn without handlers: a pan frame rebuilds
             // every idea on screen). The boxes open over the map (the idea
             // opened up, the one being edited, the draft) take their own.
-            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, window, cx| {
+            .on_mouse_move(cx.listener(move |this, e: &MouseMoveEvent, window, cx| {
                 this.hover_at(e.position, window, cx);
-                // (A held press's moves are taken window-wide: `held` below.)
-                if !super::pressing(cx) { super::pointer_move(f32::from(e.position.x), f32::from(e.position.y), window, cx) }
+                // (A held press's moves are taken window-wide, `held` below,
+                // once a frame has been drawn with it; before that, here:
+                // F256.)
+                if !held || !super::pressing(cx) { super::pointer_move(f32::from(e.position.x), f32::from(e.position.y), window, cx) }
             }))
             // A press anywhere else lets go of the ring (the web's document pointerdown).
             .on_mouse_down_out(|_, _, cx| super::press_outside(cx))
@@ -893,7 +895,9 @@ impl Render for MapView {
                 let h = this.hit(e.position, cx);
                 this.pressed = h.clone();
                 match h {
-                    Some(Hot::Node(id)) => super::node_down(&id, f32::from(e.position.x), f32::from(e.position.y), cx),
+                    // (The frame draws again, its content cached, so the
+                    // next takes the press's moves window-wide: `held`; F256.)
+                    Some(Hot::Node(id)) => { super::node_down(&id, f32::from(e.position.x), f32::from(e.position.y), cx); cx.notify(); }
                     Some(_) => {}
                     // The bare canvas: a press lets go of the ring and closes a box.
                     None => super::canvas_press(window, cx),

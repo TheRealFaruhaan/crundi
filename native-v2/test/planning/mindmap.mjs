@@ -263,6 +263,28 @@ export async function run(T_, t) {
     t.check('a small pan moves the map\'s last frame: its content renders 0 times (F247, patch e)', d === 0 && Math.abs(M(p1).scroll[1] - s0) > 50 && (p1.renders['mindmap-frame'] ?? 0) > (r0['mindmap-frame'] ?? 0), { d, s0, s1: M(p1).scroll[1] });
     await T.settle(500, 6000);
   }
+  // A press on an idea right after a pan, moved a little within it,
+  // starts the drag (F256): the map took no move of a press until a frame
+  // had been drawn with it, so a pointer that stayed on its idea, or left it
+  // before the next frame, started nothing. Once at rest, once straight
+  // after a sweep of the wheel (the content built inline).
+  for (const when of ['at rest', 'straight after a sweep']) {
+    if (when !== 'at rest') for (let i = 0; i < 12; i++) { await T.mouse('wheel', vx, vy, { dy: i % 2 ? 40 : -40 }); await sleep(8); }
+    const p0 = await T.props(), m0 = M(p0);
+    const r = m0.nodes.find((n) => n.kind === 'node' && n.box && m0.drawn.includes(n.id) && n.box.w > 30 && n.box.x > m0.canvas[0] + 20 && n.box.y > m0.canvas[1] + 20 && n.box.y + n.box.h < m0.canvas[1] + m0.view[1] - 20);
+    if (!r) { t.check(`(an idea on show to press, ${when})`, false, m0.drawn.length); continue; }
+    const [x0, y0] = [r.box.x + 4, r.box.y + r.box.h / 2];
+    await T.mouse('move', x0, y0);
+    if (when === 'at rest') await sleep(300);
+    await T.mouse('down', x0, y0);
+    for (const dx of [5, 10, 16]) await T.mouse('move', x0 + Math.min(dx, r.box.w - 8), y0, { buttons: ['left'] });
+    await T.until(`a press on an idea, moved within it, starts its drag (F256, ${when})`, (p) => M(p).drag?.id === r.id, 3000);
+    await T.mouse('move', 140, 500, { buttons: ['left'] });
+    await T.mouse('up', 140, 500);
+    await T.until('…let go outside the map, the drag ends', (p) => !M(p).drag, 3000);
+    await sleep(400);
+  }
+  await T.settle(500, 6000);
   void big;
 
   // ── The panel in a workbench pane ──
