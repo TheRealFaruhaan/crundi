@@ -21,6 +21,7 @@ use crundi_core::api::{Api, ApiError, ApiResult};
 use crate::compat::{session, AreaEvent};
 use crundi_theme::{IconName, T};
 use crundi_widgets as w;
+use crate::rows::{parts, shift, slice, Parts, Want};
 use gpui::{prelude::FluentBuilder as _, *};
 use rules::{SysRow, Person};
 use serde_json::{json, Value};
@@ -79,9 +80,17 @@ pub struct InfoView {
     poll: Option<Task<()>>,
     focus: FocusHandle,
     dlg_scroll: ScrollHandle,
-    /// The page's sections as cached rows (F62), and whether what they show changed.
+    /// The page's sections' parts as cached rows (F62): which part of which
+    /// section each is ((kind, j, n)), and whether what they show changed.
     rows: Option<crate::rows::Rows>,
+    slots: Vec<(&'static str, usize, usize)>,
     stale: bool,
+    /// What is stale: every section, or only these (`with_only`).
+    stale_all: bool,
+    stale_kinds: Vec<&'static str>,
+    /// The server log's lines as cached rows, and whether they moved up.
+    log_rows: Option<crate::rows::Rows>,
+    logs_moved: bool,
 }
 
 struct Handle(Entity<InfoView>);
@@ -93,7 +102,7 @@ fn fresh(cx: &mut Context<InfoView>) -> InfoView {
         facts: None, online: true, sys: None, maint: vec![], maint_state: "loading".into(), maint_busy: String::new(), armed: String::new(), arm_gen: 0,
         collab_state: "loading".into(), sb_ok: false, sb_problems: vec![], sb_fix: false, people: vec![], picked: HashSet::new(),
         inv_name: String::new(), inv_tg: String::new(), inv_amount: "7".into(), inv_unit: 0, inv_limit: String::new(), inputs: None,
-        tunnel: None, cred: None, git: None, copied: String::new(), poll: None, focus: cx.focus_handle(), dlg_scroll: ScrollHandle::new(), rows: None, stale: false,
+        tunnel: None, cred: None, git: None, copied: String::new(), poll: None, focus: cx.focus_handle(), dlg_scroll: ScrollHandle::new(), rows: None, slots: vec![], stale: false, stale_all: false, stale_kinds: vec![], log_rows: None, logs_moved: false,
     }
 }
 
@@ -119,7 +128,14 @@ fn hush<R>(cx: &mut App, f: impl FnOnce(&mut InfoView) -> R) -> R { let e = ent(
 
 fn with<R>(cx: &mut App, f: impl FnOnce(&mut InfoView, &mut Context<InfoView>) -> R) -> R {
     let e = ent(cx);
-    e.update(cx, |v, cx| { let r = f(v, cx); v.relist(); v.stale = true; cx.notify(); r })
+    e.update(cx, |v, cx| { let r = f(v, cx); v.relist(); cx.notify(); r })
+}
+
+/// A change to one section only (the machine's figures, a log line): only
+/// its rows are built again.
+fn with_only<R>(cx: &mut App, kind: &'static str, f: impl FnOnce(&mut InfoView, &mut Context<InfoView>) -> R) -> R {
+    let e = ent(cx);
+    e.update(cx, |v, cx| { let r = f(v, cx); v.stale_only(kind); cx.notify(); r })
 }
 
 /// A toast from a server's answer (no window at hand: the window's).
@@ -161,7 +177,7 @@ pub fn on_event(e: &AreaEvent, cx: &mut App) {
         }
         AreaEvent::Ws("server-log", m) => {
             let m = (*m).clone();
-            if cx.has_global::<Handle>() && ent(cx).read(cx).rendered { with(cx, |s, _| s.append_log(&m)); }
+            if cx.has_global::<Handle>() && ent(cx).read(cx).rendered { with_only(cx, "logs", |s, _| s.append_log(&m)); }
         }
         AreaEvent::Connected(true) => {
             sync(cx);
@@ -216,7 +232,7 @@ fn render_all(cx: &mut App) {
         if let Ok(d) = r {
             let mut lines: Vec<(String, String)> = d.get("logs").and_then(|x| x.as_array()).cloned().unwrap_or_default().iter().map(rules::log_line).collect();
             if lines.len() > LOG_KEEP { lines.drain(..lines.len() - LOG_KEEP); }
-            with(cx, |s, _| { s.logs = lines; s.logs_loading = false; s.log_list.reset(s.logs.len()); s.log_list.scroll_to_end(); });
+            with(cx, |s, _| { s.logs = lines; s.logs_loading = false; s.logs_moved = true; s.log_list.reset(s.logs.len()); s.log_list.scroll_to_end(); });
         }
     });
     session::ws_send(cx, &json!({ "type": "subscribe-logs" }));
@@ -245,7 +261,7 @@ fn poll(cx: &mut App) {
         let s2 = Sys { cpu: rules::fmt_pct(overall), overall: overall.unwrap_or(0.0), cores, hist: rules::spark(&hist, 100.0), rows: rules::sys_rows(&sys) };
         // The same figures draw nothing.
         if ent(cx).read(cx).sys.as_ref() == Some(&s2) { return; }
-        with(cx, |s, _| s.sys = Some(s2));
+        with_only(cx, "machine", |s, _| s.sys = Some(s2));
     });
 }
 
@@ -287,7 +303,7 @@ impl InfoView {
                 if !matches!(ev, w::InputEvent::Change) { return; }
                 let v = inp.read(cx).value().to_string();
                 match k { 0 => this.inv_name = v, 1 => this.inv_tg = v, 2 => this.inv_amount = v, _ => this.inv_limit = v }
-                this.stale = true;
+                this.stale_only("collab");
                 cx.notify();
             })
         };
@@ -299,7 +315,7 @@ impl InfoView {
         self.logs.push(rules::log_line(m));
         let n = self.logs.len();
         self.log_list.splice(n - 1..n - 1, 1);
-        if n > LOG_KEEP { self.logs.remove(0); self.log_list.splice(0..1, 0); }
+        if n > LOG_KEEP { self.logs.remove(0); self.log_list.splice(0..1, 0); self.logs_moved = true; }
         self.logs_loading = false;
     }
 
@@ -522,11 +538,9 @@ fn on(a: &'static str, arg: impl ToString) -> impl Fn(&ClickEvent, &mut Window, 
 fn level_color(pct: f64) -> Hsla { match rules::level(pct) { 2 => T::red(), 1 => T::yellow(), _ => T::green() } }
 fn level_dim(pct: f64) -> Hsla { match rules::level(pct) { 2 => T::red_dim(), 1 => T::yellow_dim(), _ => T::green_dim() } }
 
-/// A section card (.info-section): its title (muted, upper case), then the children.
-fn section(title: &str) -> Div {
-    div().flex().flex_col().flex_none().gap(T::SP_10).p(T::SP_16).bg(T::bg_secondary()).rounded(T::R_CONTROL).border_1().border_color(T::border())
-        .when(!title.is_empty(), |d| d.child(div().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_muted()).child(title.to_string())))
-}
+/// A section card's title (.info-section: muted, upper case). The card
+/// (padded 16, its parts 10 apart) is drawn in slices, a part each (`item`).
+fn title(text: &'static str) -> Div { div().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_muted()).child(text) }
 
 /// A two-sided row (.info-row): the label left, the value right (mono), a hairline under it.
 fn kv(label: impl Into<SharedString>, value: impl Into<SharedString>, rule: bool) -> Div {
@@ -554,11 +568,11 @@ fn note(warn: bool) -> Div {
 }
 
 impl InfoView {
-    fn sys_panel(&self) -> Div {
-        let Some(sys) = &self.sys else { return div().child(quiet("Reading the machine…")) };
-        let mut d = div().flex().flex_col().gap(T::SP_6).child(sys_line("CPU", sys.cpu.clone()));
+    fn sys_panel(&self, want: Want) -> Parts {
+        let Some(sys) = &self.sys else { return Parts::one(quiet("Reading the machine…")).wanting(want) };
+        let mut d = parts(T::SP_6).wanting(want).part(|| sys_line("CPU", sys.cpu.clone()));
         if !sys.cores.is_empty() {
-            d = d.child(div().flex().h(T::SP_24 + T::SP_4).gap(T::SP_2).children(sys.cores.iter().map(|c| {
+            d = d.part(|| div().flex().h(T::SP_24 + T::SP_4).gap(T::SP_2).children(sys.cores.iter().map(|c| {
                 let c = c.clamp(0.0, 100.0);
                 div().flex_1().min_w_0().h_full().flex().flex_col().justify_end().rounded(T::SP_2).bg(T::bg_tertiary()).overflow_hidden()
                     .child(div().w_full().h(relative((c / 100.0) as f32)).bg(level_color(c)))
@@ -567,7 +581,7 @@ impl InfoView {
         // The CPU history (sparkSvg): the area faint, the line over it.
         let pts = sys.hist.clone();
         let (fill, line) = (level_dim(sys.overall), level_color(sys.overall));
-        d = d.child(div().w_full().h(T::SP_40).child(canvas(|_, _, _| (), move |b, _, window, _| {
+        d = d.part(|| div().w_full().h(T::SP_40).child(canvas(|_, _, _| (), move |b, _, window, _| {
             if pts.len() < 2 { return; }
             let at = |(x, y): (f32, f32)| point(b.origin.x + b.size.width * (x / 100.), b.origin.y + b.size.height * (y / 20.));
             let mut area = PathBuilder::fill();
@@ -583,7 +597,7 @@ impl InfoView {
             if let Ok(p) = stroke.build() { window.paint_path(p, line); }
         }).size_full()));
         for r in &sys.rows {
-            d = d.child(match r {
+            d = d.part(|| match r {
                 // .sys-block + .sys-block: 14 px between blocks (6 + 2 + 6).
                 SysRow::Gap => div().h(T::SP_2),
                 SysRow::Line(k, v) => sys_line(k.clone(), v.clone()),
@@ -593,15 +607,15 @@ impl InfoView {
         d
     }
 
-    fn maint_panel(&self, cx: &mut Context<Self>) -> Div {
+    fn maint_panel(&self, want: Want, cx: &mut Context<Self>) -> Parts {
         match self.maint_state.as_str() {
-            "loading" => return div().child(quiet("Measuring…")),
-            "error" => return div().child(quiet("Could not read reclaimable space.")),
-            "empty" => return div().child(quiet("Nothing on this machine to reclaim.")),
+            "loading" => return Parts::one(quiet("Measuring…")).wanting(want),
+            "error" => return Parts::one(quiet("Could not read reclaimable space.")).wanting(want),
+            "empty" => return Parts::one(quiet("Nothing on this machine to reclaim.")).wanting(want),
             _ => {}
         }
         let (head, rows) = rules::maint_rows(&self.maint, &self.maint_busy);
-        let mut d = div().flex().flex_col().child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).child(head));
+        let mut d = parts(px(0.)).wanting(want).part(|| div().text_size(T::TEXT_12).text_color(T::text_secondary()).child(head));
         for (i, t) in rows.into_iter().enumerate() {
             let id = t.id.clone();
             let armed = self.armed == t.id;
@@ -609,7 +623,7 @@ impl InfoView {
                 else if armed { w::armed(w::danger(("maint", i), t.arm.clone()), true) }
                 else if t.danger { w::disabled(w::danger(("maint", i), "Remove").icon(IconName::Trash), !t.enabled) }
                 else { w::disabled(w::button(("maint", i), "Clear").icon(IconName::Trash), !t.enabled) };
-            d = d.child(div().flex().items_center().gap(T::SP_12).py(T::SP_10).when(i > 0, |d| d.border_t_1().border_color(T::border_subtle()))
+            d = d.part(|| div().flex().items_center().gap(T::SP_12).py(T::SP_10).when(i > 0, |d| d.border_t_1().border_color(T::border_subtle()))
                 .child(div().flex().flex_col().flex_1().min_w_0().gap(T::SP_2)
                     .child(div().flex().items_center().gap(T::SP_6)
                         .child(div().text_size(T::TEXT_13).text_color(T::text()).child(t.label.clone()))
@@ -623,15 +637,15 @@ impl InfoView {
         d
     }
 
-    fn collab_panel(&self, cx: &mut Context<Self>) -> Div {
+    fn collab_panel(&self, want: Want, cx: &mut Context<Self>) -> Parts {
         match self.collab_state.as_str() {
-            "loading" => return div().child(quiet("Loading…")),
-            "error" => return div().child(quiet("Could not load collaborators.")),
+            "loading" => return Parts::one(quiet("Loading…")).wanting(want),
+            "error" => return Parts::one(quiet("Could not load collaborators.")).wanting(want),
             _ => {}
         }
-        let mut d = div().flex().flex_col().gap(T::SP_8);
+        let mut d = parts(T::SP_8).wanting(want);
         // The sandbox (.collab-sb).
-        d = d.child(if self.sb_ok {
+        d = d.part(|| if self.sb_ok {
             note(false).child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child("Sandbox ready. Collaborators\u{2019} shells are confined to their own worktree."))
         } else {
             note(true)
@@ -640,7 +654,7 @@ impl InfoView {
                 .child(if self.sb_fix { div().flex().child(w::button("sb-setup", "Set up sandbox").on_click(on("collab-sandbox-setup", String::new()))) }
                     else { div().text_size(T::TEXT_12).text_color(T::text_secondary()).child("On the server run: sudo apt-get install -y bubblewrap socat") })
         });
-        if self.people.is_empty() { d = d.child(quiet("Nobody outside has access right now.")); }
+        if self.people.is_empty() { d = d.part(|| quiet("Nobody outside has access right now.")); }
         for (pi, p) in self.people.iter().enumerate() {
             let mut card = note(false)
                 .child(div().flex().items_center().gap(T::SP_8)
@@ -671,12 +685,13 @@ impl InfoView {
                         else { w::button(("revoke", k), "Revoke").on_click(on("collab-revoke", r.id.clone())) })
                     .child(w::danger(("remove", k), "Remove").on_click(on("collab-remove", r.id.clone()))));
             }
-            d = d.child(card);
+            d = d.part(|| card);
         }
         // Invite someone (.collab-invite).
         let me = cx.entity().downgrade();
-        let mut inv = div().flex().flex_col().gap(T::SP_4).pt(T::SP_8).border_t_1().border_color(T::border())
-            .child(div().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_secondary()).child("Invite someone"));
+        // Its lines are parts of their own (the line over its first).
+        let mut inv = parts(T::SP_4).wanting(shift(want, d.len()))
+            .part(|| div().pt(T::SP_8).border_t_1().border_color(T::border()).text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_secondary()).child("Invite someone"));
         if let Some(i) = &self.inputs {
             let mut ticks = div().flex().flex_col().gap(T::SP_4).p(T::SP_6).rounded(T::R_CONTROL).border_1().border_color(T::border()).bg(T::bg_tertiary());
             for (k, (alias, lbl)) in invite_projects(cx).into_iter().enumerate() {
@@ -684,31 +699,27 @@ impl InfoView {
                 ticks = ticks.child(w::check(("inv-proj", k), lbl, on, move |_, window, cx| act("inv-project", &alias, window, cx)));
             }
             inv = inv
-                .child(label("Their name")).child(w::input(&i.name)).child(hint("They type this to sign in."))
-                .child(label("Telegram username (optional)")).child(w::input(&i.tg)).child(hint("Lets them use the Telegram button instead of a passcode."))
-                .child(label("Projects (pick one or more)")).child(ticks)
-                .child(hint("Tick several for several. Each gets its own git worktree and branch."))
-                .child(label("Access lasts"))
-                .child(div().flex().items_center().gap(T::SP_6)
+                .part(|| label("Their name")).part(|| w::input(&i.name)).part(|| hint("They type this to sign in."))
+                .part(|| label("Telegram username (optional)")).part(|| w::input(&i.tg)).part(|| hint("Lets them use the Telegram button instead of a passcode."))
+                .part(|| label("Projects (pick one or more)")).part(|| ticks)
+                .part(|| hint("Tick several for several. Each gets its own git worktree and branch."))
+                .part(|| label("Access lasts"))
+                .part(|| div().flex().items_center().gap(T::SP_6)
                     .child(div().w(T::SP_48 + T::SP_32).child(w::input(&i.amount)))
-                    .child(w::dropdown("inv-unit", &["days", "hours"], self.inv_unit, false, move |u, _, cx| { let _ = me.update(cx, |s, cx| { s.inv_unit = u; s.stale = true; cx.notify(); }); })))
-                .child(hint(self.expiry()))
-                .child(label("Token limit (optional)")).child(w::input(&i.limit))
-                .child(hint("Counted across all their projects. Their chat stops the moment it is reached, and you can change it later."))
-                .child(div().flex().pt(T::SP_4).child(w::disabled(w::button("collab-create", "Create access"), !self.sb_ok).on_click(on("collab-create", String::new()))))
-                .child(quiet("They see only the projects you pick, and nothing else on this machine."));
+                    .child(w::dropdown("inv-unit", &["days", "hours"], self.inv_unit, false, move |u, _, cx| { let _ = me.update(cx, |s, cx| { s.inv_unit = u; s.stale_only("collab"); cx.notify(); }); })))
+                .part(|| hint(self.expiry()))
+                .part(|| label("Token limit (optional)")).part(|| w::input(&i.limit))
+                .part(|| hint("Counted across all their projects. Their chat stops the moment it is reached, and you can change it later."))
+                .part(|| div().flex().pt(T::SP_4).child(w::disabled(w::button("collab-create", "Create access"), !self.sb_ok).on_click(on("collab-create", String::new()))))
+                .part(|| quiet("They see only the projects you pick, and nothing else on this machine."));
         }
-        d.child(inv)
+        d.then(inv, T::SP_8)
     }
 
     fn log_box(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div().id("server-logs-area").h(T::INFO_LOGS_H).flex_none().flex().flex_col().p(T::SP_2).bg(T::bg()).rounded(T::R_CONTROL).border_1().border_color(T::border())
             .when(self.logs_loading, |d| d.child(div().p(T::SP_6).font_family(T::MONO).text_size(T::TEXT_11).text_color(T::text_muted()).child("(loading...)")))
-            .child(list(self.log_list.clone(), cx.processor(|v: &mut InfoView, i: usize, _, _| {
-                let Some((t, l)) = v.logs.get(i) else { return div().into_any_element() };
-                div().px(T::SP_6).font_family(T::MONO).text_size(T::TEXT_11)
-                    .text_color(match l.as_str() { "error" => T::red(), "warn" => T::yellow(), _ => T::text_muted() }).child(t.clone()).into_any_element()
-            })).flex_1().min_h_0())
+            .child(list(self.log_list.clone(), cx.processor(|v: &mut InfoView, i: usize, _, _| v.log_rows.as_ref().map(|r| r.el(i)).unwrap_or_else(|| div().into_any_element()))).flex_1().min_h_0())
     }
 
     fn dialogs(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -769,29 +780,27 @@ impl InfoView {
         k
     }
 
-    /// After a change: the rows again (a row more or less: the list anew),
-    /// else every row measured again where it is (the scroll place kept).
-    fn relist(&mut self) {
-        let k = self.kinds();
-        if k != self.page_kinds { self.page_list.reset(k.len()); self.page_kinds = k; } else { self.page_list.remeasure(); }
-    }
+    /// After a change: the rows laid out again (`relayout`, on the next frame).
+    fn relist(&mut self) { self.stale = true; self.stale_all = true; }
 
-    /// One row of the page (and the page's gap under it, but the last).
-    fn item(&mut self, i: usize, cx: &mut Context<Self>) -> AnyElement {
-        let Some(kind) = self.page_kinds.get(i).copied() else { return div().into_any_element() };
-        let el: AnyElement = match kind {
-            // A down server: say so over the last figures, with Retry (F66).
-            "offline" => w::error_state("info-retry", "Not connected to the server: these figures may be out of date.", |_, _, cx| { render_all(cx); with(cx, |_, _| {}); }).into_any_element(),
-            "project" => { let (alias, name, path, _, _) = self.facts.clone().unwrap_or_default(); section("PROJECT").gap(px(0.)).child(kv("Alias", alias, true)).child(kv("Name", name, true)).child(kv("Path", path, false)).into_any_element() }
-            "status" => { let (_, _, _, term, svc) = self.facts.clone().unwrap_or_default(); section("STATUS").gap(px(0.)).child(kv("Claude Terminal", term, true)).child(kv("Services", svc, false)).into_any_element() }
-            "machine" => section("THIS MACHINE").child(self.sys_panel()).into_any_element(),
-            "reclaim" => section("RECLAIM DISK SPACE").child(self.maint_panel(cx)).into_any_element(),
-            "collab" => section("OUTSIDE COLLABORATORS").child(self.collab_panel(cx)).into_any_element(),
+    /// One section changed (its rows only are built again).
+    fn stale_only(&mut self, kind: &'static str) { self.stale = true; if !self.stale_kinds.contains(&kind) { self.stale_kinds.push(kind); } }
+
+    /// A section's parts (its title the first), or None for a row that is
+    /// not a card (the offline notice).
+    fn sec_parts(&mut self, kind: &str, want: Want, cx: &mut Context<Self>) -> Option<Parts> {
+        Some(match kind {
+            "offline" => return None,
+            "project" => { let (alias, name, path, _, _) = self.facts.clone().unwrap_or_default(); parts(px(0.)).child(title("PROJECT")).child(kv("Alias", alias, true)).child(kv("Name", name, true)).child(kv("Path", path, false)) }
+            "status" => { let (_, _, _, term, svc) = self.facts.clone().unwrap_or_default(); parts(px(0.)).child(title("STATUS")).child(kv("Claude Terminal", term, true)).child(kv("Services", svc, false)) }
+            "machine" => parts(T::SP_10).child(title("THIS MACHINE")).then(self.sys_panel(shift(want, 1)), T::SP_10),
+            "reclaim" => parts(T::SP_10).child(title("RECLAIM DISK SPACE")).then(self.maint_panel(shift(want, 1), cx), T::SP_10),
+            "collab" => parts(T::SP_10).child(title("OUTSIDE COLLABORATORS")).then(self.collab_panel(shift(want, 1), cx), T::SP_10),
             "tunnel" => {
-                let Some(t) = &self.tunnel else { return div().into_any_element() };
+                let Some(t) = &self.tunnel else { return Some(parts(px(0.))) };
                 let url = t.url.clone();
                 let link = url != "—";
-                section("TUNNEL").gap(px(0.))
+                parts(px(0.)).child(title("TUNNEL"))
                     .child(div().flex().items_center().gap(T::SP_8).py(T::SP_6).border_b_1().border_color(T::border_subtle())
                         .child(div().text_size(T::TEXT_13).text_color(T::text_secondary()).child("URL"))
                         .child(div().flex_1().min_w_0())
@@ -801,35 +810,104 @@ impl InfoView {
                             .child(url.clone())
                             .on_click(move |_, window, cx| if link { act("open-url", &url, window, cx) })))
                     .child(kv("Status", t.status.clone(), !t.cf.is_empty()))
-                    .when(!t.cf.is_empty(), |d| d.child(kv("Cloudflare service", t.cf.clone(), false))).into_any_element()
+                    .when(!t.cf.is_empty(), |d| d.child(kv("Cloudflare service", t.cf.clone(), false)))
             }
-            _ => section("")
+            _ => parts(T::SP_10)
                 .child(div().flex().items_center().gap(T::SP_8)
                     .child(div().flex_1().min_w_0().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_muted()).child("SERVER LOGS"))
                     .child(w::button("copy-logs", "Copy").icon(IconName::Copy).on_click(cx.listener(|_, _, window, cx| act("copy-logs", "", window, cx)))))
-                .child(self.log_box(cx)).into_any_element(),
+                .child(self.log_box(cx)),
+        })
+    }
+
+    /// The page's rows: each section's parts, one row each (F62), the list
+    /// spliced where they changed (the scroll place kept) and every row built
+    /// again.
+    fn relayout(&mut self, cx: &mut Context<Self>) {
+        let kinds = self.kinds();
+        let mut new = vec![];
+        for k in &kinds {
+            let n = self.sec_parts(k, Some(usize::MAX), cx).map(|p| p.len()).unwrap_or(1);
+            new.extend((0..n).map(|j| (*k, j, n)));
+        }
+        let old = std::mem::take(&mut self.slots);
+        // The rows to build again: from the first that changed place (to the
+        // last, when the count changed: every row after it moved), and the
+        // stale sections' rows; every row after a change of everything.
+        let mut from = new.len();
+        let mut to = new.len();
+        if old != new {
+            let pre = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+            let most = old.len().min(new.len()) - pre;
+            let suf = old.iter().rev().zip(new.iter().rev()).take(most).take_while(|(a, b)| a == b).count();
+            self.page_list.splice(pre..old.len() - suf, new.len() - pre - suf);
+            from = pre;
+            to = if old.len() == new.len() { new.len() - suf } else { new.len() };
+        }
+        let all = std::mem::take(&mut self.stale_all);
+        let kinds_stale = std::mem::take(&mut self.stale_kinds);
+        let redo: Vec<usize> = (0..new.len()).filter(|i| all || (from..to).contains(i) || kinds_stale.contains(&new[*i].0)).collect();
+        self.slots = new;
+        self.page_kinds = kinds;
+        let n = self.slots.len();
+        match &mut self.rows {
+            Some(r) => { r.resize(n, cx); for i in redo { r.changed_one(i, cx); } }
+            None => {
+                let me = cx.entity().downgrade();
+                self.rows = Some(crate::rows::Rows::new(n, move |i, _, cx| me.update(cx, |v, cx| v.item(i, cx)).unwrap_or_else(|_| div().into_any_element()), cx));
+            }
+        }
+        self.page_list.remeasure();
+    }
+
+    /// One row of the page: part `j` of a section, drawn as its slice of the
+    /// section's card (and the page's gap under the card, but the last).
+    fn item(&mut self, i: usize, cx: &mut Context<Self>) -> AnyElement {
+        let Some((kind, j, n)) = self.slots.get(i).copied() else { return div().into_any_element() };
+        let last_row = i + 1 == self.slots.len();
+        let el: AnyElement = match self.sec_parts(kind, Some(j), cx) {
+            // A down server: say so over the last figures, with Retry (F66).
+            None => w::error_state("info-retry", "Not connected to the server: these figures may be out of date.", |_, _, cx| { render_all(cx); with(cx, |_, _| {}); }).into_any_element(),
+            Some(p) => {
+                // The section's parts changed without a change saying so: lay out again.
+                if p.len() != n { self.stale = true; self.stale_all = true; cx.notify(); }
+                let (el, g) = p.take(j).unwrap_or_else(|| (div().into_any_element(), px(0.)));
+                slice(j, n, T::R_CONTROL, T::border(), Some(T::bg_secondary())).flex_none().px(T::SP_16)
+                    .pt(if j == 0 { T::SP_16 } else { g }).when(j + 1 == n, |d| d.pb(T::SP_16))
+                    .child(el).into_any_element()
+            }
         };
-        div().w_full().when(i + 1 < self.page_kinds.len(), |d| d.pb(T::SP_12)).child(el).into_any_element()
+        div().w_full().when(j + 1 == n && !last_row, |d| d.pb(T::SP_12)).child(el).into_any_element()
+    }
+
+    /// A line of the server log (a cached row of its own).
+    fn log_line(&self, i: usize) -> AnyElement {
+        let Some((t, l)) = self.logs.get(i) else { return div().into_any_element() };
+        div().px(T::SP_6).font_family(T::MONO).text_size(T::TEXT_11)
+            .text_color(match l.as_str() { "error" => T::red(), "warn" => T::yellow(), _ => T::text_muted() }).child(t.clone()).into_any_element()
     }
 }
 
 impl Render for InfoView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("info");
-        if self.page_kinds.is_empty() { self.relist(); }
-        // The page as a virtual list of its sections: a wheel frame builds
-        // only the sections on screen.
-        // Each section is a cached view (crate::rows), replayed moved while
-        // the wheel only scrolls it; a change builds them all again.
-        let n = self.page_kinds.len();
-        if self.rows.as_ref().is_none_or(|r| r.len() != n) {
-            let me = cx.entity().downgrade();
-            self.rows = Some(crate::rows::Rows::new(n, move |i, _, cx| me.update(cx, |v, cx| v.item(i, cx)).unwrap_or_else(|_| div().into_any_element()), cx));
-            self.stale = false;
-        } else if std::mem::take(&mut self.stale) {
-            if let Some(r) = &self.rows { r.changed(cx); }
-        }
+        // The page as a virtual list of its sections' parts, each a cached
+        // view (crate::rows), replayed moved while the wheel only scrolls it:
+        // a wheel frame builds again only the parts the list's edges cut. A
+        // change lays them out and builds them all again.
+        if self.slots.is_empty() { self.stale_all = true; }
+        if self.slots.is_empty() || std::mem::take(&mut self.stale) { self.relayout(cx); }
         if self.rows.as_ref().is_some_and(|r| r.take_grew()) { self.page_list.remeasure(); }
+        // The server log's lines, cached rows too: a line appended is a row
+        // more; the lines moved up (the oldest dropped) build them again.
+        match &mut self.log_rows {
+            Some(r) => { r.resize(self.logs.len(), cx); if std::mem::take(&mut self.logs_moved) { r.changed(cx); self.log_list.remeasure(); } }
+            None => {
+                let me = cx.entity().downgrade();
+                self.log_rows = Some(crate::rows::Rows::new(self.logs.len(), move |i, _, cx| me.update(cx, |v, _| v.log_line(i)).unwrap_or_else(|_| div().into_any_element()), cx));
+            }
+        }
+        if self.log_rows.as_ref().is_some_and(|r| r.take_grew()) { self.log_list.remeasure(); }
         let page = list(self.page_list.clone(), cx.processor(|v: &mut InfoView, i: usize, _, _| v.rows.as_ref().map(|r| r.el(i)).unwrap_or_else(|| div().into_any_element())))
             .size_full().p(T::SP_16).bg(T::bg());
         let dlg = self.dialogs(window, cx);
@@ -846,7 +924,7 @@ pub fn test_ui(name: &str, args: &[String], window: &mut Window, cx: &mut App) -
         "info-act" => { act(&a(0), &a(1), window, cx); Some(json!({ "ok": true })) }
         "info-log" => {
             let m = json!({ "time": rules::now_ms(), "level": if a(1).is_empty() { "info".into() } else { a(1) }, "text": a(0) });
-            with(cx, |s, _| s.append_log(&m));
+            with_only(cx, "logs", |s, _| s.append_log(&m));
             Some(json!({ "ok": true }))
         }
         "info-field" => {
@@ -861,7 +939,7 @@ pub fn test_ui(name: &str, args: &[String], window: &mut Window, cx: &mut App) -
                     _ => return false,
                 }
                 if let Some(Some(i)) = inp { i.update(cx, |st, cx| st.set_value(val.clone(), window, cx)); }
-                s.stale = true;
+                s.stale_only("collab");
                 cx.notify();
                 true
             });

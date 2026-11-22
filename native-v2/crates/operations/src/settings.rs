@@ -17,9 +17,10 @@ use crate::compat::AreaEvent;
 use crundi_theme::{IconName, T};
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
+use crate::rows::{parts, slice, Parts, Rows, Want};
 use rules::*;
 use serde_json::{json, Map, Value};
-use std::{collections::HashMap, sync::Arc, time::{Duration, Instant}};
+use std::{cell::{Cell, RefCell}, collections::HashMap, rc::Rc, sync::Arc, time::{Duration, Instant}};
 
 // ─── State ───
 
@@ -1274,20 +1275,65 @@ fn on_key(k: &'static str, arg: &str, cx: &mut App) {
 
 // ─── Drawing ───
 
-/// The page (a view over the state).
-/// The page: the groups and their sections as one virtual list (a wheel
-/// frame builds only the sections on screen, as the chat log does); the
-/// state's changes remeasure it (`remeasure` keeps the scroll place).
-pub struct Page { list: ListState, rows: crate::rows::Rows, _subs: Vec<Subscription> }
+/// The page: the groups, their sections' heads and each open section's
+/// parts as one virtual list of cached rows (crate::rows; F62): a wheel frame
+/// builds again only the rows the list's edges cut, each a part of a section,
+/// never a whole section. The state's changes lay the rows out again
+/// (`relayout`: which sections are open and how many parts each has) and
+/// remeasure them (`remeasure` keeps the scroll place).
+pub struct Page { list: ListState, rows: Rows, slots: Rc<RefCell<Vec<Slot>>>, stale: Rc<Cell<bool>>, _subs: Vec<Subscription> }
+
+/// One row of the page: a group's heading or a section's head (`Item`), or
+/// part `j` of the `n` an open section's body has.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Slot { Item(usize), Part(usize, usize, usize) }
 
 impl Page {
     fn new(st_e: &Entity<St>, sk_e: &Entity<crate::skills::Sk>, cx: &mut Context<Self>) -> Self {
-        let again = |p: &mut Page, cx: &mut Context<Page>| { p.rows.changed(cx); p.list.remeasure(); cx.notify(); };
+        let again = |p: &mut Page, cx: &mut Context<Page>| { p.stale.set(true); cx.notify(); };
+        let slots = Rc::new(RefCell::new((0..ITEMS.len()).map(Slot::Item).collect::<Vec<_>>()));
+        let stale = Rc::new(Cell::new(true));
         Page {
             list: ListState::new(ITEMS.len(), ListAlignment::Top, T::SP_48 * 8.),
-            rows: crate::rows::Rows::new(ITEMS.len(), item, cx),
+            rows: Self::make_rows(&slots, &stale, cx),
+            slots, stale,
             _subs: vec![cx.observe(st_e, move |p, _, cx| again(p, cx)), cx.observe(sk_e, move |p, _, cx| again(p, cx))],
         }
+    }
+
+    fn make_rows(slots: &Rc<RefCell<Vec<Slot>>>, stale: &Rc<Cell<bool>>, cx: &mut Context<Self>) -> Rows {
+        let n = slots.borrow().len();
+        let (slots, stale, page) = (slots.clone(), stale.clone(), cx.entity_id());
+        Rows::new(n, move |i, window, cx| {
+            let (sl, open) = { let v = slots.borrow(); (v.get(i).copied(), matches!(v.get(i + 1), Some(Slot::Part(..)))) };
+            let Some(sl) = sl else { return div().into_any_element() };
+            let (el, fits) = slot_el(sl, open, window, cx);
+            // A section's parts changed without the state saying so: lay out again.
+            if !fits { stale.set(true); cx.defer(move |cx| cx.notify(page)); }
+            el
+        }, cx)
+    }
+
+    /// Which sections are open and how many parts each has: the list's rows
+    /// (spliced where they changed, so the scroll place stays), built again.
+    fn relayout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut new = vec![];
+        for (i, it) in ITEMS.iter().enumerate() {
+            new.push(Slot::Item(i));
+            if let Item::Fold(k, _) = it {
+                if is_open(cx, k) { let n = body_of(k, Some(usize::MAX), window, cx).len(); new.extend((0..n).map(|j| Slot::Part(i, j, n))); }
+            }
+        }
+        let old = self.slots.borrow().clone();
+        if old != new {
+            let pre = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+            let most = old.len().min(new.len()) - pre;
+            let suf = old.iter().rev().zip(new.iter().rev()).take(most).take_while(|(a, b)| a == b).count();
+            self.list.splice(pre..old.len() - suf, new.len() - pre - suf);
+            *self.slots.borrow_mut() = new;
+        }
+        if self.rows.len() != self.slots.borrow().len() { self.rows = Self::make_rows(&self.slots, &self.stale, cx); } else { self.rows.changed(cx); }
+        self.list.remeasure();
     }
 }
 
@@ -1299,9 +1345,12 @@ impl Render for Page {
         let body: AnyElement = match state.as_str() {
             "error" => w::page("settings-page").child(w::error_state("settings-retry", error, |_, _, cx| render(cx))).into_any_element(),
             "data" => {
+                if self.stale.replace(false) { self.relayout(window, cx); }
                 // The section just opened comes into view (the web's goto Sign-in scrolls to it).
                 if let Some(k) = quiet(cx, |s| s.scroll_to.take()) {
-                    if let Some(i) = ITEMS.iter().position(|it| matches!(it, Item::Fold(x, _) if *x == k)) { self.list.scroll_to(ListOffset { item_ix: i, offset_in_item: px(0.) }); }
+                    if let Some(i) = ITEMS.iter().position(|it| matches!(it, Item::Fold(x, _) if *x == k)) {
+                        if let Some(ix) = self.slots.borrow().iter().position(|s| *s == Slot::Item(i)) { self.list.scroll_to(ListOffset { item_ix: ix, offset_in_item: px(0.) }); }
+                    }
                 }
                 if quiet(cx, |s| std::mem::take(&mut s.reveal_skill)) {
                     if let Some(y) = crate::skills::open_row_y() { self.list.scroll_by(y - self.list.viewport_bounds().origin.y - T::SP_16); }
@@ -1331,43 +1380,54 @@ const ITEMS: &[Item] = &[
     Item::Group("MORE"), Item::Fold("desktop", "Desktop App"),
 ];
 
-/// A section's body (drawn only while it is open).
-fn body_of(key: &str, window: &mut Window, cx: &mut App) -> AnyElement {
+/// A section's body (drawn only while it is open), as its parts.
+fn body_of(key: &str, want: Want, window: &mut Window, cx: &mut App) -> Parts {
     match key {
-        "server" => server_body(cx),
-        "cc" => claude_body(cx),
-        "whatsnew" => row().gap(T::SP_12)
+        "server" => server_body(want, cx),
+        "cc" => claude_body(want, cx),
+        "whatsnew" => Parts::one(row().gap(T::SP_12)
             .child(div().flex_1().min_w_0().text_size(T::TEXT_12).text_color(T::text_muted()).child("A short tour of what the latest update added. It shows by itself once after each update."))
-            .child(w::button("set-whatsnew", "Show it again").on_click(|_, _, cx| whats_new(cx))).into_any_element(),
-        "sysprompt" => sysprompt_body(window, cx),
-        "skills" => crate::skills::skills_section(window, cx),
-        "usage" => crate::skills::usage_section(window, cx),
-        "voice" => voice_body(window, cx),
-        "channels" => channels_body(window, cx),
-        "notify" => notify_body(cx),
-        "signin" => signin_body(window, cx),
-        "phone" => phone_body(window, cx),
-        "session" => session_body(cx),
-        "config" => config_body(window, cx),
-        "terminal" => terminal_body(window, cx),
-        "backup" => crate::skills::backup_section(window, cx),
-        _ => desktop_body(cx),
+            .child(w::button("set-whatsnew", "Show it again").on_click(|_, _, cx| whats_new(cx)))),
+        "sysprompt" => sysprompt_body(want, window, cx),
+        "skills" => crate::skills::skills_section(want, window, cx),
+        "usage" => crate::skills::usage_section(want, window, cx),
+        "voice" => voice_body(want, window, cx),
+        "channels" => channels_body(want, window, cx),
+        "notify" => notify_body(want, cx),
+        "signin" => signin_body(want, window, cx),
+        "phone" => phone_body(want, window, cx),
+        "session" => session_body(want, cx),
+        "config" => config_body(want, window, cx),
+        "terminal" => terminal_body(want, window, cx),
+        "backup" => crate::skills::backup_section(want, window, cx),
+        _ => desktop_body(want, cx),
     }
 }
 
-/// One row of the page: a group's heading or a section; the page's gap under
-/// every row but the last.
-fn item(i: usize, window: &mut Window, cx: &mut App) -> AnyElement {
-    let el = match ITEMS.get(i) {
-        Some(Item::Group(t)) => group(t, i == 0).into_any_element(),
-        Some(Item::Fold(k, title)) => {
-            let open = get(cx, |s| s.open.get(k).copied().unwrap_or(false));
-            let b = if open { body_of(k, window, cx) } else { div().into_any_element() };
-            fold(k, title, open, || b).into_any_element()
+/// One row of the page (and the page's gap under it, but the last), and
+/// whether a part's section still has the parts the row was laid out for.
+/// A section's card is drawn in slices: its head the top (or all of it when
+/// closed), each part the sides, the last part the bottom.
+fn slot_el(sl: Slot, open: bool, window: &mut Window, cx: &mut App) -> (AnyElement, bool) {
+    let gap = |i: usize, last: bool, el: AnyElement| div().w_full().when(last && i + 1 < ITEMS.len(), |d| d.pb(T::SP_12)).child(el).into_any_element();
+    match sl {
+        Slot::Item(i) => (match ITEMS.get(i) {
+            Some(Item::Group(t)) => gap(i, true, group(t, i == 0).into_any_element()),
+            Some(Item::Fold(k, title)) if open => gap(i, false, slice(0, 2, T::R_FIELD, T::border(), Some(T::bg_secondary())).flex_none()
+                .child(fold_head(k, title, true)).into_any_element()),
+            Some(Item::Fold(k, title)) => gap(i, true, fold(k, title, is_open(cx, k), || div().into_any_element()).into_any_element()),
+            None => div().into_any_element(),
+        }, true),
+        Slot::Part(i, j, n) => {
+            let Some(Item::Fold(k, _)) = ITEMS.get(i) else { return (div().into_any_element(), true) };
+            let body = body_of(k, Some(j), window, cx);
+            let fits = body.len() == n;
+            let (el, g) = body.take(j).unwrap_or_else(|| (div().into_any_element(), px(0.)));
+            let last = j + 1 == n;
+            (gap(i, last, slice(j + 1, n + 1, T::R_FIELD, T::border(), Some(T::bg_secondary())).px(T::SP_16).pt(g).when(last, |d| d.pb(T::SP_16))
+                .child(el).into_any_element()), fits)
         }
-        None => return div().into_any_element(),
-    };
-    div().w_full().when(i + 1 < ITEMS.len(), |d| d.pb(T::SP_12)).child(el).into_any_element()
+    }
 }
 
 /// A hint with its link at the end, inline (the web's `… <a>Open</a>` in the paragraph).
@@ -1400,14 +1460,18 @@ pub fn group(text: &str, first: bool) -> Div {
 /// title and a chevron, down when open) opens and closes it; the body is
 /// drawn only while open, so its height, arrow and body follow the one flag.
 pub fn fold(key: &'static str, title: &str, open: bool, body: impl FnOnce() -> AnyElement) -> Div {
-    let headc = div().id(eid("set-fold", key)).flex().items_center().gap(T::SP_8).px(T::SP_16).py(T::SP_12).cursor_pointer()
+    div().flex().flex_col().flex_none().bg(T::bg_secondary()).rounded(T::R_FIELD).border_1().border_color(T::border())
+        .child(fold_head(key, title, open))
+        .when(open, |d| d.child(div().flex().flex_col().gap(T::SP_12).px(T::SP_16).pb(T::SP_16).child(body())))
+}
+
+/// A section's head: the title and a chevron (down when open); a click opens or closes it.
+fn fold_head(key: &'static str, title: &str, open: bool) -> Stateful<Div> {
+    div().id(eid("set-fold", key)).flex().items_center().gap(T::SP_8).px(T::SP_16).py(T::SP_12).cursor_pointer()
         .text_color(T::text()).hover(|d| d.text_color(T::accent()))
         .child(div().flex_1().min_w_0().text_size(T::TEXT_14).font_weight(T::W_MEDIUM).child(title.to_string()))
         .child(w::icon(if open { IconName::ChevronDown } else { IconName::ChevronRight }, T::ICON_SM))
-        .on_click(move |_, _, cx| { let on = !is_open(cx, key); set_open(cx, key, on); });
-    div().flex().flex_col().flex_none().bg(T::bg_secondary()).rounded(T::R_FIELD).border_1().border_color(T::border())
-        .child(headc)
-        .when(open, |d| d.child(div().flex().flex_col().gap(T::SP_12).px(T::SP_16).pb(T::SP_16).child(body())))
+        .on_click(move |_, _, cx| { let on = !is_open(cx, key); set_open(cx, key, on); })
 }
 
 /// A switch row (.seg-pref-row): the title, its hint and extras on the left, the switch on the right.
@@ -1465,12 +1529,12 @@ fn page_with(window: &mut Window, cx: &mut App, body: AnyElement) -> AnyElement 
         .into_any_element()
 }
 
-fn server_body(cx: &mut App) -> AnyElement {
+fn server_body(want: Want, cx: &mut App) -> Parts {
     let s = st(cx);
     match s.srv_body.as_str() {
-        "checking" => return hint("Checking for updates\u{2026}").text_size(T::TEXT_13).into_any_element(),
-        "starting" => return hint("Starting the update\u{2026}").text_size(T::TEXT_13).into_any_element(),
-        "error" => return hint(format!("Could not check for updates: {}", s.srv_error)).text_size(T::TEXT_13).into_any_element(),
+        "checking" => return Parts::one(hint("Checking for updates\u{2026}").text_size(T::TEXT_13)),
+        "starting" => return Parts::one(hint("Starting the update\u{2026}").text_size(T::TEXT_13)),
+        "error" => return Parts::one(hint(format!("Could not check for updates: {}", s.srv_error)).text_size(T::TEXT_13)),
         _ => {}
     }
     let v = &s.srv;
@@ -1484,26 +1548,25 @@ fn server_body(cx: &mut App) -> AnyElement {
         _ => acts.push(w::button("srv-check", "Check now").on_click(|_, _, cx| server_update(cx, true)).into_any_element()),
     }
     let notes = v.notes_url.clone();
-    col(T::SP_12)
-        .child(info_row(&format!("Version {}", v.version), &v.sub, acts))
-        .child(info_row("Release channel", "Dev gets preview builds early. A newer production release is offered either way.",
+    parts(T::SP_12).wanting(want)
+        .part(|| info_row(&format!("Version {}", v.version), &v.sub, acts))
+        .part(|| info_row("Release channel", "Dev gets preview builds early. A newer production release is offered either way.",
             vec![w::segmented("srv-channel", &["Production", "Dev"], v.channel.max(0) as usize, |i, _, cx| server_channel(cx, *i as i32)).into_any_element()]))
-        .when(!v.dev_note.is_empty(), |d| d.child(hint(v.dev_note.clone())))
-        .when(!v.blocker.is_empty(), |d| d.child(hint(v.blocker.clone()).text_color(T::yellow())))
-        .when(!notes.is_empty(), |d| d.child(row().child(w::link("srv-notes", "Release notes").on_click(move |_, _, cx| open_url(cx, &notes)))))
-        .when(!v.log.is_empty(), |d| d.child(div().p(T::SP_8).bg(T::bg()).rounded(T::R_CONTROL).border_1().border_color(T::border())
+        .when(!v.dev_note.is_empty(), |d| d.part(|| hint(v.dev_note.clone())))
+        .when(!v.blocker.is_empty(), |d| d.part(|| hint(v.blocker.clone()).text_color(T::yellow())))
+        .when(!notes.is_empty(), |d| d.part(|| row().child(w::link("srv-notes", "Release notes").on_click(move |_, _, cx| open_url(cx, &notes)))))
+        .when(!v.log.is_empty(), |d| d.part(|| div().p(T::SP_8).bg(T::bg()).rounded(T::R_CONTROL).border_1().border_color(T::border())
             .font_family(T::MONO).text_size(T::TEXT_10).text_color(T::text_muted()).child(v.log.clone())))
-        .when(v.can_restart, |d| d.child(hairline()).child(info_row("", "Settings like the Telegram token and TLS only take effect after a restart.",
+        .when(v.can_restart, |d| d.part(|| hairline()).child(info_row("", "Settings like the Telegram token and TLS only take effect after a restart.",
             vec![w::button("srv-restart", "Restart server").on_click(|_, _, cx| restart_server(cx)).into_any_element()])))
-        .into_any_element()
 }
 
-fn claude_body(cx: &mut App) -> AnyElement {
+fn claude_body(want: Want, cx: &mut App) -> Parts {
     let s = st(cx);
     match s.cc_body.as_str() {
-        "checking" => return hint("Checking\u{2026}").text_size(T::TEXT_13).into_any_element(),
-        "installing" => return hint("Installing\u{2026} this can take a minute.").text_size(T::TEXT_13).into_any_element(),
-        "error" => return hint(format!("Could not check: {}", s.cc_error)).text_size(T::TEXT_13).into_any_element(),
+        "checking" => return Parts::one(hint("Checking\u{2026}").text_size(T::TEXT_13)),
+        "installing" => return Parts::one(hint("Installing\u{2026} this can take a minute.").text_size(T::TEXT_13)),
+        "error" => return Parts::one(hint(format!("Could not check: {}", s.cc_error)).text_size(T::TEXT_13)),
         _ => {}
     }
     let v = &s.cc;
@@ -1520,8 +1583,8 @@ fn claude_body(cx: &mut App) -> AnyElement {
         }
         _ => acts.push(w::button("cc-check", "Check now").on_click(|_, _, cx| claude_update(cx, true)).into_any_element()),
     }
-    col(T::SP_8)
-        .child(info_row(&format!("Version {}", v.version), &v.sub, acts))
+    parts(T::SP_8).wanting(want)
+        .part(|| info_row(&format!("Version {}", v.version), &v.sub, acts))
         // One line: the tested version, then its warning in yellow (a span in the web).
         .when(!v.tested.is_empty(), |d| {
             let warn = !v.tested_warn.is_empty();
@@ -1530,25 +1593,23 @@ fn claude_body(cx: &mut App) -> AnyElement {
             let st = StyledText::new(text.clone()).with_highlights(if warn { vec![(from..text.len(), HighlightStyle { color: Some(T::yellow()), ..Default::default() })] } else { vec![] });
             d.child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(st))
         })
-        .when(!v.blocker.is_empty(), |d| d.child(hint(v.blocker.clone()).text_color(T::yellow())))
-        .when(!v.sudo.is_empty(), |d| d.child(hint(v.sudo.clone())))
-        .when(!v.last.is_empty(), |d| d.child(hint(v.last.clone())))
-        .into_any_element()
+        .when(!v.blocker.is_empty(), |d| d.part(|| hint(v.blocker.clone()).text_color(T::yellow())))
+        .when(!v.sudo.is_empty(), |d| d.part(|| hint(v.sudo.clone())))
+        .when(!v.last.is_empty(), |d| d.part(|| hint(v.last.clone())))
 }
 
-fn sysprompt_body(window: &mut Window, cx: &mut App) -> AnyElement {
+fn sysprompt_body(want: Want, window: &mut Window, cx: &mut App) -> Parts {
     let all = c::area::<St>(window, cx, "sysprompt", "e.g. Prefer small commits. Ask before installing anything globally.", 5, None);
     let proj = c::area::<St>(window, cx, "proj-sysprompt", "e.g. This repo deploys on merge to main. Never push directly.", 5, None);
     let s = st(cx);
-    col(T::SP_12)
-        .child(hint("Added to every chat and terminal Crundi starts, after its own description of this machine and the tools available here. Scheduled jobs deliberately get only that description, so an edit here cannot change what an unattended job does."))
-        .child(col(T::SP_4).child(label("Everywhere")).child(w::textarea(&all)).child(hint("Applies to every project.")))
-        .when(!s.proj_name.is_empty(), |d| d.child(col(T::SP_4).child(label(format!("Just {}", s.proj_name))).child(w::textarea(&proj))
+    parts(T::SP_12).wanting(want)
+        .part(|| hint("Added to every chat and terminal Crundi starts, after its own description of this machine and the tools available here. Scheduled jobs deliberately get only that description, so an edit here cannot change what an unattended job does."))
+        .part(|| col(T::SP_4).child(label("Everywhere")).child(w::textarea(&all)).child(hint("Applies to every project.")))
+        .when(!s.proj_name.is_empty(), |d| d.part(|| col(T::SP_4).child(label(format!("Just {}", s.proj_name))).child(w::textarea(&proj))
             .child(hint("Read last, so it wins where it disagrees with the box above."))))
-        .when(s.proj_name.is_empty(), |d| d.child(hint("Open a project to give it its own additional prompt.")))
-        .child(hint("Takes effect for new conversations. Claude Code records a conversation\u{2019}s system prompt the first time it runs and replays that recording on every later turn and on resume, so a chat already open keeps the wording it started with."))
-        .child(row().child(w::primary("sp-save", "Save prompts").on_click(|_, _, cx| save_prompts(cx))).child(status(s.sp_status.clone(), &s.sp_tone)))
-        .into_any_element()
+        .when(s.proj_name.is_empty(), |d| d.part(|| hint("Open a project to give it its own additional prompt.")))
+        .part(|| hint("Takes effect for new conversations. Claude Code records a conversation\u{2019}s system prompt the first time it runs and replays that recording on every later turn and on resume, so a chat already open keeps the wording it started with."))
+        .part(|| row().child(w::primary("sp-save", "Save prompts").on_click(|_, _, cx| save_prompts(cx))).child(status(s.sp_status.clone(), &s.sp_tone)))
 }
 
 fn vs_select(key: &'static str, label_text: &str, hint_text: &str, s: &St) -> Div {
@@ -1564,7 +1625,7 @@ fn vs_field(e: &Entity<w::InputState>, label_text: &str, hint_text: &str) -> Div
         .when(!hint_text.is_empty(), |d| d.child(hint(hint_text.to_string())))
 }
 
-fn voice_body(window: &mut Window, cx: &mut App) -> AnyElement {
+fn voice_body(want: Want, window: &mut Window, cx: &mut App) -> Parts {
     let keep = "Leave empty to keep the current key";
     let lim = c::line::<St>(window, cx, "vs-limit", "", false, None);
     let bday = c::line::<St>(window, cx, "vs-bday", "", false, None);
@@ -1586,24 +1647,24 @@ fn voice_body(window: &mut Window, cx: &mut App) -> AnyElement {
         .children(crate::compat::settings_parts(window, cx, "voice-device"));
     let s = st(cx);
     let v = &s.voice;
-    let mut d = col(T::SP_10).child(hint("Click the mic in the top bar, hover over it, or hold the shortcut anywhere to talk to Cru, the voice assistant. What follows applies to Cru on every device."));
-    if !v.shown { return d.child(device).into_any_element(); }
+    let mut d = parts(T::SP_10).wanting(want).part(|| hint("Click the mic in the top bar, hover over it, or hold the shortcut anywhere to talk to Cru, the voice assistant. What follows applies to Cru on every device."));
+    if !v.shown { return d.part(|| device); }
     let set = |b: bool| if b { "set" } else { "not set" };
-    d = d.child(sub_head("Brain and model"))
-        .when(v.has_brain, |d| d.child(vs_select("brain", "Brain", "An experiment: the same tools, rules and notebook either way. Each keeps its own conversation.", s)))
-        .child(vs_select("model", "Model", "Haiku is the quickest and cheapest. A change applies from the next conversation.", s))
-        .when(v.has_effort, |d| d.child(vs_select("effort", "Thinking effort", &v.effort_hint, s)))
-        .when(v.has_brain, |d| d.child(vs_select("cliIdleMinutes", "Stop Claude Code after", "Your next message starts it again and carries on the same conversation.", s)))
-        .child(sub_head("Voice and listening"))
-        .child(vs_select("speechRate", "Talking speed", "", s))
-        .when(v.has_volume, |d| d.child(vs_select("volume", "Volume", "How loud Cru talks, everywhere. Cru can change it too: say louder or quieter.", s)))
-        .child(vs_select("pauseMs", "Pause before sending", "How long you may pause before what you said is sent.", s))
-        .when(v.has_sclose, |d| d.child(vs_select("screenCloseSeconds", "Close the voice screen after", "On the phone, the web and the PC. Hey Cru opens it again.", s)))
-        .when(v.has_admin, |d| d.child(col(T::SP_4)
+    d = d.part(|| sub_head("Brain and model"))
+        .when(v.has_brain, |d| d.part(|| vs_select("brain", "Brain", "An experiment: the same tools, rules and notebook either way. Each keeps its own conversation.", s)))
+        .part(|| vs_select("model", "Model", "Haiku is the quickest and cheapest. A change applies from the next conversation.", s))
+        .when(v.has_effort, |d| d.part(|| vs_select("effort", "Thinking effort", &v.effort_hint, s)))
+        .when(v.has_brain, |d| d.part(|| vs_select("cliIdleMinutes", "Stop Claude Code after", "Your next message starts it again and carries on the same conversation.", s)))
+        .part(|| sub_head("Voice and listening"))
+        .part(|| vs_select("speechRate", "Talking speed", "", s))
+        .when(v.has_volume, |d| d.part(|| vs_select("volume", "Volume", "How loud Cru talks, everywhere. Cru can change it too: say louder or quieter.", s)))
+        .part(|| vs_select("pauseMs", "Pause before sending", "How long you may pause before what you said is sent.", s))
+        .when(v.has_sclose, |d| d.part(|| vs_select("screenCloseSeconds", "Close the voice screen after", "On the phone, the web and the PC. Hey Cru opens it again.", s)))
+        .when(v.has_admin, |d| d.part(|| col(T::SP_4)
             .child(row().gap(T::SP_6).child(w::check("vs-admin", "", v.admin, |on, _, cx| voice_admin(cx, *on))).child(w::icon(IconName::ShieldAlert, T::ICON_SM))
                 .child(div().text_size(T::TEXT_13).text_color(T::text()).child("Admin mode")))
             .child(hint(v.admin_hint.clone()))))
-        .when(v.has_away, |d| d.child(col(T::SP_4)
+        .when(v.has_away, |d| d.part(|| col(T::SP_4)
             .child(row().gap(T::SP_6).child(w::check("vs-away", "", v.away, |on, _, cx| voice_away(cx, Some(*on), None))).child(w::icon(IconName::Zap, T::ICON_SM))
                 .child(div().text_size(T::TEXT_13).text_color(T::text()).child("Cru on its own")))
             .child(hint("When nobody is talking to it (a wake-up, the heartbeat, a job it took on), Cru may do what is ticked below without asking. Anything else comes to your phone to approve or decline. With chats ticked, Cru also closes a chat without asking, even while you talk to it, once it has read what the chat is doing. Cru can switch this off, never on."))
@@ -1613,30 +1674,30 @@ fn voice_body(window: &mut Window, cx: &mut App) -> AnyElement {
             })))
             .child(row().child(w::danger("vs-stop", "Stop everything").icon(IconName::Pause).on_click(|_, _, cx| voice_away_stop(cx))).child(note(v.away_note.clone(), v.away_bad)))
             .child(hint("Switches this off, pauses every ticker and trigger Cru keeps (the heartbeat too), drops its questions and pauses its jobs."))))
-        .child(sub_head("Spending"))
-        .child(hint(v.spend.clone()))
-        .child(vs_field(&lim, "Claude API monthly limit (US$)", "Cru stops answering through the API at it."))
-        .child(vs_field(&bday, "Claude API billing day", "The day of the month the API is billed; its spend restarts then."))
-        .child(vs_field(&dlim, "Deepgram monthly limit (US$)", "At it, the device voice and recogniser take over."))
-        .child(vs_field(&dday, "Deepgram billing day", ""))
-        .child(row().child(w::button("vs-spend", "Save spending").on_click(|_, _, cx| voice_save_spend(cx))).child(note(v.spend_note.clone(), v.spend_bad)))
-        .child(sub_head("Keys"))
-        .child(vs_field(&ak, &format!("Claude API key ({})", set(v.akey_set)), ""))
-        .child(vs_field(&dk, &format!("Deepgram API key ({})", set(v.dkey_set)), "Listening and speaking."))
-        .child(vs_field(&xk, &format!("Anthropic Admin API key, optional ({})", set(v.xkey_set)), "Only to show the whole account usage."))
-        .child(row().child(w::button("vs-keys", "Save keys").on_click(|_, _, cx| voice_save_keys(cx))).child(note(v.keys_note.clone(), v.keys_bad)))
-        .child(sub_head("Conversation and notebook"))
-        .child(row().child(w::button("vs-reset", "Start a fresh conversation").on_click(|_, _, cx| voice_reset(cx))).child(note(v.reset_note.clone(), v.reset_bad)))
-        .child(hint("Nothing is lost: memory search keeps every earlier turn."))
-        .when(!v.status.is_empty(), |d| d.child(note(v.status.clone(), v.status_bad)))
-        .child(device);
-    d.into_any_element()
+        .part(|| sub_head("Spending"))
+        .part(|| hint(v.spend.clone()))
+        .part(|| vs_field(&lim, "Claude API monthly limit (US$)", "Cru stops answering through the API at it."))
+        .part(|| vs_field(&bday, "Claude API billing day", "The day of the month the API is billed; its spend restarts then."))
+        .part(|| vs_field(&dlim, "Deepgram monthly limit (US$)", "At it, the device voice and recogniser take over."))
+        .part(|| vs_field(&dday, "Deepgram billing day", ""))
+        .part(|| row().child(w::button("vs-spend", "Save spending").on_click(|_, _, cx| voice_save_spend(cx))).child(note(v.spend_note.clone(), v.spend_bad)))
+        .part(|| sub_head("Keys"))
+        .part(|| vs_field(&ak, &format!("Claude API key ({})", set(v.akey_set)), ""))
+        .part(|| vs_field(&dk, &format!("Deepgram API key ({})", set(v.dkey_set)), "Listening and speaking."))
+        .part(|| vs_field(&xk, &format!("Anthropic Admin API key, optional ({})", set(v.xkey_set)), "Only to show the whole account usage."))
+        .part(|| row().child(w::button("vs-keys", "Save keys").on_click(|_, _, cx| voice_save_keys(cx))).child(note(v.keys_note.clone(), v.keys_bad)))
+        .part(|| sub_head("Conversation and notebook"))
+        .part(|| row().child(w::button("vs-reset", "Start a fresh conversation").on_click(|_, _, cx| voice_reset(cx))).child(note(v.reset_note.clone(), v.reset_bad)))
+        .part(|| hint("Nothing is lost: memory search keeps every earlier turn."))
+        .when(!v.status.is_empty(), |d| d.part(|| note(v.status.clone(), v.status_bad)))
+        .part(|| device);
+    d
 }
 
-fn channels_body(window: &mut Window, cx: &mut App) -> AnyElement {
+fn channels_body(want: Want, window: &mut Window, cx: &mut App) -> Parts {
     let chat = c::line::<St>(window, cx, "chat-id", "Chat ID (filled in when you send /start)", false, Some(on_key));
     let s = st(cx);
-    let mut d = col(T::SP_12).child(hint("Which of these get told. Everything for you lands in the Crundi inbox first, and it is always on; turn on as many of the others as you like, or none at all. The table below decides which events are worth telling you about."));
+    let mut d = parts(T::SP_12).wanting(want).child(hint("Which of these get told. Everything for you lands in the Crundi inbox first, and it is always on; turn on as many of the others as you like, or none at all. The table below decides which events are worth telling you about."));
     for (i, ch) in s.channels.iter().enumerate() {
         let extra: Option<AnyElement> = if ch.id == "webpush" && ch.available {
             // Web Push is a browser's: this client offers only the test (no "Allow in this browser").
@@ -1654,12 +1715,12 @@ fn channels_body(window: &mut Window, cx: &mut App) -> AnyElement {
                 .into_any_element())
         } else { None };
         let id = ch.id.clone();
-        d = d.child(toggle_row(("chan", i), &ch.label, None, &ch.hint, ch.enabled, ch.can_toggle, extra, move |on, cx| channel_toggle(cx, &id, on)));
+        d = d.part(|| toggle_row(("chan", i), &ch.label, None, &ch.hint, ch.enabled, ch.can_toggle, extra, move |on, cx| channel_toggle(cx, &id, on)));
     }
-    d.into_any_element()
+    d
 }
 
-fn notify_body(cx: &mut App) -> AnyElement {
+fn notify_body(want: Want, cx: &mut App) -> Parts {
     let s = st(cx);
     let cell = |i: usize, m: &'static str, on: bool, key: String| div().w(T::SETTINGS_NTF_COL).h_full().flex().items_center().justify_center().border_l_1().border_color(T::border())
         .child(div().id(("ntf", i * 3 + ["always", "away", "never"].iter().position(|x| *x == m).unwrap_or(0))).cursor_pointer().child(w::choice_mark(false, on, false))
@@ -1668,23 +1729,27 @@ fn notify_body(cx: &mut App) -> AnyElement {
         .child(div().flex_1().min_w_0().flex().items_center().font_family(T::MONO).text_size(T::TEXT_10).text_color(T::text_muted()).child("EVENT"))
         .children(["ALWAYS", "WHEN AWAY", "NEVER"].into_iter().map(|m| div().w(T::SETTINGS_NTF_COL).flex().items_center().justify_center().border_l_1().border_color(T::border())
             .font_family(T::MONO).text_size(T::TEXT_10).text_color(T::text_muted()).child(m)));
-    let mut table = div().flex().flex_col().rounded(T::R_CARD).border_1().border_color(T::border()).bg(T::bg_secondary()).overflow_hidden().child(head);
-    for (i, r) in s.notify.iter().enumerate() {
-        table = table.child(hairline());
-        if !r.cat.is_empty() {
-            table = table.child(div().pl(T::SP_12).py(T::SP_6).bg(T::bg_tertiary()).text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(T::accent()).child(r.cat.clone()));
+    // The table's rows are parts of their own (Parts::framed_with), each with
+    // the hairline over it, built only when wanted.
+    let line = |i: usize, r: &NotifyRow| -> AnyElement {
+        let line = if !r.cat.is_empty() {
+            div().pl(T::SP_12).py(T::SP_6).bg(T::bg_tertiary()).text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(T::accent()).child(r.cat.clone()).into_any_element()
         } else {
-            table = table.child(div().id(("ntf-row", i)).flex().items_stretch().min_h(T::CONTROL_LG).pl(T::SP_12).hover(|d| d.bg(T::bg_hover()))
+            div().id(("ntf-row", i)).flex().items_stretch().min_h(T::CONTROL_LG).pl(T::SP_12).hover(|d| d.bg(T::bg_hover()))
                 .child(div().flex_1().min_w_0().flex().items_center().text_size(T::TEXT_13).text_color(T::text()).child(r.label.clone()))
                 .child(cell(i, "always", r.mode == "always", r.key.clone()))
                 .child(cell(i, "away", r.mode == "away", r.key.clone()))
-                .child(cell(i, "never", r.mode == "never", r.key.clone())));
-        }
-    }
-    col(T::SP_12)
-        .child(hint("Which events are worth a notification, sent on whichever channels are on above. \u{201c}Always\u{201d} sends every time; \u{201c}When Away\u{201d} only while you\u{2019}re not focused on Crundi (browser tab / desktop app); \u{201c}Never\u{201d} is off."))
-        .child(table)
-        .into_any_element()
+                .child(cell(i, "never", r.mode == "never", r.key.clone())).into_any_element()
+        };
+        div().flex().flex_col().child(hairline()).child(line).into_any_element()
+    };
+    let mut head = Some(head);
+    parts(T::SP_12).wanting(want)
+        .part(|| hint("Which events are worth a notification, sent on whichever channels are on above. \u{201c}Always\u{201d} sends every time; \u{201c}When Away\u{201d} only while you\u{2019}re not focused on Crundi (browser tab / desktop app); \u{201c}Never\u{201d} is off."))
+        .framed_with(s.notify.len() + 1, T::R_CARD, T::border(), Some(T::bg_secondary()), |k| match k {
+            0 => head.take().map(|h| h.into_any_element()).unwrap_or_else(|| div().into_any_element()),
+            k => line(k - 1, &s.notify[k - 1]),
+        })
 }
 
 fn oauth_block(window: &mut Window, cx: &mut App, k: &'static str) -> AnyElement {
@@ -1718,7 +1783,7 @@ fn oauth_block(window: &mut Window, cx: &mut App, k: &'static str) -> AnyElement
         .into_any_element()
 }
 
-fn signin_body(window: &mut Window, cx: &mut App) -> AnyElement {
+fn signin_body(want: Want, window: &mut Window, cx: &mut App) -> Parts {
     let pw_set = get(cx, |s| s.pw_set);
     let tg_set = get(cx, |s| s.tg_token_set);
     let pw = c::line::<St>(window, cx, "new-password", if pw_set { "New password (12+ characters)" } else { "Choose a password (12+ characters)" }, true, Some(on_key));
@@ -1726,22 +1791,22 @@ fn signin_body(window: &mut Window, cx: &mut App) -> AnyElement {
     let user = c::line::<St>(window, cx, "tg-user", "your-username", false, None);
     let oauth = if get(cx, |s| s.oauth_has) { vec![oauth_block(window, cx, "google"), oauth_block(window, cx, "github")] } else { vec![] };
     let s = st(cx);
-    let mut d = col(T::SP_10)
-        .child(hint("Any one of these is enough, any mix can be on, and one must always stay on."))
-        .child(toggle_row("pw-on", "Password + authenticator code", None,
+    let mut d = parts(T::SP_10).wanting(want)
+        .part(|| hint("Any one of these is enough, any mix can be on, and one must always stay on."))
+        .part(|| toggle_row("pw-on", "Password + authenticator code", None,
             if s.pw_set { "A password and a 6-digit code. Setting a new password issues a new code source." } else { "Not set up yet. Choose a password below to enable it." },
             s.pw_on, s.pw_set, None, |on, cx| method_toggle(cx, "password", on)))
-        .child(row().child(div().flex_1().min_w_0().child(w::input(&pw))).child(w::primary("pw-set", if s.pw_set { "Change" } else { "Set" }).on_click(|_, _, cx| set_password(cx))))
-        .when(!s.enrol.is_empty(), |d| d.child(col(T::SP_6).p(T::SP_12).rounded(T::R_FIELD).border_1().border_color(T::accent()).bg(T::accent_dim())
+        .part(|| row().child(div().flex_1().min_w_0().child(w::input(&pw))).child(w::primary("pw-set", if s.pw_set { "Change" } else { "Set" }).on_click(|_, _, cx| set_password(cx))))
+        .when(!s.enrol.is_empty(), |d| d.part(|| col(T::SP_6).p(T::SP_12).rounded(T::R_FIELD).border_1().border_color(T::accent()).bg(T::accent_dim())
             .child(div().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(T::text()).child("Add this to your authenticator app"))
             .child(hint("Shown once. Without it you will not be able to sign in with the new password."))
             .child(div().p(T::SP_8).bg(T::bg()).rounded(T::R_CONTROL).border_1().border_color(T::border()).flex().justify_center()
                 .font_family(T::MONO).text_size(T::TEXT_15).text_color(T::text()).child(s.enrol.clone()))));
     // Telegram (authTelegramSettings): an older server sends no bot block, so only the switch.
     if !s.tg_has {
-        d = d.child(toggle_row("tg-on", "Telegram", Some(TELEGRAM), "", s.tg_on, s.tg_can || s.tg_on, None, |on, cx| method_toggle(cx, "telegram", on)));
+        d = d.part(|| toggle_row("tg-on", "Telegram", Some(TELEGRAM), "", s.tg_on, s.tg_can || s.tg_on, None, |on, cx| method_toggle(cx, "telegram", on)));
     } else {
-        d = d.child(col(T::SP_8).pt(T::SP_6).child(hairline())
+        d = d.part(|| col(T::SP_8).pt(T::SP_6).child(hairline())
             .child(toggle_row("tg-on", "Telegram", Some(TELEGRAM), &s.tg_status, s.tg_on, s.tg_can || s.tg_on, None, |on, cx| method_toggle(cx, "telegram", on)))
             .child(hint_link("tg-open", "In Telegram, message @BotFather, send /newbot and copy the token it gives you. The same bot sends the Telegram notification channel.", "Open", "", "https://t.me/BotFather"))
             .child(div().flex().gap(T::SP_8)
@@ -1751,25 +1816,25 @@ fn signin_body(window: &mut Window, cx: &mut App) -> AnyElement {
                 .when(s.tg_restart, |d| d.child(w::button("tg-restart", "Restart now").on_click(|_, _, cx| restart_server(cx))))
                 .when(s.tg_token_set, |d| d.child(w::button("tg-clear", "Remove").on_click(|_, _, cx| tg_clear(cx))))));
     }
-    d.children(oauth).into_any_element()
+    d.children(oauth)
 }
 
-fn phone_body(window: &mut Window, cx: &mut App) -> AnyElement {
+fn phone_body(want: Want, window: &mut Window, cx: &mut App) -> Parts {
     let has_key = get(cx, |s| s.push_has_key);
     let key = c::line::<St>(window, cx, "push-key", if has_key { "Paste a new key to replace it" } else { "Paste the push key" }, true, Some(on_key));
     let relay = c::line::<St>(window, cx, "relay-url", "https://your-relay.example", false, None);
     let s = st(cx);
-    let mut d = col(T::SP_10)
-        .child(row().gap(T::SP_12).child(hint("Pair the Crundi app on a phone with this server. It shows a picture for the phone to scan, so no password is typed on the phone.").flex_1().min_w_0())
+    let mut d = parts(T::SP_10).wanting(want)
+        .part(|| row().gap(T::SP_12).child(hint("Pair the Crundi app on a phone with this server. It shows a picture for the phone to scan, so no password is typed on the phone.").flex_1().min_w_0())
             .child(w::button("phone-connect", "Connect a phone").on_click(|_, _, cx| pair_start(cx))))
-        .child(label("Notifications on the phone"));
+        .part(|| label("Notifications on the phone"));
     match s.push_state.as_str() {
-        "checking" => d = d.child(hint("Checking\u{2026}").text_size(T::TEXT_12)),
-        "none" => d = d.child(hint("Phone notifications are not available on this server.").text_size(T::TEXT_12)),
+        "checking" => d = d.part(|| hint("Checking\u{2026}").text_size(T::TEXT_12)),
+        "none" => d = d.part(|| hint("Phone notifications are not available on this server.").text_size(T::TEXT_12)),
         _ => {
             let url = s.push_contact_url.clone();
             let custom = s.relay_custom;
-            d = d.child(col(T::SP_8)
+            d = d.part(|| col(T::SP_8)
                 .child(label(s.push_line.clone()))
                 .when(!s.push_contact.is_empty(), |d| d.child(row().child(w::link("push-contact", s.push_contact.clone()).on_click(move |_, _, cx| open_url(cx, &url)))))
                 .when(!s.push_error.is_empty(), |d| d.child(hint(s.push_error.clone()).text_color(T::yellow())))
@@ -1786,22 +1851,22 @@ fn phone_body(window: &mut Window, cx: &mut App) -> AnyElement {
                         .when(custom, |d| d.child(w::button("relay-pub", "Use the published relay").on_click(|_, _, cx| relay_save(cx, String::new()))))))));
         }
     }
-    d.into_any_element()
+    d
 }
 
-fn session_body(cx: &mut App) -> AnyElement {
+fn session_body(want: Want, cx: &mut App) -> Parts {
     let s = st(cx);
     let server = s.server.clone();
-    let mut d = col(T::SP_10)
-        .child(row().gap(T::SP_12).child(hint("Ends this sign-in on this device and revokes its tokens, so they cannot be refreshed. Also clears the cookie that reaches private forwards.").flex_1().min_w_0())
+    let mut d = parts(T::SP_10).wanting(want)
+        .part(|| row().gap(T::SP_12).child(hint("Ends this sign-in on this device and revokes its tokens, so they cannot be refreshed. Also clears the cookie that reaches private forwards.").flex_1().min_w_0())
             // Two-step, as the web's: easy to hit by accident, and the way back is the sign-in screen.
             .child(w::arm_button("sess-signout", format!("Sign out of {server}"), None, "Sign out?", |_, cx| crate::compat::session::sign_out(cx, ""))))
-        .child(row().child(label("Signed in devices").flex_1().min_w_0()).child(w::button("sess-toggle", if s.sess_open { "Hide" } else { "Show" }).on_click(|_, _, cx| sess_toggle(cx))));
-    if !s.sess_open { return d.into_any_element(); }
+        .part(|| row().child(label("Signed in devices").flex_1().min_w_0()).child(w::button("sess-toggle", if s.sess_open { "Hide" } else { "Show" }).on_click(|_, _, cx| sess_toggle(cx))));
+    if !s.sess_open { return d; }
     match s.sess_state.as_str() {
-        "loading" => d = d.child(hint("Loading\u{2026}").text_size(T::TEXT_13)),
-        "error" => d = d.child(hint(format!("Could not load sessions: {}", s.sess_error)).text_size(T::TEXT_13)),
-        "empty" => d = d.child(hint("No active sessions.").text_size(T::TEXT_13)),
+        "loading" => d = d.part(|| hint("Loading\u{2026}").text_size(T::TEXT_13)),
+        "error" => d = d.part(|| hint(format!("Could not load sessions: {}", s.sess_error)).text_size(T::TEXT_13)),
+        "empty" => d = d.part(|| hint("No active sessions.").text_size(T::TEXT_13)),
         _ => {
             let mut list = col(px(0.));
             for (i, r) in s.sessions.iter().enumerate() {
@@ -1816,61 +1881,58 @@ fn session_body(cx: &mut App) -> AnyElement {
                         else { w::arm_button(("sess-revoke", i), "Revoke", None, "Revoke?", move |_, cx| sess_revoke(cx, id.clone())).look("danger").into_any_element() }));
             }
             let n = s.sess_others;
-            d = d.child(list).when(n > 0, |d| d.child(row().pt(T::SP_10).justify_end()
+            d = d.part(|| list).when(n > 0, |d| d.child(row().pt(T::SP_10).justify_end()
                 .child(w::arm_button("sess-others", format!("Sign out the other {}", if n == 1 { "device".to_string() } else { format!("{n} devices") }), None, "Sign them all out?", |_, cx| sess_revoke_others(cx)).look("danger"))));
         }
     }
-    d.into_any_element()
+    d
 }
 
 fn config_field(e: &Entity<w::InputState>, label_text: &str, hint_text: &str) -> Div {
     col(T::SP_4).child(label(label_text.to_string())).child(mono_box(e)).child(hint(hint_text.to_string()))
 }
 
-fn config_body(window: &mut Window, cx: &mut App) -> AnyElement {
+fn config_body(want: Want, window: &mut Window, cx: &mut App) -> Parts {
     let pd = c::line::<St>(window, cx, "projects-dir", "C:\\Projects", false, None);
     let wp = c::line::<St>(window, cx, "web-port", "0 (auto)", false, None);
     let tt = c::line::<St>(window, cx, "tunnel-token", "(optional)", true, None);
     let tu = c::line::<St>(window, cx, "tunnel-url", "https://crundi.example.com", false, None);
     let dd = c::line::<St>(window, cx, "data-dir", "(default: platform app dir)", false, None);
     let s = st(cx);
-    col(T::SP_12)
-        .child(row().gap(T::SP_6).child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child("Changes are saved to"))
+    parts(T::SP_12).wanting(want)
+        .part(|| row().gap(T::SP_6).child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child("Changes are saved to"))
             .child(div().px(T::SP_4).py(T::SP_2).rounded(T::R_CHIP).bg(T::bg_tertiary()).font_family(T::MONO).text_size(T::TEXT_11).text_color(T::text_secondary()).truncate().child(s.env_path.clone())))
-        .child(config_field(&pd, "Projects Directory", "Single mode: subfolders auto-discovered. Leave empty for multi mode (add projects individually)."))
-        .child(config_field(&wp, "Web Port", "Port for the web UI. 0 = auto-assign."))
-        .child(config_field(&tt, "Cloudflare Tunnel Token", "For a persistent custom domain. Leave empty for random quick tunnel."))
-        .child(config_field(&tu, "Cloudflare Tunnel URL", "Your public tunnel URL (used with named tunnel token above)."))
-        .child(config_field(&dd, "Data Directory", "Override data storage location. Leave empty for default."))
-        .child(row().child(w::primary("config-save", "Save").on_click(|_, _, cx| save_config(cx))).child(status(s.config_status.clone(), &s.config_tone)))
-        .into_any_element()
+        .part(|| config_field(&pd, "Projects Directory", "Single mode: subfolders auto-discovered. Leave empty for multi mode (add projects individually)."))
+        .part(|| config_field(&wp, "Web Port", "Port for the web UI. 0 = auto-assign."))
+        .part(|| config_field(&tt, "Cloudflare Tunnel Token", "For a persistent custom domain. Leave empty for random quick tunnel."))
+        .part(|| config_field(&tu, "Cloudflare Tunnel URL", "Your public tunnel URL (used with named tunnel token above)."))
+        .part(|| config_field(&dd, "Data Directory", "Override data storage location. Leave empty for default."))
+        .part(|| row().child(w::primary("config-save", "Save").on_click(|_, _, cx| save_config(cx))).child(status(s.config_status.clone(), &s.config_tone)))
 }
 
-fn terminal_body(window: &mut Window, cx: &mut App) -> AnyElement {
+fn terminal_body(want: Want, window: &mut Window, cx: &mut App) -> Parts {
     let ap = c::line::<St>(window, cx, "autopark", "", false, Some(on_key));
     let s = st(cx);
-    col(T::SP_12)
-        .child(col(T::SP_4).child(label("New Line Key"))
+    parts(T::SP_12).wanting(want)
+        .part(|| col(T::SP_4).child(label("New Line Key"))
             .child(row().child(w::segmented("newline-key", &["Shift + Enter", "Ctrl + Enter"], s.newline_key.max(0) as usize, |i, _, cx| set_newline(cx, *i as i32))))
             .child(hint("Inserts a newline in the terminal instead of submitting \u{2014} the other key still submits. Applies instantly to all terminals.")))
-        .child(col(T::SP_4).child(label("Close idle panes after (minutes)"))
+        .part(|| col(T::SP_4).child(label("Close idle panes after (minutes)"))
             .child(div().w(T::SETTINGS_NUM_W).child(w::input(&ap)))
             .child(hint(format!("A chat or Claude terminal with nothing going on closes once you have also been away this long. It keeps its place, shows what it was, and Resume picks the conversation back up. 0 turns it off; otherwise at least {}. Shells are never closed for being idle. After a restart, every pane that was open comes back the same way.", s.autopark_min))))
-        .into_any_element()
 }
 
-fn desktop_body(cx: &mut App) -> AnyElement {
+fn desktop_body(want: Want, cx: &mut App) -> Parts {
     let s = st(cx);
-    col(T::SP_12)
-        .child(info_row("Launch at startup", &s.launch_hint, vec![w::switch("launch", s.launch, |v, _, cx| launch_toggle(cx, *v)).into_any_element()]))
-        .child(info_row("Automatic updates", "Check on launch and once a day. Always asks before installing.", vec![w::switch("auto-update", s.auto_update, |v, _, cx| update_toggle(cx, *v)).into_any_element()]))
-        .child(info_row("Release channel", "Dev gets preview builds early. A newer production release is offered either way.",
+    parts(T::SP_12).wanting(want)
+        .part(|| info_row("Launch at startup", &s.launch_hint, vec![w::switch("launch", s.launch, |v, _, cx| launch_toggle(cx, *v)).into_any_element()]))
+        .part(|| info_row("Automatic updates", "Check on launch and once a day. Always asks before installing.", vec![w::switch("auto-update", s.auto_update, |v, _, cx| update_toggle(cx, *v)).into_any_element()]))
+        .part(|| info_row("Release channel", "Dev gets preview builds early. A newer production release is offered either way.",
             vec![w::segmented("upd-channel", &["Production", "Dev"], s.upd_channel.max(0) as usize, |i, _, cx| desktop_channel(cx, *i as i32)).into_any_element()]))
-        .child(row().gap(T::SP_12)
+        .part(|| row().gap(T::SP_12)
             .child(row().flex_1().min_w_0().child(w::dot(if s.upd_avail { T::accent() } else { T::green() }))
                 .child(div().text_size(T::TEXT_13).text_color(if s.upd_avail { T::accent_hover() } else { T::text_secondary() }).child(s.upd_status.clone())))
             .child(w::button("update-check", "Check now").on_click(|_, _, cx| update_check(cx))))
-        .into_any_element()
 }
 
 /// Connect a phone (crundi-phone.js connect()): the picture, the line under

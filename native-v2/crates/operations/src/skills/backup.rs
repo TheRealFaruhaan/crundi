@@ -8,6 +8,7 @@ use super::common::{self as c, ok};
 use super::{get, upd, Sk};
 use crundi_theme::{IconName, T};
 use crundi_widgets as w;
+use crate::rows::{parts, Parts, Want};
 use gpui::{prelude::FluentBuilder as _, *};
 use serde_json::{json, Map, Value};
 
@@ -515,10 +516,10 @@ fn restore_key(k: &'static str, arg: &str, cx: &mut App) {
     }
 }
 
-pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
+pub fn render(want: Want, window: &mut Window, cx: &mut App) -> Parts {
     let state = get(cx, |s| s.b.state.clone());
-    if state == "loading" { return hint("Loading…").into_any_element(); }
-    if state == "error" { return small(get(cx, |s| s.b.load_error.clone()), "bad").text_size(T::TEXT_12).into_any_element(); }
+    if state == "loading" { return Parts::one(hint("Loading…")); }
+    if state == "error" { return Parts::one(small(get(cx, |s| s.b.load_error.clone()), "bad").text_size(T::TEXT_12)); }
     let (secret_ph, pass_ph, confirming) = get(cx, |s| (s.b.secret_ph.clone(), s.b.pass_ph.clone(), !s.b.confirm_key.is_empty()));
     let ln = |window: &mut Window, cx: &mut App, k: &'static str, ph: &str, masked: bool| c::line::<Sk>(window, cx, k, ph, masked, None);
     let ep = ln(window, cx, "bk-endpoint", "https://ACCOUNT.r2.cloudflarestorage.com", false);
@@ -595,47 +596,45 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
         }
         _ => {}
     }
-    col(T::SP_16)
-        .child(status)
-        .child(col(T::SP_10).child(head("Storage"))
+    parts(T::SP_16).wanting(want)
+        .part(|| status)
+        .part(|| col(T::SP_10).child(head("Storage"))
             .child(field("Endpoint", w::input(&ep).into_any_element(), "Any S3-compatible storage: Cloudflare R2, AWS S3, Backblaze B2, MinIO, Wasabi…"))
             .child(div().flex().gap(T::SP_16).child(field("Bucket", w::input(&bu).into_any_element(), "")).child(field("Region", w::input(&rg).into_any_element(), "R2 uses auto; AWS needs the bucket’s region.")))
             .child(div().flex().gap(T::SP_16).child(field("Folder", w::input(&pf).into_any_element(), ""))
                 .child(field("Addresses", div().flex().child(w::segmented("bk-style", &["Path", "Virtual-hosted"], b.style.clamp(0, 1) as usize, |i, _, cx| upd(cx, |s| s.b.style = *i as i32))).into_any_element(), "")))
             .child(div().flex().gap(T::SP_16).child(field("Access key ID", w::input(&ki).into_any_element(), "")).child(field("Secret access key", w::input(&se).into_any_element(), "")))
             .child(row().child(btn("bk-test", "Test the connection", None, false, false, |cx| act(cx, "bk-test", ""))).child(small(b.test_out.clone(), &b.test_tone))))
-        .child(col(T::SP_10).child(head("Passphrase"))
+        .part(|| col(T::SP_10).child(head("Passphrase"))
             .child(div().flex().gap(T::SP_16).child(field(b.pass_label.clone(), w::input(&p1).into_any_element(), "")).child(field("Again", w::input(&p2).into_any_element(), "")))
             .child(hint("Backups hold your sign-in and settings, so they are encrypted with this. You need it to restore; without it a backup cannot be opened. Keep it somewhere other than this server.")))
-        .child(col(T::SP_10).child(head("Schedule"))
+        .part(|| col(T::SP_10).child(head("Schedule"))
             .child(w::check("bk-on", "Back up automatically", b.on, |v, _, cx| upd(cx, |s| s.b.on = *v)))
             .child(sched)
             .child(col(T::SP_4).pt(T::SP_2).child(lbl("Keep the last"))
                 .child(row().gap(T::SP_10).child(div().w(T::SP_48 + T::SP_40).child(w::input(&kp))).child(lbl("scheduled backups")))
                 .child(hint("Older scheduled backups of this machine are deleted after each new one. 0 keeps them all. Backups you make by hand are kept until you delete them.")))
             .child(hint("If you are using Crundi when a backup is due, it tells you and waits until you have left.")))
-        .child(row().child(btn("bk-save", "Save", None, true, false, |cx| act(cx, "bk-save", ""))).child(small(b.save_out.clone(), &b.save_tone)))
-        .child(items)
-        .into_any_element()
+        .part(|| row().child(btn("bk-save", "Save", None, true, false, |cx| act(cx, "bk-save", ""))).child(small(b.save_out.clone(), &b.save_tone)))
+        .part(|| items)
 }
 
-pub fn usage_render(_window: &mut Window, cx: &mut App) -> AnyElement {
+pub fn usage_render(_window: &mut Window, cx: &mut App) -> Parts {
     let s = super::st(cx);
     let b = &s.b;
     match b.us_state.as_str() {
-        "loading" => return hint("Loading…").into_any_element(),
-        "error" => return small(b.us_error.clone(), "bad").text_size(T::TEXT_12).into_any_element(),
+        "loading" => return Parts::one(hint("Loading…")),
+        "error" => return Parts::one(small(b.us_error.clone(), "bad").text_size(T::TEXT_12)),
         _ => {}
     }
     let (last, reset) = b.us.as_ref().map(|w| usage_lines(w, c::now_ms(), &c::locale)).unwrap_or_default();
-    div().flex().gap(T::SP_16)
+    Parts::one(div().flex().gap(T::SP_16)
         .child(col(T::SP_4).flex_1().min_w_0()
             .child(div().text_size(T::TEXT_14).text_color(T::text()).child("Keep the 5-hour window warm"))
             .child(hint("Claude’s 5-hour allowance is a rolling window that starts on your first message — so beginning real work also starts the clock, and it can run out mid-session. When on, Crundi checks about once a minute and, if the window has lapsed while you were idle, sends a one-word message to open the next one. Never while a session is working, and never if your own work already opened a window."))
             .when(!last.is_empty(), |d| d.child(hint(last.clone())))
             .when(!reset.is_empty(), |d| d.child(hint(reset.clone()))))
-        .child(div().flex_none().child(w::switch("us-toggle", b.us_on, |v, _, cx| usage_toggle(cx, *v))))
-        .into_any_element()
+        .child(div().flex_none().child(w::switch("us-toggle", b.us_on, |v, _, cx| usage_toggle(cx, *v)))))
 }
 
 /// The scheduled backup's notice (drawBackupNotice), bottom left.

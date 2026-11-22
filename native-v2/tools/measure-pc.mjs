@@ -41,7 +41,9 @@
 // folder (which holds the test server's refresh token); a dead client ends
 // the run at once instead of driving a port nobody answers (F16).
 //   PROFILE_AT=planning  the sampler runs in planning+stream+scroll instead
-//                        (after its numbers are taken)
+//                        (after its numbers are taken); PROFILE_AT=info or
+//                        settings: in scroll-info or scroll-settings
+//                        (MEASURE_OPS=1)
 //   PROFILE=<gdb script> then a stack sampler on the UI thread while the
 //                        wheel sweeps (see native-v2/perf/README.md)
 //
@@ -256,7 +258,7 @@ try {
   r0 = (await state()).renders || {};
   if (!QUICK) { m = fm.mark(); await scrollChat(8000); await sleep(300); stats('scroll-chat', m); }
   s = await state(); if (!QUICK) report['scroll-chat'].renders = drew(r0, s);
-  if (process.env.PROFILE && process.env.PROFILE_AT !== 'planning') {
+  if (process.env.PROFILE && !['planning', 'term', 'info', 'settings'].includes(process.env.PROFILE_AT)) {
     // A stack sampler on the UI thread while the wheel sweeps (gdb; the
     // binary built with -C force-frame-pointers=yes; see perf/README.md).
     const g = spawn('gdb', ['-q', '-p', String(app.pid), '-batch', '-x', process.env.PROFILE], { env: { ...process.env, SAMPLE_OUT: join(OUT, 'samples.txt') }, stdio: ['ignore', 'ignore', 'inherit'] });
@@ -563,6 +565,14 @@ try {
       const r = (await state()).renders || {};
       const mm = fm.mark(); const n = await wheelAt(pts, ms); await sleep(300); stats(name, mm);
       report[name].wheelEvents = n; report[name].renders = drew(r, await state());
+      // PROFILE_AT=info or settings: the sampler on the UI thread while the
+      // wheel goes on over the same screen (after its numbers are taken).
+      if (process.env.PROFILE && process.env.PROFILE_AT === name.replace('scroll-', '')) {
+        const g = spawn('gdb', ['-q', '-p', String(app.pid), '-batch', '-x', process.env.PROFILE], { env: { ...process.env, SAMPLE_OUT: join(OUT, 'samples.txt') }, stdio: ['ignore', 'ignore', 'inherit'] });
+        let gone = false; g.on('exit', () => { gone = true; });
+        const stop = Date.now() + 240000;
+        while (!gone && Date.now() < stop) await wheelAt(pts, 2000);
+      }
     };
     await ui('tab', 'info');
     await sleep(4000);
