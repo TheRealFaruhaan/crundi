@@ -50,6 +50,37 @@ fn now_ms() -> f64 {
 }
 fn f(p: Pixels) -> f32 { f32::from(p) }
 
+// ─── What Mini remembers between runs (F180) ───
+
+/// The wall clock, ms (what is kept on disk: `now_ms` starts with the process).
+fn wall_ms() -> f64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64() * 1000.).unwrap_or(0.) }
+
+/// Where it is kept: this device's client folder (the web keeps it in the
+/// browser's localStorage, crundi_mini_pct and crundi_mini_update_at).
+fn memory_file() -> std::path::PathBuf { crundi_core::store::config_dir().join("mini.json") }
+
+/// The limits' last percentages (so a reset that happened while the client
+/// was shut is still noticed) and when the update reminder last went out
+/// (`now_ms`'s clock; never: -inf, the web's 0, so the first may come at
+/// once), as kept on disk.
+fn load_memory() -> (HashMap<&'static str, f32>, f64) {
+    let v: Value = std::fs::read_to_string(memory_file()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
+    let mut pct = HashMap::new();
+    for k in ["five", "week"] { if let Some(n) = v["pct"][k].as_f64() { pct.insert(k, n as f32); } }
+    let at = v["updateAt"].as_f64().filter(|w| *w > 0.).map(|w| now_ms() - (wall_ms() - w)).unwrap_or(f64::NEG_INFINITY);
+    (pct, at)
+}
+
+/// Keep them (written whole, through a temporary file; seldom: a limit's
+/// percentage moved by a point, the reminder went out).
+fn save_memory(pct: &HashMap<&'static str, f32>, update_at: f64) {
+    let v = json!({ "pct": pct, "updateAt": if update_at.is_finite() { wall_ms() - (now_ms() - update_at) } else { 0. } });
+    let path = memory_file();
+    let _ = std::fs::create_dir_all(crundi_core::store::config_dir());
+    let tmp = path.with_extension("tmp");
+    if std::fs::write(&tmp, v.to_string()).is_ok() { let _ = std::fs::rename(&tmp, &path); }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 enum Holder { None, Chat(String), Top }
 
@@ -180,7 +211,7 @@ pub fn sys(cx: &mut App) -> SysRef {
     let spots = crundi_shell::spots::spots(cx);
     let s = Rc::new(RefCell::new(System {
         chats: HashMap::new(), top: vec![], top_fx: vec![], holder: Holder::None, logo_away: false, logo_q: VecDeque::new(), logo_run: None,
-        tops: TopState::default(), clock: Rc::new(Cell::new(0.)), spots, window: Rc::new(Cell::new((1280., 800.))), clip_h: Rc::new(Cell::new(0.)),
+        tops: { let (prev, update_at) = load_memory(); TopState { prev, update_at, ..TopState::default() } }, clock: Rc::new(Cell::new(0.)), spots, window: Rc::new(Cell::new((1280., 800.))), clip_h: Rc::new(Cell::new(0.)),
         tabs_moved: Rc::new(Cell::new(false)), top_view: None, top_dirty: false,
         auto: std::env::var("CRUNDI_TEST_PORT").is_err(), looping: false, last_frame: None, tick_acc: 0., timer: None, pending: vec![], logo_pending: false, retick: false,
     }));
@@ -1144,7 +1175,7 @@ impl System {
             let Some(row) = row else { continue };
             let now = row.1;
             if let Some(p) = self.tops.prev.get(kk).copied() { if p >= 35. && p - now >= 30. { self.tops.party_for = kk.to_string(); self.tops.party_at = t + rnd(3000., 9000.) as f64; } }
-            if self.tops.prev.get(kk).is_none_or(|p| (p - now).abs() >= 1.) { self.tops.prev.insert(kk, now); }
+            if self.tops.prev.get(kk).is_none_or(|p| (p - now).abs() >= 1.) { self.tops.prev.insert(kk, now); save_memory(&self.tops.prev, self.tops.update_at); }
         }
         if self.tops.party_at > 0. && t >= self.tops.party_at { if self.top_outing("party", r, cx) { self.tops.party_at = 0.; } return; }
         let mut due = |s: &mut TopState, kind: &'static str, on: bool, first: (f64, f64), again: (f64, f64)| {
@@ -1176,7 +1207,7 @@ impl System {
             let nx = t + go.1.0 + actor::random() as f64 * (go.1.1 - go.1.0);
             self.tops.next.insert(go.0, nx);
             if go.0 == "notify" || go.0 == "project" { self.tops.bell_due = false; self.tops.next.insert("notify", nx); }
-            if go.0 == "update" { self.tops.update_at = t; }
+            if go.0 == "update" { self.tops.update_at = t; save_memory(&self.tops.prev, t); }
         }
     }
 
@@ -1205,6 +1236,23 @@ pub fn test_ui(chat: &str, name: &str, args: &[String], cx: &mut App) -> Option<
     let has = s.borrow().chats.contains_key(chat);
     match name {
         "mini-auto" => { s.borrow_mut().auto = a(0) != "off"; }
+        // `mini-memory`: what Mini remembers, and what is on disk;
+        // `mini-memory reload`: read back from disk (as a new run starts);
+        // `mini-memory <five> <week> <update-ago-ms>`: kept as top_tick keeps them.
+        "mini-memory" => {
+            let mut b = s.borrow_mut();
+            if a(0) == "reload" { let (prev, at) = load_memory(); b.tops.prev = prev; b.tops.update_at = at; }
+            else if !a(0).is_empty() {
+                let n = |i: usize| args.get(i).and_then(|v| v.parse::<f32>().ok());
+                if let Some(v) = n(0) { b.tops.prev.insert("five", v); }
+                if let Some(v) = n(1) { b.tops.prev.insert("week", v); }
+                if let Some(v) = args.get(2).and_then(|v| v.parse::<f64>().ok()) { b.tops.update_at = now_ms() - v; }
+                save_memory(&b.tops.prev, b.tops.update_at);
+            }
+            let disk: Value = std::fs::read_to_string(memory_file()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
+            let ago = b.tops.update_at.is_finite().then(|| now_ms() - b.tops.update_at);
+            return Some(json!({ "ok": true, "pct": b.tops.prev, "updateAgo": ago, "disk": disk }));
+        }
         "mini-top" => {
             let kind = a(0);
             let ok = {

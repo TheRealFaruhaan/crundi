@@ -411,12 +411,38 @@ t.check('scrolling back derives only the lines that came into view', d1 - d0 >= 
 await act('term-scroll', key, '-30');
 await T.until('and down again', (s) => TS(s)?.back === 0);
 await t.sleep(300);
+// The screen is drawn a line at a time (F205): while the shell prints, the
+// lines that only moved up are replayed where they now are and only the
+// lines written render (each moved line renders once more when it stops:
+// GPUI's settle), not every line on every frame.
+{
+  await act('term-send', key, "sleep 0.5; for ((i=1;i<=800;i++)); do printf 'tick %d\\n' $i; sleep 0.003; done");
+  await t.sleep(300);
+  const b = await T.state(), from = T.frames.mark();
+  const e = await T.until('a slow print streams', (s) => TS(s)?.screen.some((l) => l.trim() === 'tick 800'), 60000);
+  await t.sleep(400);
+  const a = await T.state(), frames = T.frames.since(from).frames;
+  const R = (s, k) => s?.renders?.[k] || 0;
+  const lines = R(a, 'term-line') - R(b, 'term-line'), screens = R(a, 'term-screen') - R(b, 'term-screen');
+  console.log(`  printing 800 lines: ${screens} screen renders, ${lines} line renders, ${frames} frames, ${rowsOn} rows`);
+  t.check('…and renders only the lines written, not every line a frame (F205)', !!e && screens > 10 && lines < screens * rowsOn * 0.5 + rowsOn * 2, { lines, screens, frames, rows: rowsOn });
+}
 d0 = TS(await T.state())?.derived || 0;
 await act('term-send', key, 'echo one-line');
 await T.until('a short echo shows', (s) => TS(s)?.screen.some((l) => l.trim() === 'one-line'));
 await t.sleep(500);
 d1 = TS(await T.state())?.derived || 0;
 t.check('a short echo derives only the lines it wrote (not the screen)', d1 - d0 >= 1 && d1 - d0 <= 8 && d1 - d0 < rowsOn, { derived: d1 - d0, rows: rowsOn });
+// The terminal's words can be found by Cru's highlight (F202): a mark over each line.
+{
+  const DK = (s) => s.areas?.desktop || {};
+  await T.ui('desktop:cru-ui-go', JSON.stringify({ id: 'tl1', tab: 'workbench', highlight: 'one-line', note: 'This line' }));
+  const p = await T.until('Cru\'s highlight finds words in the terminal (F202)', (p) => DK(p).cru?.lastAck?.id === 'tl1', 8000);
+  const ack = DK(p).cru?.lastAck, at = DK(p).cruSpot?.ring?.at, leaf = p?.leaves?.find((l) => l.key === key);
+  const inLeaf = at && leaf && at.x >= leaf.x - 1 && at.y >= leaf.y - 1 && at.x + at.w <= leaf.x + leaf.w + 1 && at.y + at.h <= leaf.y + leaf.h + 1;
+  t.check('…found, rung on the terminal\'s line', ack?.found === true && inLeaf && at.h < 40, { ack, at, leaf });
+  if (at) { await t.sleep(400); await T.mouse('click', at.x + 4, at.y + at.h / 2); await T.until('…a press: the ring goes', (p) => !DK(p).cruSpot?.ring, 4000); }
+}
 await act('term-send', key, 'sleep 30');
 await t.sleep(400);
 await act('term-tool', key, 'ctrl+c');

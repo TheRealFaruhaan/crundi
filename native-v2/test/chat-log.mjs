@@ -48,10 +48,18 @@ await T.until('the chat is idle', (st) => st.chatState === 'idle', 30000);
 await T.ui('send', 'use tools please');
 s = await untilLog('a thinking block streams, open', (l) => l.rows?.some((r) => r.kind === 'thinking' && r.status === 'streaming' && r.open), 30000);
 await snap('thinking-streaming');
+// The turn's activity row (F159, F180): "Working…" with its spinner at the
+// log's end while Claude works (the web's .cc-activity), gone when it ends.
+{
+  const w = await untilLog('while Claude works: the "Working…" row at the log\'s end (F159)', (l) => l.activity?.label === 'Working…', 30000);
+  t.check('the Working row: "Working…" under the newest row while the turn runs', w?.log?.activity?.label === 'Working…', { activity: w?.log?.activity, state: w?.chatState });
+  await snap('working-row');
+}
 s = await untilLog('three calls fold under one summary line', (l) => l.rows?.filter((r) => r.kind === 'tool' && r.tool?.groupSummary).length === 3, 30000);
 await T.until('the reply has come and the chat is idle', (st) => st.chatState === 'idle' && st.log?.rows?.some((r) => r.kind === 'assistant'), 30000);
 await t.sleep(600);
 let l = await log();
+t.check('the Working row: gone once the turn ends', !l.activity, l.activity);
 const tools = l.rows.filter((r) => r.kind === 'tool');
 const head = tools.find((r) => r.tool.group === r.id);
 t.check('the group\'s head is its first call', !!head && head.id === tools[0].id, tools);

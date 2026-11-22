@@ -228,7 +228,8 @@ impl Render for PaneHead {
         self.menu_drawn = fold && self.menu;
         let shown = self.shown_title(&info.title).to_string();
         let (title, cap) = rules::title_shown(&shown, if self.renamed.is_some() { "" } else { &info.long }, f.w);
-        let mut row = div().flex().items_center().size_full().pl(T::SP_2).pr(T::SP_4).gap(T::SP_4);
+        // (The row clips itself: the pane's box does not, F213.)
+        let mut row = div().flex().items_center().size_full().overflow_hidden().pl(T::SP_2).pr(T::SP_4).gap(T::SP_4);
         if !f.full {
             let pend = self.key.starts_with("pend:");
             let grip = div().id(("grip", id)).flex_none().w(T::SP_24).h(T::SP_12).flex().items_center().justify_center().cursor_grab().text_color(T::text_muted())

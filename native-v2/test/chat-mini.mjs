@@ -12,6 +12,8 @@
 //     xvfb-run -a -s "-screen 0 1440x900x24" node native-v2/test/chat-mini.mjs
 
 import * as t from './lib.mjs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const T = await t.begin('chat-mini');
 const A = 'chat-mini';
@@ -126,6 +128,43 @@ t.check('tapped, then the cursor comes close: it watches it', m.scene === 'nudge
 await T.ui('mini-act');
 await home('the person gets on with things: it goes home');
 
+// ─── full screen (F206): the chat's Mini over the Workbench's cover ───
+{
+  const key = `live:${(await T.state()).chat}`;
+  const l0 = (await M()).layer;
+  await T.ui('pane-full', key);
+  await T.until('the chat full screen', (s) => s.full === key, 3000);
+  await t.sleep(800);
+  const r0 = await renders();
+  await T.ui('mini-trigger', 'nudge');
+  let fm = (await untilM('full screen: Mini comes out', (m) => m.scene === 'nudge' && m.actor?.alpha > 0.9, 30000))?.mini;
+  let L = fm?.layer;
+  t.check('…its layer is the full-screen pane\'s, not the pane\'s place in the grid', !!(L && l0) && (L.w > l0.w + 20 || L.y < l0.y - 20), { full: L, grid: l0 });
+  const inside = (m) => m.actor && m.layer && m.actor.x > 0 && m.actor.x < m.layer.w && m.actor.y > 0 && m.actor.y <= m.layer.h;
+  fm = (await untilM('…and it comes to stand inside it', (m) => m.scene === 'nudge' && inside(m), 20000))?.mini;
+  L = fm?.layer;
+  const a = fm?.actor;
+  await t.sleep(1200);
+  const drew = diff(r0, await renders());
+  t.check('…its layer draws (over the cover, a deferred draw), not the log or the composer', (drew['chat-mini'] || 0) >= 5 && !drew.log && !drew.composer, drew);
+  // Drawn where it stands, over the full-screen pane: the pixels there
+  // change when it goes home (where ImageMagick is: on the server).
+  const out = join(T.OUT, 'mini-full-out.png'), back = join(T.OUT, 'mini-full-home.png');
+  const shot = await T.d.send({ cmd: 'snapshot', path: out });
+  await T.snap(A, 'full-screen');
+  await T.ui('mini-act');
+  await home('…full screen: it goes home');
+  if (shot?.ok && a && L) {
+    await t.sleep(500);
+    await T.d.send({ cmd: 'snapshot', path: back });
+    const crop = `60x60+${Math.round(L.x + a.x - 30)}+${Math.round(L.y + a.y - 70)}`;
+    const px = T.diff(out, back, crop);
+    t.check('…seen on screen over the full-screen pane (its pixels go with it)', px > 100, { px, crop });
+  } else console.log(`(no pixel check of Mini at full screen here: ${shot?.error || 'no actor'})`);
+  await T.ui('pane-full', key);
+  await T.until('…and back from full screen', (s) => !s.full, 3000);
+}
+
 // ─── a top bar outing; a chat calls it away ───
 let r = await T.ui('mini-top', 'party');
 t.check('a top bar outing starts (a limit reset: a party)', r.ok, r);
@@ -162,6 +201,20 @@ await T.ui('park-resume', 'resume');
 await untilM('resumed: picked up and put on the window\'s layer, it runs off', (m) => m.topRoles?.includes('hand') || m.topRoles?.includes('logo'), 30000);
 await home('…and folds back into the logo');
 await T.until('the resumed chat is idle', (s) => s.chatState === 'idle' && s.mini?.mode === 'live', 30000);
+
+// ─── what it remembers between runs (F180; the web's localStorage) ───
+{
+  const wall = Date.now();
+  const r = await T.ui('mini-memory', '72.5', '41', '3600000');
+  const file = join(T.configDir, 'mini.json');
+  const disk = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
+  t.check('the limits\' last percentages and the update reminder\'s time are kept on this device', disk?.pct?.five === 72.5 && disk?.pct?.week === 41 && Math.abs(disk.updateAt - (wall - 3600000)) < 60000, { disk, r });
+  await T.ui('mini-memory', '10', '5', '10');
+  const file2 = { ...disk };
+  writeFileSync(file, JSON.stringify(file2));
+  const back = await T.ui('mini-memory', 'reload');
+  t.check('…and read back as a new run starts (a reset while it was shut is still seen)', back?.pct?.five === 72.5 && back?.pct?.week === 41 && Math.abs(back.updateAgo - (Date.now() - disk.updateAt)) < 60000, back);
+}
 
 await idleCheck('at the end');
 await T.end();

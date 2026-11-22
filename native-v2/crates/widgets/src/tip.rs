@@ -16,6 +16,11 @@ thread_local! {
     /// rests there; it shows again once the pointer has left and come back,
     /// as a browser's title (F160). Pressing another tip's element ends it.
     static PRESSED: Cell<u64> = const { Cell::new(0) };
+    /// The pointer's last move was over the pressed tip's element (its
+    /// own move listener says so; `pointer_moved`, the window's, reads it
+    /// on the next move): when it was not, the pointer left, and the tip
+    /// may show again (F213).
+    static OVER: Cell<bool> = const { Cell::new(false) };
     /// Where the pointer last moved over a control with its own tooltip
     /// inside a tipped element (`inner`): there the outer tip gives way, so a
     /// row's tip does not cover its More button's (F160).
@@ -89,8 +94,18 @@ pub fn tip<E: StatefulInteractiveElement>(mut el: E, text: impl Into<SharedStrin
     let text: SharedString = text.into();
     if text.is_empty() { return el; }
     let k = key(el.interactivity().element_id.as_ref(), &text);
-    el.capture_any_mouse_down(move |_, _, _| PRESSED.with(|p| p.set(k)))
+    el.capture_any_mouse_down(move |_, _, _| { PRESSED.with(|p| p.set(k)); OVER.with(|o| o.set(true)); })
+        .on_mouse_move(move |_, _, _| if PRESSED.with(|p| p.get()) == k { OVER.with(|o| o.set(true)); })
         .tooltip(build(text, k))
+}
+
+/// Each move of the pointer in the window (the Shell's root calls it, in
+/// the capture phase, before the elements hear the move): if the move before
+/// was not over the pressed tip's element, the pointer has left it, and its
+/// tip shows again when the pointer next rests there.
+pub fn pointer_moved() {
+    if PRESSED.with(|p| p.get()) == 0 { return; }
+    if !OVER.with(|o| o.replace(false)) { PRESSED.with(|p| p.set(0)); }
 }
 
 /// Mark a control with its own tooltip (gpui-component's, as a Button's)

@@ -84,6 +84,67 @@ impl Element for MarkEl {
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, _: &mut (), _: &mut (), _: &mut Window, _: &mut App) {}
 }
 
+fn register(m: &Rc<Mark>) {
+    MARKS.with(|v| {
+        let mut v = v.borrow_mut();
+        v.0.push(Rc::downgrade(m));
+        v.1 += 1;
+        if v.1 >= 256 { v.1 = 0; v.0.retain(|w| w.strong_count() > 0); }
+    });
+}
+
+/// Many marks over one element (a terminal's lines, F202): each words with
+/// its box from the element's top left. One element and one element state
+/// for all of them (a mark element each costs a layout node and a state);
+/// the same list (`Rc::ptr_eq`) keeps its marks, only their bounds move.
+pub fn marks(items: Rc<Vec<(SharedString, Bounds<Pixels>)>>) -> MarksEl { MarksEl { items } }
+
+pub struct MarksEl { items: Rc<Vec<(SharedString, Bounds<Pixels>)>> }
+
+impl IntoElement for MarksEl {
+    type Element = Self;
+    fn into_element(self) -> Self { self }
+}
+
+impl Element for MarksEl {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+    fn id(&self) -> Option<ElementId> { None }
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> { None }
+    fn request_layout(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, window: &mut Window, cx: &mut App) -> (LayoutId, ()) {
+        let mut st = Style::default();
+        st.position = Position::Absolute;
+        st.inset.top = px(0.).into();
+        st.inset.left = px(0.).into();
+        st.size.width = relative(1.).into();
+        st.size.height = relative(1.).into();
+        (window.request_layout(st, None, cx), ())
+    }
+    fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), window: &mut Window, _: &mut App) {
+        if self.items.is_empty() { return; }
+        let mask = window.content_mask().bounds;
+        let items = self.items.clone();
+        window.with_global_id(ElementId::Name("find-marks".into()), |gid, window| {
+            type St = (Rc<Vec<(SharedString, Bounds<Pixels>)>>, Vec<Rc<Mark>>);
+            window.with_element_state::<St, _>(gid, |st, _| {
+                let (items, marks) = match st {
+                    Some((had, marks)) if Rc::ptr_eq(&had, &items) => (had, marks),
+                    _ => {
+                        let marks: Vec<Rc<Mark>> = items.iter().map(|(t, _)| Rc::new(Mark { text: t.clone(), label: false, seen: Cell::new(Bounds::default()) })).collect();
+                        for m in &marks { register(m); }
+                        (items, marks)
+                    }
+                };
+                for ((_, b), m) in items.iter().zip(&marks) {
+                    m.seen.set(Bounds::new(bounds.origin + b.origin, b.size).intersect(&mask));
+                }
+                ((), (items, marks))
+            })
+        });
+    }
+    fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, _: &mut (), _: &mut (), _: &mut Window, _: &mut App) {}
+}
+
 /// Spaces folded, trimmed, lower case (the web's norm).
 pub fn norm(s: &str) -> String { s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase() }
 
