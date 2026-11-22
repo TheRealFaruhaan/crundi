@@ -198,7 +198,7 @@ pub fn init(cx: &mut App) {
             if r.is_some() { pump(window, cx); }
             r
         })
-        .state(|_, _, cx| { let mut p = props(); p["chatFrames"] = hosts::props(); p["cruSpot"] = cru_spot::state(cx); p["menu"] = w::menu_props(cx); p["menuPicked"] = json!(TEST_MENU_PICK.with(|p| p.borrow().clone())); json!({ "areas": { "desktop": p } }) }));
+        .state(|_, window, cx| { let mut p = props(); p["lock"]["pinFocused"] = json!(views_global().map(|l| l.read(cx).pin_focused(window, cx))); p["chatFrames"] = hosts::props(); p["cruSpot"] = cru_spot::state(cx); p["menu"] = w::menu_props(cx); p["menuPicked"] = json!(TEST_MENU_PICK.with(|p| p.borrow().clone())); json!({ "areas": { "desktop": p } }) }));
     // Browser-only mode (test/drive.mjs): a socket of its own to a server.
     if let Ok(url) = std::env::var("CRUNDI_SERVER") { if !url.is_empty() { host::start(url); } }
 }

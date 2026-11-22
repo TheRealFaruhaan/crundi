@@ -185,6 +185,21 @@ impl PcLockScreen {
             _ => {}
         }));
         self.input = Some(input);
+        // The keys stay in the lock (F248; the web drops every key whose target is outside #pc-lock,
+        // src/webapp-html.js:6533-6538): before any binding, Tab and Shift+Tab, which would walk the
+        // focus out to the title bar's buttons, stay in the PIN box, and a key with the focus
+        // anywhere else puts it back there and goes nowhere. Cru's screen over the lock keeps its keys.
+        let weak = cx.entity().downgrade();
+        self._subs.push(cx.intercept_keystrokes(move |ev, window, cx| {
+            if !on() || window.window_handle() != win || crate::cru::with(|c| c.open) { return; }
+            let Some(pin) = weak.upgrade().and_then(|l| l.read(cx).input.clone()) else { return };
+            let f = pin.read(cx).focus_handle(cx);
+            let inside = f.is_focused(window);
+            if ev.keystroke.key == "tab" || !inside {
+                cx.stop_propagation();
+                if !inside { window.focus(&f, cx); }
+            }
+        }));
     }
 
     /// The pump: the copy taken again; notified only when it moved.
@@ -211,6 +226,11 @@ impl PcLockScreen {
             cx.background_executor().timer(wait).await;
             let _ = this.update(cx, |s, cx| if s.copy.on && s.copy.mode == "full" { s.tick(cx); cx.notify(); });
         }).detach();
+    }
+
+    /// The driver's state: the PIN box has the keys (F253: no Tab takes them to the title bar).
+    pub fn pin_focused(&self, window: &Window, cx: &App) -> bool {
+        self.input.as_ref().is_some_and(|i| i.read(cx).focus_handle(cx).is_focused(window))
     }
 
     pub fn press(&self, key: &'static str, window: &mut Window, cx: &mut App) {
@@ -285,7 +305,8 @@ impl PcLockScreen {
                 if let Some(i) = focus_in.as_ref() { let f = i.read(cx).focus_handle(cx); window.focus(&f, cx); }
             });
         // Keys reach the PIN box (F233; the web lets keys inside the lock through, WH:6533);
-        // w::hold_keys keeps every dialog under the lock from getting them.
+        // w::hold_keys keeps every dialog under the lock from getting them, and `attach`'s
+        // interceptor keeps Tab in the PIN box and the focus in the lock (F248).
         if full {
             root = root.justify_between().pt(relative(0.07)).pb(relative(0.05))
                 .child(canvas(|_, _, _| (), |b, _, window, _| {
