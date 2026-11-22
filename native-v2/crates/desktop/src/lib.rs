@@ -42,6 +42,8 @@ mod hpdrawer;
 mod idle;
 mod inbox;
 mod kidlock;
+// Local mode, the edition, the setup wizard, Electron's settings taken over, this PC as a worker.
+pub mod local;
 mod inbox_ui;
 mod notify;
 mod marks;
@@ -101,6 +103,9 @@ static WAKE: std::sync::OnceLock<futures::channel::mpsc::UnboundedSender<()>> = 
 pub fn init(cx: &mut App) {
     // What a crash left switched off on the desktop (the kid lock's) comes back.
     kidlock::restore_left_over();
+    // Electron's settings taken over (once) before anything reads its own;
+    // the edition, local mode and its server; the worker.
+    local::init(cx);
     web::engine::set_hooks(web::Hooks {
         changed: |i| drawer::panel_changed(i),
         visited: |i, u| { drawer::visited(i, u); if let Some(t) = drawer::tab_of_panel(i) { passwords::visited(&t.id, u); } },
@@ -126,6 +131,8 @@ pub fn init(cx: &mut App) {
     wake::init();
     // Settings › Voice assistant › On this device: "Hey Cru" on this PC (F129).
     crundi_operations::register_settings_part(cx, "voice-device", wake::settings_part);
+    // Settings › This PC as a worker (the PC client only).
+    crundi_operations::register_settings_part(cx, "pc-worker", local::worker_part);
     tray::start(false);
     // The app's own updates (8 s after launch, then daily) and the lock's system-wide keys.
     updater::start();
@@ -192,6 +199,9 @@ pub fn init(cx: &mut App) {
                 let ok = d.update(cx, |d, cx| d.focus_address(window, cx));
                 return Some(json!({ "ok": ok }));
             }
+            // Settings › This PC as a worker: its switch and its folder's Save, pressed.
+            if name == "worker-toggle" { local::worker_toggle(args.first().is_some_and(|a| a != "off"), cx); return Some(json!({ "ok": true })); }
+            if name == "worker-dir" { local::worker_dir(args.first().cloned().unwrap_or_default(), cx); return Some(json!({ "ok": true })); }
             if name == "test-menu" {
                 // The shared context menu at a point (its press-outside, F221).
                 let n = |i: usize| args.get(i).and_then(|v| v.parse::<f32>().ok()).unwrap_or(40.);
@@ -284,11 +294,13 @@ fn windowless(cx: &mut App) {
     for p in picks {
         match p.as_str() {
             "quit" => if !cru_kid::on() && !pclock::on() { cx.quit(); return; },
+            "start" | "stop" => tray::act(&p),
             "wake" => tray::act("wake"),
             _ => { need = true; keep.push(p); }
         }
     }
     for f in ctx::take_main() { f(); }
+    local::pump(cx);
     if need { tray::requeue(keep); reopen(cx); }
 }
 
@@ -307,7 +319,7 @@ pub fn window_closed() -> bool { ctx::closed().is_some() }
 /// The test driver with the window closed: the tray's state, and its picks.
 pub fn windowless_driver(name: &str, args: &[String]) -> Option<Value> {
     match name {
-        "state" => Some(json!({ "areas": { "desktop": { "tray": tray::props(), "window": false } } })),
+        "state" => Some(json!({ "areas": { "desktop": { "tray": tray::props(), "window": false, "local": local::props() } } })),
         "desktop:tray-pick" => { tray::test_pick(args.first().map(String::as_str).unwrap_or("")); Some(json!({ "ok": true })) }
         _ => None,
     }
@@ -330,7 +342,7 @@ const FRAME: Duration = crundi_shell::live_hub::FRAME;
 /// When the pump must run with nothing waking it: the webview's timers and
 /// deadlines, and the area's own (Cru's, the voice's).
 fn next_due() -> Option<Instant> {
-    [web::next_due(), cru::next_due(), wake::next_due(), notify::next_due(), drawer::next_due(), updater::next_due()].into_iter().flatten().min()
+    [web::next_due(), cru::next_due(), wake::next_due(), notify::next_due(), drawer::next_due(), updater::next_due(), local::worker::next_due()].into_iter().flatten().min()
 }
 
 /// The pump (woken, at most once a frame): CEF's deferred calls and the
@@ -349,11 +361,14 @@ pub fn pump(window: &mut Window, cx: &mut App) {
         if host::waiting() { why.push("host".into()); }
         if tray::has_picks() { why.push("tray".into()); }
         if hotkeys::has_presses() { why.push("keys".into()); }
+        if local::waiting() { why.push("local".into()); }
         for (k, d) in [("cru", cru::next_due()), ("wake", wake::next_due()), ("notify", notify::next_due()), ("drawer", drawer::next_due())] { if d.is_some_and(|t| t <= Instant::now()) { why.push(format!("{k}-due")); } }
         if why.is_empty() { why.push("?".into()); }
         PUMP_WHY.with(|w| { let mut w = w.borrow_mut(); w.push_back(why.join(",")); while w.len() > 24 { w.pop_front(); } });
     }
     refresh(cx);
+    local::pump(cx);
+    if local::worker::take_changed() { crundi_operations::settings_part_changed(cx); }
     web::pump();
     web::frames::drop_old(window);
     hosts::pump(window, cx);
@@ -667,7 +682,7 @@ fn props() -> Value {
         "due": due_ms(),
         "drawer": drawer::props(), "drawerActive": active, "evals": EVALS.with(|e| Value::Object(e.borrow().1.clone())),
         "browsers": browsers::props(),
-        "inbox": inbox::props(), "cru": cru::props(), "cruScreen": cru_screen::props(), "kid": cru_kid::props(), "lock": pclock::props(), "windowLocked": ctx::window_locked(), "hideHow": ctx::hide_how_name(), "wake": wake::status(), "homepool": homepool::status(), "hp": hpdrawer::props(), "tray": tray::props(), "updater": updater::props(), "globalKeys": hotkeys::props(), "logFile": crundi_shell::lifecycle::log_path().to_string_lossy(), "passwords": passwords::props(), "notifications": notify::props(), "hidden": hidden,
+        "inbox": inbox::props(), "cru": cru::props(), "cruScreen": cru_screen::props(), "kid": cru_kid::props(), "lock": pclock::props(), "windowLocked": ctx::window_locked(), "hideHow": ctx::hide_how_name(), "wake": wake::status(), "homepool": homepool::status(), "hp": hpdrawer::props(), "tray": tray::props(), "updater": updater::props(), "globalKeys": hotkeys::props(), "logFile": crundi_shell::lifecycle::log_path().to_string_lossy(), "local": local::props(), "passwords": passwords::props(), "notifications": notify::props(), "hidden": hidden,
         "host": { "features": host::features() },
         "browserHost": web::host_props(),
     })

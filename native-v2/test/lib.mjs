@@ -42,6 +42,8 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
 let passed = 0;
+/** The counts so far (for a suite that runs without begin()). */
+export const counts = () => ({ passed, failed });
 /** One check: prints ok / FAIL and counts. Returns ok. */
 export function check(name, ok, extra = '') {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : '  ' + JSON.stringify(extra).slice(0, 600)}`);

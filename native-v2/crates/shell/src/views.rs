@@ -885,5 +885,15 @@ pub fn driver_state(stores: &Stores, cx: &App) -> Value {
         "rows": p.list.iter().map(|x| json!({ "alias": x.alias, "heart": x.heart.map(|h| json!([h.0, h.1])), "heartTip": x.heart_tip(), "sched": x.sched, "factory": x.factory_tip() })).collect::<Vec<_>>(),
         "signin": { "setupRequired": s.setup_required, "enrol": s.enrol.is_some(), "enrolSecret": s.enrol.as_ref().map(|e| e.0.clone()), "collab": s.collab, "bootSlow": s.boot_slow, "serverOver": s.server_over, "serverNote": s.server_note,
             "prompt": crate::signin::prompt(s.setup_required, s.offer_telegram, s.offer_google, s.offer_github, s.offer_password) },
+        "localScreen": local_props(cx),
     })
+}
+
+/// Local mode's screens, for the driver: what the window shows of it.
+fn local_props(cx: &App) -> Value {
+    let l = cx.try_global::<crate::local::LocalHandleRead>().map(|h| h.0.read(cx).clone()).unwrap_or_default();
+    let si = shell(cx).map(|sh| sh.read(cx).sign_in.clone());
+    let wiz = si.as_ref().map(|si| si.read(cx).local_screen.read(cx).props(cx));
+    let remote = si.as_ref().map(|si| si.read(cx).srv_remote_now());
+    json!({ "bundled": l.bundled, "active": l.active, "status": l.status, "label": crate::local::status_label(&l.status), "logs": l.logs.len(), "lastLog": l.logs.last(), "wizard": l.wizard, "setup": wiz, "serverRemote": remote })
 }

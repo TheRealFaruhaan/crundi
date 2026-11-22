@@ -1398,7 +1398,7 @@ const ITEMS: &[Item] = &[
     Item::Group("NOTIFICATIONS"), Item::Fold("channels", "Notification Channels"), Item::Fold("notify", "Notification Settings"),
     Item::Group("ACCESS"), Item::Fold("signin", "Sign-in"), Item::Fold("phone", "Phone app"), Item::Fold("session", "Session"),
     Item::Group("THIS SERVER"), Item::Fold("config", "Configuration"), Item::Fold("terminal", "Terminal"), Item::Fold("backup", "Backup & restore"),
-    Item::Group("MORE"), Item::Fold("desktop", "Desktop App"),
+    Item::Group("MORE"), Item::Fold("pcworker", "This PC as a worker"), Item::Fold("desktop", "Desktop App"),
 ];
 
 /// A section's body (drawn only while it is open), as its parts.
@@ -1421,6 +1421,8 @@ fn body_of(key: &str, want: Want, window: &mut Window, cx: &mut App) -> Parts {
         "config" => config_body(want, window, cx),
         "terminal" => terminal_body(want, window, cx),
         "backup" => crate::skills::backup_section(want, window, cx),
+        // The PC client's own (Desktop's part: local/mod.rs worker_part).
+        "pcworker" => { let p = crate::compat::settings_parts(window, cx, "pc-worker"); Parts::one(div().flex().flex_col().children(p)) }
         _ => desktop_body(want, cx),
     }
 }

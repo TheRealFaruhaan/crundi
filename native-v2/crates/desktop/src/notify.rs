@@ -35,6 +35,12 @@ pub fn from_server(m: &Value) {
     show(title, body, chat);
 }
 
+/// The client's own notice (the worker's job and chat lines), no chat to open.
+pub fn show_plain(title: &str, body: &str) {
+    SHOWN.with(|s| s.borrow_mut().push(json!({ "title": title, "body": body, "chat": "" })));
+    show(title.to_string(), body.to_string(), String::new());
+}
+
 fn show(title: String, body: String, chat: String) {
     std::thread::spawn(move || {
         let r = if cfg!(target_os = "linux") { linux(&title, &body, &chat) }

@@ -60,6 +60,10 @@ pub struct Session {
     pub server_note: String,
     /// Failed password sign-ins (and collaborator ones): the view clears the code (or passcode).
     pub failed_logins: u64,
+    /// Local mode runs this install's own server (crundi_shell::local): the
+    /// saved login is not resumed at start; the server's key signs in once
+    /// it is ready (`sign_in_local`).
+    pub hold: bool,
     /// The live link's channel, until the hub takes it.
     events: Option<futures::channel::mpsc::UnboundedReceiver<Event>>,
 }
@@ -81,6 +85,7 @@ impl Session {
 
     /// The saved login, picked up (called once, at start).
     pub fn start(&mut self, cx: &mut Context<Self>) {
+        if self.hold { return; }
         let saved = store::load();
         self.signin_server = host_of(&saved.server);
         if saved.server.is_empty() {
@@ -190,6 +195,27 @@ impl Session {
             store::update(|st| { if st.server != base { st.refresh_token.clear(); } st.server = base.clone(); });
             self.server_note = "Saved. Restart Crundi for it to take effect.".into();
         }
+        cx.notify();
+    }
+
+    /// The local server is ready (Electron's load of
+    /// `http://localhost:<port>?key=…`): its key for a session, as the web's
+    /// tryLocalAuth (POST /api/auth/local).
+    pub fn sign_in_local(&mut self, base: String, key: String, cx: &mut Context<Self>) {
+        self.busy(true, "", cx);
+        Self::run(cx, move || {
+            let v = api::open_call(&base, "POST", "/api/auth/local", Some(&serde_json::json!({ "key": key })))?;
+            let tokens = api::Tokens::from_answer(&v).ok_or(ApiError::Status(0, "The server sent no session".into()))?;
+            Ok(SignedIn { base, tokens, username: String::new() })
+        }, |s, r, cx| s.finish_sign_in(r, cx));
+    }
+
+    /// The local server stopped (Electron's loadFile(index.html)): out of the
+    /// app, quietly (no logout: the server is gone), to the status screen.
+    pub fn end_local(&mut self, cx: &mut Context<Self>) {
+        if self.api.is_none() { return; }
+        self.sign_out("The server stopped", cx);
+        self.signin_error.clear();
         cx.notify();
     }
 
