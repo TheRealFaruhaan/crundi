@@ -375,6 +375,39 @@ s = await T.until('colours come through', (s) => TS(s)?.screen.some((l) => l.tri
 const redRow = TS(s)?.screen.findIndex((l) => l.trim() === 'red plain') ?? 0;
 await act('term-select', key, '0', String(redRow), '2', String(redRow));
 await T.until('a selection over the terminal copies what it covers', (s) => W(s).copied === 'red');
+// F251: a selection made with the mouse keeps to the same text, not the
+// same rows on screen, when the view scrolls (as xterm.js's does).
+{
+  // (A scrollback first, for the wheel to go back into.)
+  await act('term-send', key, 'seq 1 80; for i in 1 2 3 4 5 6 7 8; do echo sel-line-$i; done');
+  s = await T.until('lines to select', (s) => TS(s)?.screen.some((l) => l.trim() === 'sel-line-8') && TS(s).scrollback > 10);
+  let tt = TS(s);
+  const row = tt.screen.findIndex((l) => l.trim() === 'sel-line-4');
+  const g = tt.grid;
+  const cy = g.y + (row + 0.5) * g.ch;
+  await T.mouse('drag', g.x + 0.5 * g.cw, cy, { toX: g.x + 8.5 * g.cw, toY: cy });
+  s = await T.until('a drag selects a line\'s text (and copies it)', (s) => W(s).copied === 'sel-line-' && TS(s)?.sel?.length === 1 && TS(s).sel[0].row === row, 4000);
+  t.check('…its text on show', TS(s)?.sel?.[0]?.text === 'sel-line-', TS(s)?.sel);
+  await act('term-scroll', key, '3');
+  s = await T.until('the wheel goes back three lines', (s) => TS(s)?.back === 3);
+  await t.sleep(200);
+  tt = TS(await T.state());
+  t.check('scrolled: the selection moves with its text (three rows down)', tt.sel?.length === 1 && tt.sel[0].row === row + 3 && tt.sel[0].text === 'sel-line-', { sel: tt.sel, row });
+  await act('term-scroll', key, '-3');
+  s = await T.until('back to the bottom', (s) => TS(s)?.back === 0);
+  await t.sleep(200);
+  tt = TS(await T.state());
+  t.check('…and back with it', tt.sel?.length === 1 && tt.sel[0].row === row && tt.sel[0].text === 'sel-line-', tt.sel);
+  // (Enough output that the screen is full and its lines go up.)
+  await act('term-send', key, `seq 1 ${Math.max(4, tt.rows - row - 2)}; echo one-more`);
+  s = await T.until('output moves the lines up', (s) => TS(s)?.screen.some((l) => l.trim() === 'one-more') && TS(s).screen.findIndex((l) => l.trim() === 'sel-line-4') < row);
+  await t.sleep(200);
+  tt = TS(await T.state());
+  const now = tt.screen.findIndex((l) => l.trim() === 'sel-line-4');
+  t.check('new output: the selection goes up with its text', now >= 0 ? (tt.sel?.length === 1 && tt.sel[0].row === now && tt.sel[0].text === 'sel-line-') : (tt.sel || []).length === 0, { sel: tt.sel, row, now });
+  await T.mouse('click', g.x + 0.5 * g.cw, cy);
+  await T.until('a click clears the selection', (s) => (TS(s)?.sel || []).length === 0, 3000);
+}
 await snap('terminal');
 
 // Streaming: a long burst of output, batched (at most one update a frame),

@@ -57,6 +57,11 @@ pub struct Composer {
     pub(crate) exited: bool,
     /// The Enter setting (enter.rs), as last observed.
     ctrl: bool,
+    /// Where the Enter switch was last drawn (the driver's state: the
+    /// test hovers it).
+    enter_at: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    /// The pointer is over the Enter switch (its hover look, F249).
+    enter_hover: Entity<bool>,
     pub(crate) stop_armed: bool,
     stop_gen: u64,
     /// Its content's size, as last laid out: the height is its cached box's
@@ -102,6 +107,9 @@ impl Composer {
                 _ => {}
             }),
         ];
+        // The Enter switch's hover: an enter or a leave redraws the composer.
+        let enter_hover = cx.new(|_| false);
+        subs.push(cx.observe(&enter_hover, |_, _, cx| cx.notify()));
         subs.extend(w::watch_focus(&input.focus_handle(cx), window, cx));
         subs.extend(voice::watch(&id, cx));
         // The pane gone: its draft's claim on the project's copy goes (2.8).
@@ -110,7 +118,7 @@ impl Composer {
         let exited = exited_in(&stores, &id, cx);
         let meta = meta_e.read(cx).0.clone();
         let mut c = Composer {
-            store, id, meta, input, stores, exited, ctrl, stop_armed: false, stop_gen: 0, height: px(96.), width: px(0.), last_text: String::new(),
+            store, id, meta, input, stores, exited, ctrl, enter_at: Default::default(), enter_hover, stop_armed: false, stop_gen: 0, height: px(96.), width: px(0.), last_text: String::new(),
             shown: (None, String::new(), None), slash: Default::default(), queue: Default::default(), attach: Default::default(),
             sched: None, spots: false, _subs: subs,
         };
@@ -357,6 +365,8 @@ impl Composer {
             "model": m.model, "cost": if m.cost > 0.0 { format!("${:.4}", m.cost) } else { String::new() },
             "narrow": self.narrow(), "width": f32::from(self.width), "height": f32::from(self.height),
             "enter": if self.ctrl { "newline" } else { "enter" },
+            "enterHover": *self.enter_hover.read(cx),
+            "enterAt": self.enter_at.get().map(|b| json!({ "x": f32::from(b.origin.x), "y": f32::from(b.origin.y), "w": f32::from(b.size.width), "h": f32::from(b.size.height) })),
         });
         for v in [mode::state(self, cx), slash::state(self, cx), queue::state(self, cx), attach::state(self, cx), sched::state(self, cx), voice::state(self, cx), drafts::state(self, cx)] {
             if let (Value::Object(o), Value::Object(x)) = (&mut o, v) { o.extend(x); }
@@ -469,7 +479,9 @@ impl Render for Composer {
         let meta_text = if narrow { T::TEXT_10 } else { T::TEXT_11 } * fs;
         let m = &self.meta;
         let input = self.input.clone();
-        let switch = enter::switch(self.ctrl, move |window, cx| input.update(cx, |st, cx| st.focus(window, cx)));
+        let at = self.enter_at.clone();
+        let switch = div().relative().child(enter::switch(self.ctrl, move |window, cx| input.update(cx, |st, cx| st.focus(window, cx)), self.enter_hover.clone(), cx))
+            .child(canvas(move |b, _, _| at.set(Some(b)), |_, _, _, _| {}).absolute().top_0().left_0().size_full());
         let sid = (!narrow && !m.session_id.is_empty()).then(|| {
             w::tip(w::id_link("sid", m.session_id.chars().take(8).collect::<String>()),
                 format!("Claude session {}  — click to copy (use it to resume this conversation)", m.session_id))

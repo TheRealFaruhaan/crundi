@@ -143,21 +143,26 @@ await home('the person gets on with things: it goes home');
   const inside = (m) => m.actor && m.layer && m.actor.x > 0 && m.actor.x < m.layer.w && m.actor.y > 0 && m.actor.y <= m.layer.h;
   fm = (await untilM('…and it comes to stand inside it', (m) => m.scene === 'nudge' && inside(m), 20000))?.mini;
   L = fm?.layer;
-  const a = fm?.actor;
   await t.sleep(1200);
   const drew = diff(r0, await renders());
   t.check('…its layer draws (over the cover, a deferred draw), not the log or the composer', (drew['chat-mini'] || 0) >= 5 && !drew.log && !drew.composer, drew);
   // Drawn where it stands, over the full-screen pane: the pixels there
   // change when it goes home (where ImageMagick is: on the server).
   const out = join(T.OUT, 'mini-full-out.png'), back = join(T.OUT, 'mini-full-home.png');
+  // Mini walks: where it stands is read just before and just after the
+  // snapshot (F250), and the crop takes both places in.
+  const m0 = await M();
   const shot = await T.d.send({ cmd: 'snapshot', path: out });
+  const m1 = await M();
+  L = m1.layer || m0.layer || L;
+  const a = m0.actor && m1.actor ? { x0: Math.min(m0.actor.x, m1.actor.x), x1: Math.max(m0.actor.x, m1.actor.x), y0: Math.min(m0.actor.y, m1.actor.y), y1: Math.max(m0.actor.y, m1.actor.y) } : null;
   await T.snap(A, 'full-screen');
   await T.ui('mini-act');
   await home('…full screen: it goes home');
   if (shot?.ok && a && L) {
     await t.sleep(500);
     await T.d.send({ cmd: 'snapshot', path: back });
-    const crop = `60x60+${Math.round(L.x + a.x - 30)}+${Math.round(L.y + a.y - 70)}`;
+    const crop = `${Math.round(a.x1 - a.x0 + 60)}x${Math.round(a.y1 - a.y0 + 60)}+${Math.round(L.x + a.x0 - 30)}+${Math.round(L.y + a.y0 - 70)}`;
     const px = T.diff(out, back, crop);
     t.check('…seen on screen over the full-screen pane (its pixels go with it)', px > 100, { px, crop });
   } else console.log(`(no pixel check of Mini at full screen here: ${shot?.error || 'no actor'})`);

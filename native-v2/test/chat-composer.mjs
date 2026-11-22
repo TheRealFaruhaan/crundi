@@ -73,6 +73,42 @@ await T.key('Return');
 c = await C();
 t.check('a blank box: Enter does nothing', c.text === '' && c.state === 'idle', c);
 
+// The switch's hover (.cc-toggle:hover, F249): the option not in use and
+// the word brighten to the primary text. The pointer on the word "sends":
+// the track's pixels (the idle option's icons) change, not only the word's.
+{
+  await T.mouse('move', 5, 5);
+  await t.sleep(300);
+  const at = (await C()).enterAt;
+  t.check('the switch is drawn (its place in the state)', !!(at && at.w > 40), at);
+  if (at) {
+    const rest = join(T.OUT, 'enter-rest.png'), over = join(T.OUT, 'enter-hover.png');
+    const r1 = await T.d.send({ cmd: 'snapshot', path: rest });
+    t.check('at rest: the switch is not hovered', (await C()).enterHover === false);
+    await T.mouse('move', at.x + at.w - 6, at.y + at.h / 2);
+    await t.sleep(250);
+    t.check('the pointer on the word: the switch takes its hover look (the idle option and the word brighten)', (await C()).enterHover === true);
+    const r2 = await T.d.send({ cmd: 'snapshot', path: over });
+    await T.snap(A, 'enter-hover');
+    if (r1?.ok && r2?.ok) {
+      // The track: the switch's left part, the word left out.
+      const track = `${Math.round(at.w * 0.55)}x${Math.round(at.h)}+${Math.round(at.x)}+${Math.round(at.y)}`;
+      const word = `${Math.round(at.w * 0.3)}x${Math.round(at.h)}+${Math.round(at.x + at.w * 0.7)}+${Math.round(at.y)}`;
+      const pt = T.diff(rest, over, track), pw = T.diff(rest, over, word);
+      t.check('hover: the idle option\'s icons brighten (the track\'s pixels change)', pt > 20, { pt, track });
+      t.check('hover: the word brightens', pw > 20, { pw, word });
+    } else console.log(`(no hover pixel check: ${r1?.error || r2?.error})`);
+    await T.mouse('move', 5, 5);
+    await t.sleep(250);
+    t.check('the pointer gone: no hover look', (await C()).enterHover === false);
+    if (r1?.ok && r2?.ok) {
+      const back = join(T.OUT, 'enter-back.png');
+      await T.d.send({ cmd: 'snapshot', path: back });
+      t.check('the pointer gone: the switch as at rest', T.diff(rest, back, `${Math.round(at.w)}x${Math.round(at.h)}+${Math.round(at.x)}+${Math.round(at.y)}`) === 0);
+    }
+  }
+}
+
 // ─── Send, the meta row, the session id ───
 await T.key('Reply with a single word: hello');
 await T.key('Return');
