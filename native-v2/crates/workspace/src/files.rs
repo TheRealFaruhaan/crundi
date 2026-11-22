@@ -4,8 +4,9 @@
 //! above the project), search the project ("N matches · gitignored files
 //! excluded"), open a file in the editor or a picture in the viewer
 //! (wins.rs), and the row menu: Open, Open externally / Reveal (when the
-//! server runs here), Cut, Copy, Paste, Copy path, Download, Delete (asks
-//! first); Upload into the folder on show.
+//! server runs here), New file, Cut, Copy, Paste, Copy path, Download,
+//! Delete (asks first); Upload into the folder on show. New file is also on
+//! the list's empty space and the bar's "+".
 //!
 //! The server's answer (a folder, a search) becomes rows once, when it
 //! arrives (`derive`), never while drawing; the list draws only the rows on
@@ -61,6 +62,67 @@ pub fn fmt_size(bytes: f64) -> String {
 pub fn search_note(n: usize, truncated: bool, gitignore: bool) -> (String, String) {
     if n == 0 { return (String::new(), format!("No matches{}", if gitignore { " (gitignored files are excluded)" } else { "" })); }
     (format!("{}{} match{}{}", n, if truncated { "+" } else { "" }, if n == 1 { "" } else { "es" }, if gitignore { " · gitignored files excluded" } else { "" }), String::new())
+}
+
+/// What is wrong with a new file's name: one name in the folder, never a
+/// path (the server says the same, and refuses a name that is taken).
+pub fn new_file_name_error(name: &str) -> Option<&'static str> {
+    if name.is_empty() { return Some("Enter a name"); }
+    if name.contains(['/', '\\']) { return Some("A name cannot contain / or \\"); }
+    if name == "." || name == ".." { return Some("That name is not allowed"); }
+    None
+}
+
+/// Where a row's New file goes: inside a folder; beside a file (a search
+/// lists files from other folders, so its own folder is taken from its path).
+pub fn new_file_dir(path: &str, is_dir: bool, here: &str, searching: bool) -> String {
+    if is_dir { return path.to_string(); }
+    if !searching { return here.to_string(); }
+    match path.rfind(['/', '\\']) { Some(0) => path[..1].to_string(), Some(i) => path[..i].to_string(), None => here.to_string() }
+}
+
+/// POST /api/files/create's answer: the new file's path, or the toast's words.
+/// An older server has no such route (its catch-all 404 "Not found").
+pub fn create_answer(r: Result<Value, crundi_core::api::ApiError>) -> Result<String, String> {
+    use crundi_core::api::ApiError;
+    match r {
+        Ok(v) if v.get("ok").is_some_and(truthy) => Ok(s(&v, "path")),
+        Ok(v) => Err(format!("New file failed: {}", err_of(&v, "unknown"))),
+        Err(ApiError::Status(404, m)) if m == "Not found" => Err("New file is not supported by this server".into()),
+        Err(ApiError::Status(_, m)) if !m.is_empty() => Err(format!("New file failed: {m}")),
+        Err(e) => Err(format!("New file failed: {e}")),
+    }
+}
+
+/// The row menu's items (openFileMenu). `fm`: the file manager's name when
+/// the server runs here; `clip`: how many are waiting to be pasted.
+pub fn row_menu_items(dir: bool, name: &str, fm: Option<&str>, clip: Option<usize>, inside: bool) -> Vec<w::MenuEntry> {
+    let mut items = vec![w::MenuEntry::new("open", "Open").icon(if dir { IconName::Folder } else { IconName::File })];
+    if !dir && wins::is_source_preview(name) { items.push(w::MenuEntry::new("source", "Edit the source").icon(IconName::Pencil)); }
+    items.push(w::MenuEntry::new("new-file", "New file").icon(IconName::Plus).sep());
+    if let Some(fm) = fm {
+        if !dir { items.push(w::MenuEntry::new("ext", "Open externally").icon(IconName::ExternalLink).sep()); }
+        let it = w::MenuEntry::new(if dir { "shell-open" } else { "reveal" }, if dir { format!("Open in {fm}") } else { format!("Reveal in {fm}") }).icon(IconName::Folder);
+        items.push(if dir { it.sep() } else { it });
+    }
+    items.push(w::MenuEntry::new("cut", "Cut").icon(IconName::Scissors).sep());
+    items.push(w::MenuEntry::new("copy", "Copy").icon(IconName::Copy));
+    if let Some(n) = clip {
+        let what = if n == 1 { String::new() } else { format!(" {n} items") };
+        if dir { items.push(w::MenuEntry::new("paste-into", format!("Paste{what} inside \u{201c}{name}\u{201d}")).icon(IconName::Clipboard)); }
+        if inside { items.push(w::MenuEntry::new("paste-here", format!("Paste{what}{}", if dir { " in the current folder" } else { " here" })).icon(IconName::Clipboard)); }
+    }
+    items.push(w::MenuEntry::new("path", "Copy path").icon(IconName::Copy).sep());
+    if !dir { items.push(w::MenuEntry::new("download", "Download").icon(IconName::Download)); }
+    items.push(w::MenuEntry::new("delete", "Delete").icon(IconName::Trash).danger().sep());
+    items
+}
+
+/// The menu on the list's empty space: the folder on show.
+pub fn space_menu_items(clip: Option<usize>) -> Vec<w::MenuEntry> {
+    let mut items = vec![w::MenuEntry::new("new-file", "New file").icon(IconName::Plus)];
+    if let Some(n) = clip { items.push(w::MenuEntry::new("paste-here", format!("Paste{} here", if n == 1 { String::new() } else { format!(" {n} items") })).icon(IconName::Clipboard).sep()); }
+    items
 }
 
 #[derive(Clone)]
@@ -264,26 +326,11 @@ impl FilesView {
         self.selected = path.to_string();
         let dir = self.is_dir(path);
         let name = base_name(path);
-        let clip = self.clip.clone().filter(|_| self.clip_here(cx));
+        let clip = self.clip.as_ref().filter(|_| self.clip_here(cx)).map(|c| c.paths.len());
         let here = self.path.clone();
-        let mut items = vec![w::MenuEntry::new("open", "Open").icon(if dir { IconName::Folder } else { IconName::File })];
-        if !dir && wins::is_source_preview(&name) { items.push(w::MenuEntry::new("source", "Edit the source").icon(IconName::Pencil)); }
-        if let Some(sh) = &self.shell {
-            let fm = s(sh, "fileManager");
-            if !dir { items.push(w::MenuEntry::new("ext", "Open externally").icon(IconName::ExternalLink).sep()); }
-            let it = w::MenuEntry::new(if dir { "shell-open" } else { "reveal" }, if dir { format!("Open in {fm}") } else { format!("Reveal in {fm}") }).icon(IconName::Folder);
-            items.push(if dir { it.sep() } else { it });
-        }
-        items.push(w::MenuEntry::new("cut", "Cut").icon(IconName::Scissors).sep());
-        items.push(w::MenuEntry::new("copy", "Copy").icon(IconName::Copy));
-        if let Some(c) = &clip {
-            let what = if c.paths.len() == 1 { String::new() } else { format!(" {} items", c.paths.len()) };
-            if dir { items.push(w::MenuEntry::new("paste-into", format!("Paste{what} inside \u{201c}{name}\u{201d}")).icon(IconName::Clipboard)); }
-            if self.inside { items.push(w::MenuEntry::new("paste-here", format!("Paste{what}{}", if dir { " in the current folder" } else { " here" })).icon(IconName::Clipboard)); }
-        }
-        items.push(w::MenuEntry::new("path", "Copy path").icon(IconName::Copy).sep());
-        if !dir { items.push(w::MenuEntry::new("download", "Download").icon(IconName::Download)); }
-        items.push(w::MenuEntry::new("delete", "Delete").icon(IconName::Trash).danger().sep());
+        let fm = self.shell.as_ref().map(|sh| s(sh, "fileManager"));
+        let items = row_menu_items(dir, &name, fm.as_deref(), clip, self.inside);
+        let new_in = new_file_dir(path, dir, &here, self.results.is_some());
         let p = path.to_string();
         let me = cx.entity().downgrade();
         w::menu_at(cx, at, items, move |id, window, cx| {
@@ -291,6 +338,7 @@ impl FilesView {
             let here = here.clone();
             let _ = me.update(cx, |f, cx| match id.as_str() {
                 "open" => f.open(&p, cx),
+                "new-file" => f.new_file(new_in.clone(), window, cx),
                 "source" => wins::open_source(&crundi_shell::project(cx), &p, cx),
                 "ext" | "shell-open" => f.shell_act("open", &p, cx),
                 "reveal" => f.shell_act("reveal", &p, cx),
@@ -305,6 +353,50 @@ impl FilesView {
             });
         });
         self.derive(cx);
+    }
+
+    /// Right-click on the list but not on a row (a full folder has the bar's "+" too).
+    pub fn space_menu(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+        if !self.inside { return; }
+        let clip = self.clip.as_ref().filter(|_| self.clip_here(cx)).map(|c| c.paths.len());
+        let me = cx.entity().downgrade();
+        w::menu_at(cx, at, space_menu_items(clip), move |id, window, cx| {
+            let _ = me.update(cx, |f, cx| match id.as_str() {
+                "new-file" => { let d = f.path.clone(); f.new_file(d, window, cx) }
+                "paste-here" => f.paste_here(cx),
+                _ => {}
+            });
+        });
+    }
+
+    /// New file: its name asked, an empty file made in `dir` (never over one
+    /// that is there: /api/files/create), then opened in the editor.
+    pub fn new_file(&mut self, dir: String, window: &mut Window, cx: &mut Context<Self>) {
+        let me = cx.entity().downgrade();
+        let a = w::Ask { title: "New file".into(), message: "File name".into(), ok: "Create".into(), prompt: Some(String::new()), ..Default::default() };
+        w::ask(window, cx, a, move |v, _, cx| {
+            let Some(raw) = v else { return };
+            let name = raw.trim().to_string();
+            if let Some(e) = new_file_name_error(&name) { return toast(cx, format!("New file failed: {e}"), w::Toast::Error); }
+            let _ = me.update(cx, |f, cx| f.create(dir.clone(), name, cx));
+        });
+    }
+
+    fn create(&mut self, dir: String, name: String, cx: &mut Context<Self>) {
+        if dir == self.path && self.entries.iter().any(|e| s(e, "name") == name) {
+            return toast(cx, format!("New file failed: \u{201c}{name}\u{201d} already exists"), w::Toast::Error);
+        }
+        let project = crundi_shell::project(cx);
+        let Some(api) = crundi_shell::api(cx) else { return };
+        let me = cx.entity().downgrade();
+        let body = json!({ "project": project, "dir": dir, "name": name });
+        crundi_shell::run(cx, move || api.post("/api/files/create", &body), move |r, cx| {
+            match create_answer(r) {
+                Ok(path) => { toast(cx, format!("Created {name}"), w::Toast::Success); wins::open_file(&project, &path, cx); }
+                Err(e) => toast(cx, e, w::Toast::Error),
+            }
+            let _ = me.update(cx, |f, cx| f.load(None, cx));
+        });
     }
 
     fn shell_act(&mut self, act: &str, p: &str, cx: &mut Context<Self>) {
@@ -495,7 +587,7 @@ impl FilesView {
             .when(r.selected, |d| d.bg(T::accent_dim()).border_l_2().border_color(T::accent())).hover(|s| s.bg(T::bg_hover()))
             .when(r.cut, |d| d.opacity(T::WS_O_CUT))
             .on_click(cx.listener(move |f, e: &ClickEvent, _, cx| { if e.click_count() >= 2 { f.open(&p1, cx) } else if f.selected != p1 { f.selected = p1.clone(); f.derive(cx); } }))
-            .when(!r.up, |d| d.on_mouse_down(MouseButton::Right, cx.listener(move |f, e: &MouseDownEvent, _, cx| f.menu(&p2, e.position, cx)))))
+            .when(!r.up, |d| d.on_mouse_down(MouseButton::Right, cx.listener(move |f, e: &MouseDownEvent, _, cx| { cx.stop_propagation(); f.menu(&p2, e.position, cx) }))))
             .when(!r.up, |d| {
                 let (at, p4) = (self.more_at.clone(), r.path.clone());
                 // "More" (.fi-more): shown on the row's hover, or while it is selected.
@@ -569,12 +661,14 @@ impl Render for FilesView {
             .child(div().flex().flex_none().gap(T::SP_4)
                 .when(clip.is_some(), |d| d.child(w::icon_button("files-paste", IconName::Clipboard, paste_tip).on_click(cx.listener(|f, _, _, cx| f.paste_here(cx)))))
                 .when(self.parent.is_some(), |d| d.child(w::icon_button("files-up", IconName::ArrowUp, "Up to parent folder").on_click(cx.listener(|f, _, _, cx| f.up(cx)))))
+                .when(self.inside, |d| d.child(w::icon_button("files-new", IconName::Plus, "New file").on_click(cx.listener(|f, _, window, cx| { let d = f.path.clone(); f.new_file(d, window, cx) }))))
                 .when(self.inside, |d| d.child(w::icon_button("files-upload", IconName::Upload, "Upload to this folder").on_click(cx.listener(|f, _, _, cx| f.upload(cx))))));
         // The search (#files-search), inside the project only; Esc empties it.
         let search = self.inside.then(|| div().id("files-search").flex_none().border_b_1().border_color(T::border_subtle())
             .on_key_down(cx.listener(|f, e: &KeyDownEvent, window, cx| if e.keystroke.key == "escape" { f.search_escape(window, cx); cx.stop_propagation(); }))
             .child(w::input(&self.search).appearance(false).font_family(T::MONO)));
-        let mut list = div().flex().flex_col().flex_1().min_h_0();
+        let mut list = div().flex().flex_col().flex_1().min_h_0()
+            .on_mouse_down(MouseButton::Right, cx.listener(|f, e: &MouseDownEvent, _, cx| f.space_menu(e.position, cx)));
         if !note.is_empty() { list = list.child(div().flex_none().px(T::SP_12).py(T::SP_6).border_b_1().border_color(T::border_subtle()).text_size(T::TEXT_11).text_color(T::text_muted()).child(note)); }
         if self.rows.is_empty() { if !empty.is_empty() { list = list.child(empty_line(empty)); } }
         else {
@@ -610,7 +704,44 @@ pub fn ensure(window: &mut Window, cx: &mut App) -> Entity<FilesView> {
 
 #[cfg(test)]
 mod tests {
-    use super::{base_name, file_mark, fmt_size, search_note};
+    use super::{base_name, create_answer, file_mark, fmt_size, new_file_dir, new_file_name_error, row_menu_items, search_note, space_menu_items};
+    use crundi_core::api::ApiError;
+    use serde_json::json;
+
+    #[test]
+    fn new_file_names() {
+        assert_eq!(new_file_name_error("notes.md"), None);
+        assert_eq!(new_file_name_error(".env"), None);
+        assert_eq!(new_file_name_error(""), Some("Enter a name"));
+        assert!(new_file_name_error("a/b").is_some());
+        assert!(new_file_name_error("a\\b").is_some());
+        assert!(new_file_name_error("..").is_some());
+        assert!(new_file_name_error(".").is_some());
+    }
+
+    #[test]
+    fn new_file_on_every_menu() {
+        let has = |v: &Vec<crundi_widgets::MenuEntry>| v.iter().position(|e| e.id == "new-file" && e.label.as_ref() == "New file");
+        // A file, a folder (with and without a clip and the shell), and empty space.
+        for (dir, fm, clip) in [(false, None, None), (true, None, None), (false, Some("Files"), Some(2)), (true, Some("Files"), Some(1))] {
+            let items = row_menu_items(dir, "x", fm, clip, true);
+            let i = has(&items).expect("New file on a row");
+            assert!(i <= 2 && items[i].sep, "near the top, after a separator");
+        }
+        assert_eq!(has(&space_menu_items(None)), Some(0));
+        assert_eq!(has(&space_menu_items(Some(3))), Some(0));
+    }
+
+    #[test]
+    fn new_file_folder_and_answer() {
+        assert_eq!(new_file_dir("/p/sub", true, "/p", false), "/p/sub");
+        assert_eq!(new_file_dir("/p/a.txt", false, "/p", false), "/p");
+        assert_eq!(new_file_dir("/p/deep/a.txt", false, "/p", true), "/p/deep");
+        assert_eq!(create_answer(Ok(json!({"ok": true, "path": "/p/n.md"}))), Ok("/p/n.md".into()));
+        assert_eq!(create_answer(Err(ApiError::Status(409, "\u{201c}n.md\u{201d} already exists".into()))), Err("New file failed: \u{201c}n.md\u{201d} already exists".into()));
+        assert_eq!(create_answer(Err(ApiError::Status(404, "Not found".into()))), Err("New file is not supported by this server".into()));
+        assert_eq!(create_answer(Err(ApiError::Status(404, "Folder not found".into()))), Err("New file failed: Folder not found".into()));
+    }
 
     #[test]
     fn marks_and_sizes() {

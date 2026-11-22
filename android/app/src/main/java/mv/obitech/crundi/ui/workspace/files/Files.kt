@@ -1,6 +1,8 @@
 package mv.obitech.crundi.ui.workspace.files
 
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.positionInWindow
@@ -65,6 +67,7 @@ import mv.obitech.crundi.ui.theme.CrundiType
 import mv.obitech.crundi.ui.theme.Dimens
 import mv.obitech.crundi.ui.workspace.WorkspaceRoutes
 import mv.obitech.crundi.ui.components.errorText
+import mv.obitech.crundi.ui.components.routeMissing
 import mv.obitech.crundi.ui.workspace.formatSize
 import mv.obitech.crundi.ui.workspace.rememberFilePicker
 import mv.obitech.crundi.ui.workspace.rememberToast
@@ -97,9 +100,25 @@ data class FilesState(
         else folder?.entries.orEmpty().map { FileItem(it.name, it.path, it.isDir, it.size) }
 }
 
+/**
+ * What is wrong with a new file's name, or null: one name in the folder,
+ * never a path. The server says the same, and refuses a name that is taken.
+ */
+fun newFileNameError(name: String): String? = when {
+    name.isEmpty() -> "Enter a name"
+    '/' in name || '\\' in name -> "A name cannot contain / or \\"
+    name == "." || name == ".." -> "That name is not allowed"
+    else -> null
+}
+
+/** Where a row's New file goes: inside a folder, beside a file. */
+fun newFileDir(item: FileItem): String = if (item.isDir) item.path else item.path.substringBeforeLast('/', "").ifEmpty { "/" }
+
 /** What the row menu can do. */
 sealed interface FileAction {
     data class Open(val item: FileItem) : FileAction
+    /** New file in [dir]: its name is asked first (FilesScreen), then [name] is set. */
+    data class NewFile(val dir: String, val name: String? = null) : FileAction
     data class Cut(val item: FileItem) : FileAction
     data class Copy(val item: FileItem) : FileAction
     /** Paste the clip into [dir] (a folder row, or the current folder). */
@@ -126,6 +145,11 @@ fun FilesScreen(
 ) {
     var menu by remember { mutableStateOf(menuFor) }
     var deleting by remember { mutableStateOf<FileItem?>(null) }
+    // New file: the folder it goes in, while its name is asked. Held on empty
+    // space: that space's menu (a full folder has the bar's "+" instead).
+    var naming by remember { mutableStateOf<String?>(null) }
+    var spaceMenu by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
     // Hold a row and drag it onto a folder, as on the desktop. Folder rows
     // say where they are; the held row follows the finger as a ghost.
     val folders = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Rect>() }
@@ -164,7 +188,7 @@ fun FilesScreen(
         Box(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 6.dp)) {
             CrundiTextField(state.query, onQuery, placeholder = "Search files & folders…", icon = "search", mono = true, modifier = Modifier.fillMaxWidth())
         }
-        if (state.query.isBlank()) Breadcrumb(state, onFolder, onUp, onUpload, onPaste = { state.folder?.path?.let { onAction(FileAction.Paste(it)) } })
+        if (state.query.isBlank()) Breadcrumb(state, onFolder, onUp, onUpload, onPaste = { state.folder?.path?.let { onAction(FileAction.Paste(it)) } }, onNewFile = { naming = state.folder?.path })
         else Text(
             when {
                 state.searching && state.search == null -> "Searching…"
@@ -185,9 +209,18 @@ fun FilesScreen(
             state.error != null -> ErrorState(state.error, onRetry = onRetry)
             state.loading && state.folder == null -> LoadingState(text = "Loading files")
             state.query.isNotBlank() && state.search != null && state.items.isEmpty() -> EmptyState("search", "No matches", body = "Gitignored files are not searched. Try part of the name.")
-            state.query.isBlank() && state.items.isEmpty() && state.folder != null -> EmptyState("folder", "This folder is empty", body = "Upload a file to put it here.", action = "Upload", onAction = onUpload)
+            state.query.isBlank() && state.items.isEmpty() && state.folder != null -> Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onLongPress = { spaceMenu = true }) }) {
+                EmptyState("folder", "This folder is empty", body = "Upload a file to put it here.", action = "Upload", onAction = onUpload)
+            }
             else -> Box(Modifier.fillMaxSize().androidx_onPlaced { listTopLeft = it }) {
-              LazyColumn(Modifier.fillMaxSize()) {
+              LazyColumn(Modifier.fillMaxSize().pointerInput(Unit) {
+                  // Held below the last row: the folder on show (a row's own hold is its menu).
+                  detectTapGestures(onLongPress = { at ->
+                      val info = listState.layoutInfo
+                      val last = info.visibleItemsInfo.lastOrNull()
+                      if (last == null || (last.index == info.totalItemsCount - 1 && at.y > last.offset + last.size)) spaceMenu = true
+                  })
+              }, state = listState) {
                 if (state.query.isBlank() && state.folder?.parent != null && state.folder.path != state.folder.root) item(key = "..") {
                     FileRow(FileItem("..", state.folder.parent, true), cut = false, onOpen = onUp, onMore = null, drag = drag, target = dragging != null && folderAt(finger) == state.folder.parent, draggable = false)
                 }
@@ -217,8 +250,23 @@ fun FilesScreen(
     menu?.let { item ->
         FileMenu(item, state.clip, onDismiss = { menu = null }) { a ->
             menu = null
-            if (a is FileAction.Delete) deleting = a.item else onAction(a)
+            if (a is FileAction.Delete) deleting = a.item else if (a is FileAction.NewFile) naming = a.dir else onAction(a)
         }
+    }
+    if (spaceMenu) state.folder?.let { f ->
+        CrundiDialog(f.crumbs.lastOrNull()?.name ?: f.path.substringAfterLast('/'), onDismiss = { spaceMenu = false }, dismiss = null) {
+            Column {
+                ListRow("New file", icon = "plus", onClick = { spaceMenu = false; naming = f.path })
+                if (state.clip != null) ListRow("Paste here", icon = "clipboard", onClick = { spaceMenu = false; onAction(FileAction.Paste(f.path)) })
+            }
+        }
+    }
+    naming?.let { dir ->
+        var name by remember(dir) { mutableStateOf("") }
+        CrundiDialog(
+            "New file", onDismiss = { naming = null },
+            confirm = "Create", onConfirm = { naming = null; onAction(FileAction.NewFile(dir, name.trim())) },
+        ) { CrundiTextField(name, { name = it }, placeholder = "File name", mono = true, modifier = Modifier.fillMaxWidth()) }
     }
     dropOn?.let { (item, folder) ->
         val name = if (folder.name == "..") "the folder above" else "\u201c${folder.name}\u201d"
@@ -240,7 +288,7 @@ fun FilesScreen(
 }
 
 @Composable
-private fun Breadcrumb(state: FilesState, onFolder: (String?) -> Unit, onUp: () -> Unit, onUpload: () -> Unit, onPaste: () -> Unit) {
+private fun Breadcrumb(state: FilesState, onFolder: (String?) -> Unit, onUp: () -> Unit, onUpload: () -> Unit, onPaste: () -> Unit, onNewFile: () -> Unit) {
     val f = state.folder
     Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState(Int.MAX_VALUE)), verticalAlignment = Alignment.CenterVertically) {
@@ -259,6 +307,7 @@ private fun Breadcrumb(state: FilesState, onFolder: (String?) -> Unit, onUp: () 
         }
         if (state.clip != null) CrundiIconButton("clipboard", onPaste, contentDescription = "Paste here", tint = CrundiColors.AccentHover)
         CrundiIconButton("arrow-up", onUp, contentDescription = "Up to parent folder", enabled = f?.parent != null && f.path != f.root)
+        CrundiIconButton("plus", onNewFile, contentDescription = "New file", enabled = f != null)
         CrundiIconButton("upload", onUpload, contentDescription = "Upload to this folder", enabled = state.transfer == null)
     }
 }
@@ -319,6 +368,9 @@ fun FileMenu(item: FileItem, clip: FileClip?, onDismiss: () -> Unit, onAction: (
     CrundiDialog(item.name, onDismiss = onDismiss, dismiss = null) {
         Column {
             ListRow("Open", icon = if (item.isDir) "folder" else "file", onClick = { onAction(FileAction.Open(item)) })
+            CrundiDivider(Modifier.padding(vertical = 4.dp))
+            ListRow("New file", icon = "plus", onClick = { onAction(FileAction.NewFile(newFileDir(item))) })
+            CrundiDivider(Modifier.padding(vertical = 4.dp))
             ListRow("Cut", icon = "scissors", onClick = { onAction(FileAction.Cut(item)) })
             ListRow("Copy", icon = "copy", onClick = { onAction(FileAction.Copy(item)) })
             if (clip != null && item.isDir) {
@@ -403,6 +455,20 @@ fun FilesRoute() {
                 is FileAction.Open -> if (a.item.isDir) { state = state.copy(query = ""); dir = a.item.path } else if (inPane) viewing = a.item.path else nav.to(WorkspaceRoutes.file(a.item.path))
                 is FileAction.Cut -> { state = state.copy(clip = FileClip(listOf(a.item.path), copy = false)); toast("Cut ${a.item.name}. Open a folder and paste.") }
                 is FileAction.Copy -> { state = state.copy(clip = FileClip(listOf(a.item.path), copy = true)); toast("Copied ${a.item.name}. Open a folder and paste.") }
+                is FileAction.NewFile -> {
+                    val name = a.name ?: return@FilesScreen
+                    val bad = newFileNameError(name)
+                    if (bad != null) { toast("New file failed: $bad"); return@FilesScreen }
+                    if (a.dir == state.folder?.path && state.folder?.entries.orEmpty().any { it.name == name }) { toast("New file failed: \u201c$name\u201d already exists"); return@FilesScreen }
+                    scope.launch {
+                        runCatching { api.files.create(p, a.dir, name) }
+                            .onSuccess { path ->
+                                toast("Created $name"); reload++
+                                if (inPane) viewing = path else nav.to(WorkspaceRoutes.file(path))
+                            }
+                            .onFailure { toast(if (routeMissing(it)) "New file is not supported by this server" else "New file failed: " + errorText(it)) }
+                    }
+                }
                 is FileAction.CopyPath -> { clipboard.setText(AnnotatedString(a.item.path)); toast("Path copied") }
                 is FileAction.Paste -> {
                     val clip = state.clip ?: return@FilesScreen

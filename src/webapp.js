@@ -7956,6 +7956,33 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
+    // "New file": an empty file in a folder, never over one that is there.
+    // Its own route rather than a flag on /write, because an older server
+    // would ignore a flag and overwrite; here it answers 404 "Not found",
+    // which a client reads as "not supported by this server".
+    if (path === '/api/files/create' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const project = getProject(body.project);
+      if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
+      const name = String(body.name ?? '');
+      if (!name.trim()) return json(res, { ok: false, error: 'Enter a name' }, 400);
+      if (name.includes('/') || name.includes('\\')) return json(res, { ok: false, error: 'A name cannot contain / or \\' }, 400);
+      if (name === '.' || name === '..' || name.includes('\0')) return json(res, { ok: false, error: 'That name is not allowed' }, 400);
+      const dir = resolveFsPath(project, body.dir || '', principal);
+      if (!isInsideRoot(principal, project, dir)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+      try { if (!statSync(dir).isDirectory()) return json(res, { ok: false, error: 'Folder not found' }, 404); }
+      catch { return json(res, { ok: false, error: 'Folder not found' }, 404); }
+      const fullPath = join(dir, name);
+      if (!isInsideRoot(principal, project, fullPath)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+      try {
+        writeFileSync(fullPath, '', { flag: 'wx' });   // wx: fails if anything is there
+        return json(res, { ok: true, path: fullPath });
+      } catch (err) {
+        if (err.code === 'EEXIST') return json(res, { ok: false, error: '“' + name + '” already exists' }, 409);
+        return json(res, { ok: false, error: err.message });
+      }
+    }
+
     if (path === '/api/files/download' && req.method === 'GET') {
       const alias = url.searchParams.get('project');
       const relFile = url.searchParams.get('file') || '';
