@@ -320,6 +320,46 @@ await T.until('let go, the move ends', (s) => !s.drag, 3000);
   await T.mouse('up', g2.x + g2.w / 2, py);
   await T.until('let go, that move ends', (s) => !s.drag, 3000);
 }
+// ─── T7: over a pane's body a sideways scroll moves the strip (T8: never a panic) ───
+// A pane that can't use a sideways scroll (no area in it scrolls sideways)
+// leaves it to the workbench strip; up and down stay the pane's.
+{
+  s = await T.state();
+  const G = () => s.grid;
+  const body = s.leaves.filter((l) => l.key && l.x > G().x && l.x + l.w < G().x + G().w)[0] || s.leaves[0];
+  const at = [body.x + body.w / 2, body.y + Math.min(body.h - 20, 120)];
+  const scrollOf = async () => (s = await T.state()).grid.scroll;
+  // To the strip's start (wheel steps that never glide).
+  for (let i = 0; i < 40 && (await scrollOf()) > 0.5; i++) await T.mouse('wheel', at[0], at[1], { dx: 200 });
+  const a0 = await scrollOf();
+  await T.mouse('wheel', at[0], at[1], { dx: -120 });
+  const a1 = await scrollOf();
+  t.check('T7: a sideways scroll over a pane\'s body scrolls the workbench strip', a1 - a0 > 60, { a0, a1, body: body.key });
+  await T.mouse('wheel', at[0], at[1], { dy: -120 });
+  const a2 = await scrollOf();
+  t.check('T7: …an up-and-down one stays the pane\'s (the strip does not move)', Math.abs(a2 - a1) < 0.5, { a1, a2 });
+  await T.mouse('wheel', at[0], at[1], { dy: -120, mods: ['shift'] });
+  const a3 = await scrollOf();
+  t.check('T7: …Shift and the wheel scroll the strip sideways', a3 - a2 > 60, { a2, a3 });
+  // T8: through the whole range and back, both ways, over a body and a head.
+  for (let round = 0; round < 3; round++) {
+    for (let i = 0; i < 12; i++) await T.mouse('wheel', at[0], at[1], { dx: -150 });
+    for (let i = 0; i < 4; i++) await T.mouse('wheel', at[0], at[1], { dy: i % 2 ? 300 : -300 });
+    for (let i = 0; i < 12; i++) await T.mouse('wheel', at[0], at[1], { dx: 150, mods: i % 2 ? ['shift'] : [] });
+  }
+  const end = await scrollOf();
+  t.check('T8: scrolled sideways and down through the whole range three times, the client still answers', Number.isFinite(end), { end });
+  // A new pane (the "+" menu's Terminal) opens at the strip's right and comes wholly into view.
+  for (let i = 0; i < 40 && (await scrollOf()) > 0.5; i++) await T.mouse('wheel', at[0], at[1], { dx: 200 });
+  const before = new Set((await T.state()).leaves.map((l) => l.key).filter(Boolean));
+  await T.mouse('click', PLUS.x, PLUS.y);
+  const mt = await T.until('(the "+" menu)', (s) => s.addMenu?.open, 3000);
+  const term = mt.addMenu.items.find((i) => i.label === 'Terminal');
+  await T.mouse('click', term.x + 20, term.y + term.h / 2);
+  s = await T.until('T7: a new pane comes wholly into view in the strip', (s) => { const l = s.leaves.find((x) => x.key && !before.has(x.key)); return l && l.x >= s.grid.x - 1 && l.x + l.w <= s.grid.x + s.grid.w + 1; }, 5000);
+  { const st = await T.state(); console.log('  T7 new pane:', JSON.stringify({ grid: st.grid, leaves: st.leaves.map((l) => [l.id, l.key, Math.round(l.x), Math.round(l.w)]) })); }
+  await snap('t7-strip-scrollbar');
+}
 // ─── Kinetic scrolling: a touchpad's scroll glides on, a wheel's does not ───
 // (vendor/gpui patch (f): the one scroll path every list and pane uses.)
 // Precise steps over the grid (four columns, wider than it): after the

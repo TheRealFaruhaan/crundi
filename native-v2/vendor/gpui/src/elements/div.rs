@@ -3421,11 +3421,21 @@ impl Interactivity {
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
+            // (crundi patch (g): its content is wider than it.)
+            let can_x = self.content_size.width > hitbox.bounds.size.width + px(0.5);
             window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
                     let mut delta = event.delta.pixel_delta(line_height);
+                    // crundi patch (g), PATCH.md: as a browser, Shift and the
+                    // wheel scroll sideways; a sideways scroll is taken (and
+                    // claimed) only by a box that can scroll sideways, and a
+                    // box that scrolls only up and down leaves it alone.
+                    if event.modifiers.shift && delta.x.is_zero() { delta = point(delta.y, Pixels::ZERO); }
+                    let sideways = delta.x.abs() > delta.y.abs();
+                    if sideways && overflow.y == Overflow::Scroll && overflow.x != Overflow::Scroll { return; }
+                    if sideways && overflow.x == Overflow::Scroll && can_x { window.claim_x(); }
 
                     if restrict_scroll_to_axis
                         && event.delta.precise()

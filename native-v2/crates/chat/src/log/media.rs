@@ -562,7 +562,7 @@ fn tray(chat: &str, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let rows: Vec<AnyElement> = m.dls.iter().filter(|d| d.chat == chat).map(|d| {
         let tone = match d.state.as_str() { "done" => T::green(), "failed" => T::red(), _ => T::accent() };
         let id = d.id;
-        div().flex().items_center().gap(T::SP_10).pl(T::SP_12).pr(T::SP_10).py(T::SP_10).bg(T::bg_secondary()).border_1().border_color(T::border())
+        div().occlude().flex().items_center().gap(T::SP_10).pl(T::SP_12).pr(T::SP_10).py(T::SP_10).bg(T::bg_secondary()).border_1().border_color(T::border())
             .rounded(T::R_CONTROL).shadow_md().relative().overflow_hidden()
             .child(div().absolute().left_0().top_0().bottom_0().w(T::SP_2 + px(1.)).bg(tone))
             .child(div().text_color(if d.state == "running" { T::accent_hover() } else { tone }).child(w::icon(IconName::Download, T::ICON_LG)))

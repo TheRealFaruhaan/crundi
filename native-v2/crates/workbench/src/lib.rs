@@ -188,6 +188,8 @@ pub struct Workbench {
     /// The window's scale (as last drawn): the edge ramp moves the grid by
     /// whole device pixels.
     sf: f32,
+    /// T7: the pane last scrolled into view, and the area it was then.
+    revealed: Option<(u32, (f32, f32))>,
 }
 
 /// The mosaic's rectangles for a project and an area (the grid's width,
@@ -199,7 +201,7 @@ impl Workbench {
         cx.set_global(Handle(cx.entity().downgrade()));
         let project = stores.projects.read(cx).open.clone();
         Workbench { stores, project, layouts: HashMap::new(), panes: HashMap::new(), area: (0., 0.), focused: 0, armed: 0, arm_gen: 0, full: None, gutter: None, scroll: ScrollHandle::new(), frames: HashMap::new(), seeded: None, pend: 0, protect: HashMap::new(), chip_leaf: None,
-            origin: Rc::new(Cell::new((0., 0.))), press: None, drag: None, moved: false, ghost: None, edge: None, laid: None, sf: 1. }
+            origin: Rc::new(Cell::new((0., 0.))), press: None, drag: None, moved: false, ghost: None, edge: None, laid: None, sf: 1., revealed: None }
     }
 
     /// The open project's mosaic (loaded from the saved layouts the first
@@ -338,7 +340,8 @@ impl Workbench {
     }
 
     fn focus_pane(&mut self, leaf: u32, cx: &mut Context<Self>) {
-        if self.focused != leaf { self.focused = leaf; cx.notify(); }
+        // (A press focuses what it is on where it is: the strip doesn't jump under the pointer.)
+        if self.focused != leaf { self.focused = leaf; self.revealed = Some((leaf, self.area)); cx.notify(); }
     }
 
     pub fn split(&mut self, leaf: u32, down: bool, cx: &mut Context<Self>) {
@@ -635,9 +638,14 @@ impl Workbench {
         if self.frames.get(key) != Some(&f) { self.frames.insert(key.to_string(), f); head.update(cx, |_, cx| cx.notify()); }
         let hh = if f.narrow { T::PANE_HEAD_NARROW } else { T::PANE_HEAD };
         // A wheel inside a pane stays in it (the workbench's sideways scroll
-        // would otherwise move with a log: native-gpui's 19 Nov fix).
+        // would otherwise move with a log: native-gpui's 19 Nov fix), unless
+        // it is sideways and nothing in the pane can use it (T7: no area
+        // there scrolls sideways, no canvas nor page took it): then the
+        // workbench strip scrolls.
         let body = div().relative().flex_1().min_h_0().w_full()
-            .on_scroll(|_, _, cx| cx.stop_propagation())
+            .on_scroll(|e: &ScrollEvent, window, cx| {
+                if !sideways(e, window) || window.claimed_x() { cx.stop_propagation(); }
+            })
             // The kind's body (elements around its cached views), hosted cached.
             .child(body.cached(StyleRefinement::default().size_full()));
         // The panel's box without its clip: the head and the body clip
@@ -760,6 +768,27 @@ impl Render for Workbench {
             }
             self.full = None;
         }
+        // T7: a new or focused pane (and the focused one when the area
+        // narrows, the drawer opened) comes wholly into view in the strip.
+        let aw = self.area.0;
+        if aw > 0. && self.drag.is_none() && self.revealed != Some((self.focused, self.area)) {
+            if let Some(l) = leaves.iter().find(|l| l.id == self.focused) {
+                self.revealed = Some((self.focused, self.area));
+                let off = -f32::from(self.scroll.offset().x);
+                let to = if l.x < off { l.x } else if l.x + l.w > off + aw { (l.x + l.w - aw).min(l.x) } else { off };
+                let to = to.clamp(0., (gw - aw).max(0.));
+                if (to - off).abs() > 0.5 { self.scroll.set_offset(point(px(-to), self.scroll.offset().y)); }
+            }
+        }
+        // T7: the strip's own scrollbar (the web's #term-grid overflow-x).
+        let hbar = {
+            let (sc, me) = (self.scroll.clone(), cx.entity().downgrade());
+            w::scrollbar("wb-hbar", false, aw, gw, -f32::from(self.scroll.offset().x), px(0.), window, cx, move |x, _, cx| {
+                let max = f32::from(sc.max_offset().x);
+                sc.set_offset(point(px(-x.clamp(0., max)), sc.offset().y));
+                if let Some(m) = me.upgrade() { m.update(cx, |_, cx| cx.notify()); }
+            })
+        };
         let mut grid = div().relative().w(px(gw)).h(px(ah));
         for l in leaves {
             let id = l.id;
@@ -805,9 +834,18 @@ impl Render for Workbench {
             // replay all of its body on every frame.
             .child(w::edge_scroll::<w::RefDrag>(div().id("wb-grid"), w::Scroller::Handle(self.scroll.clone()), true, false, cx.entity_id()).size_full().overflow_x_scroll()
                 .when(self.drag.is_some(), |d| d.wide_clip(size(px(self.area.0.max(0.)), px(0.)))).track_scroll(&self.scroll).child(grid))
+            .children(hbar)
             .children(card)
             .into_any_element()
     }
+}
+
+/// T7: a scroll that goes sideways (more across than down; Shift and the
+/// wheel, as a browser).
+pub fn sideways(e: &ScrollEvent, window: &Window) -> bool {
+    let d = e.delta.pixel_delta(window.line_height());
+    if e.modifiers.shift && d.x == px(0.) { return d.y != px(0.); }
+    d.x.abs() > d.y.abs()
 }
 
 /// The workbench tab and its "+" (the area's registration).

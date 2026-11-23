@@ -694,7 +694,7 @@ impl CruScreen {
             "typingBox": keyboard, "mic": !keyboard, "micBox": f32::from(if chat_view { T::CRU_MIC_CHAT } else { T::CRU_MIC }), "word": word, "tone": tone, "animating": animate,
         });
         cru::with(|c| c.ui = ui);
-        let root = div().id("cru-panel").absolute().top(top).right(right).w(pw).h(ph).rounded(T::CRU_BUBBLE_R).border_1().border_color(T::border()).shadow_lg();
+        let root = div().id("cru-panel").occlude().absolute().top(top).right(right).w(pw).h(ph).rounded(T::CRU_BUBBLE_R).border_1().border_color(T::border()).shadow_lg();
         root
             .track_focus(&self.focus)
             .on_key_down(|e: &KeyDownEvent, _, _| if e.keystroke.key == "escape" { cru::close(); })

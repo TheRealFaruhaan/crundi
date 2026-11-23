@@ -64,6 +64,22 @@ the lines marked `crundi patch (a)` to `crundi patch (e)` (and the
   `kinetic_input` (called from `dispatch_event`), `set_no_glide`,
   `set_scroll_age` and `gliding`
 
+- (b, T8) `Scene::holds` and `Window::paint_range_valid`: a cached view's
+  paint range that the last scene doesn't hold (stale) is never sliced:
+  `extent`, `can_offset`, `replay` and `replay_offset` check it, and
+  `prepaint_view` makes such a view render (its `painted_in` reset)
+  instead of reusing it (the scene.rs:197 panic on a sideways scroll)
+- (f, T1) `crundi_flick` and `TouchGestureRecognizer::precise_steps`: a
+  touchpad's glide starts only after a real flick (the last ~80 ms, the
+  last step a motion, no pause, directions agreeing, ≥12 px at ≥150 px/s,
+  not slowing into a hold)
+- (g, T7) in `src/elements/div.rs` `paint_scroll_listener`: Shift and the
+  wheel scroll sideways; a box that scrolls only up and down leaves a
+  sideways scroll alone; one whose content is wider than it claims it
+  (`Window::claim_x`, `claimed_x`, the field reset per scroll event in
+  `dispatch_mouse_event`), so a workbench pane passes an unclaimed sideways
+  scroll to the strip
+
 `crates/shell/tests/gpui_patch.rs` checks both behaviours in `cargo test`
 on every OS: a clean cached child isn't rendered when its parent is, a moved
 one is replayed and then settles with one render, and a resized one

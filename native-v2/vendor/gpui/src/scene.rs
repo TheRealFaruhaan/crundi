@@ -165,6 +165,8 @@ impl Scene {
     }
 
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
+        // (T8: never slice past the last scene's end.)
+        if !prev_scene.holds(&range) { return; }
         // crundi patch (d), PATCH.md: the orders kept, shifted.
         if self.replay_shifted(range.clone(), prev_scene, None) { return; }
         for operation in &prev_scene.paint_operations[range] {
@@ -178,10 +180,18 @@ impl Scene {
         }
     }
 
+    /// crundi patch (b), PATCH.md (T8): whether `range` lies within this
+    /// scene's operations (a cached view's range from an older frame may not).
+    pub(crate) fn holds(&self, range: &Range<usize>) -> bool {
+        range.start <= range.end && range.end <= self.paint_operations.len()
+    }
+
     /// crundi patch (b), PATCH.md: whether these operations can be replayed
     /// moved (no sprite drawn through a transformation: its matrix is in
     /// window coordinates).
     pub(crate) fn can_offset(&self, range: Range<usize>) -> bool {
+        // (T8: a stale range, past this scene's end, is never replayed moved.)
+        if !self.holds(&range) { return false; }
         let unit = TransformationMatrix::unit();
         self.paint_operations[range].iter().all(|op| match op {
             PaintOperation::Primitive(Primitive::MonochromeSprite(s)) => s.transformation == unit,
@@ -194,6 +204,8 @@ impl Scene {
     /// bounds before their clip (what they would draw if nothing clipped them).
     pub(crate) fn extent(&self, range: Range<usize>) -> Option<Bounds<ScaledPixels>> {
         let mut out: Option<Bounds<ScaledPixels>> = None;
+        // (T8: a stale range, past this scene's end, has no extent here.)
+        if !self.holds(&range) { return None; }
         for op in &self.paint_operations[range] {
             if let PaintOperation::Primitive(p) = op {
                 let b = *p.bounds();
@@ -212,6 +224,7 @@ impl Scene {
             let moved = Bounds { origin: m.bounds.origin + delta, size: m.bounds.size };
             m.bounds = moved.intersect(mask);
         };
+        if !prev_scene.holds(&range) { return; }
         if self.replay_shifted(range.clone(), prev_scene, Some((delta, *mask))) { return; }
         for operation in &prev_scene.paint_operations[range] {
             match operation {
