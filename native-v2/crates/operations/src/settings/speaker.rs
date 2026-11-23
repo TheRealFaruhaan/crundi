@@ -164,7 +164,8 @@ pub fn part() -> Option<Div> {
     let st = with(|s| s.st.clone())?;
     let open = with(|s| s.open);
     let mut d = div().flex().flex_col().gap(T::SP_6).child(
-        w::disclosure("vs-spk-box", "Your voice", open).text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(T::text())
+        w::disclosure("vs-spk-box", "Your voice", open).relative().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(T::text())
+            .child(w::find::mark("Your voice"))
             .on_click(|_, _, cx| { with(|s| s.open = !s.open); redraw(cx); }));
     if !open { return Some(d); }
     let (active, words, pos, results, rec, busy, msg, bad) = with(|s| (s.active, s.words, s.pos, s.results.clone(), s.rec.is_some(), s.busy, s.msg.clone(), s.bad));
@@ -184,7 +185,7 @@ pub fn part() -> Option<Div> {
         } else { b = b.children(say("Not enrolled yet: Cru acts on any voice. Read a few short phrases so it knows yours (about a minute).", false)); }
         if available {
             let only = c::t(&st, "ownerOnly");
-            b = b.child(w::check("vs-spk-only", "Only act on my voice", only, |on, _, cx| owner_only(cx, *on)).disabled(!enrolled))
+            b = b.child(div().relative().child(w::check("vs-spk-only", "Only act on my voice", only, |on, _, cx| owner_only(cx, *on)).disabled(!enrolled)).child(w::find::mark("Only act on my voice")))
                 .child(hint("Anyone may still ask Cru questions; only your voice, or typing, changes anything. Admin mode always needs your voice."));
             let mut btns = div().flex().flex_wrap().gap(T::SP_8);
             btns = btns.child(if enrolled { w::button("vs-spk-start", "Enrol again") } else { w::primary("vs-spk-start", "Enrol my voice") }.on_click(|_, _, cx| start(cx, false, "")));

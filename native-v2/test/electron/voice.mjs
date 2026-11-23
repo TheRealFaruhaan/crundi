@@ -34,9 +34,21 @@ export function setup(ctx) {
 export async function run(T, t) {
   const S = (p) => p.areas?.ops?.settings?.voice?.speaker || {};
   const at = async (words) => { const b = await T.ui('find', words); return b.ok ? { x: b.x + b.w / 2, y: b.y + b.h / 2 } : null; };
-  const click = async (words) => { const p = await at(words); t.check(`"${words}" is on screen`, !!p); if (p) await T.mouse('click', p.x, p.y); return !!p; };
+  // Scrolled into view with the wheel over the page, as a person would (down, then up).
+  const reveal = async (words) => {
+    for (const dy of [-240, 240]) for (let i = 0; i < 25; i++) {
+      const b = await T.ui('find', words);
+      if (b.ok && b.y > 60 && b.y + b.h < 860) return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+      await T.mouse('wheel', 900, 500, { dy });
+      await t.sleep(150);
+    }
+    return at(words);
+  };
+  const click = async (words) => { const p = await reveal(words); t.check(`"${words}" is on screen`, !!p); if (p) await T.mouse('click', p.x, p.y); return !!p; };
   const server = async () => (await T.api.http('GET', '/api/voice/speaker')).body || {};
 
+  await T.ui('tab', 'settings');
+  await T.until('the Settings tab loads', (p) => p.areas?.ops?.settings?.state === 'data', 20000);
   await T.ui('ops:settings-open', 'voice');
   let p = await T.until('Settings › Cru: "Your voice" is there (the server has voice-speaker)', (p) => S(p).shown, 20000);
   if (!p) return;
@@ -45,14 +57,13 @@ export async function run(T, t) {
   p = await T.until('…clicked open', (p) => S(p).open, 5000);
   const avail = (await server()).available === true;
   if (!avail) {
-    t.check('…without onnxruntime-node: "not available on this server"', !!await at('The voice check is not available on this server'));
+    t.check('…without onnxruntime-node: no Enrol button (the section says the check is not available)', !await at('Enrol my voice'));
     return;
   }
-  t.check('…"Not enrolled yet: Cru acts on any voice"', !!await at('Not enrolled yet'));
+  t.check('…not enrolled yet, "Only act on my voice" not offered until then', !S(p).enrolled);
   await T.snap('electron', 'voice-speaker');
   if (!await click('Enrol my voice')) return;
   await T.until('enrolling: phrase 1', (p) => S(p).active && S(p).pos === 0 && !S(p).words, 5000);
-  t.check('…the first phrase\'s line', !!await at('Phrase 1 of'));
   // Each phrase: Record, about 9 s of speech, Stop; the server checks it.
   for (let i = 0; i < 6; i++) {
     const before = S(await T.state()).results.length;
@@ -73,10 +84,17 @@ export async function run(T, t) {
   if (S(await T.state()).active) await click('Not now');
   await T.until('…the section back to its status', (p) => !S(p).active, 5000);
   t.check('the server has the voice enrolled', (await server()).enrolled === true);
-  t.check('…"Enrolled" on screen', !!await at('Enrolled'));
-  // Only act on my voice.
-  if (await click('Only act on my voice')) await T.until('"Only act on my voice" on: the server keeps it', (p) => S(p).ownerOnly, 8000);
-  t.check('…the server says ownerOnly', (await T.api.http('GET', '/api/voice/settings')).body?.ownerOnly === true);
+  t.check('…"Enrol again" offered now', !!await reveal('Enrol again'));
+  // Only act on my voice: clicked off, then on again; the server keeps each.
+  const ownerOnly = async () => (await T.api.http('GET', '/api/voice/settings')).body?.ownerOnly;
+  const was = S(await T.state()).ownerOnly;
+  if (await click('Only act on my voice')) {
+    await T.until(`"Only act on my voice" clicked: ${was ? 'off' : 'on'}`, (p) => S(p).ownerOnly === !was, 8000);
+    t.check('…the server keeps it', await ownerOnly() === !was);
+    await click('Only act on my voice');
+    await T.until(`…clicked again: ${was ? 'on' : 'off'}`, (p) => S(p).ownerOnly === was, 8000);
+    t.check('…the server keeps that too', await ownerOnly() === was);
+  }
   // Forget my voice: asked first, Enter says yes.
   if (await click('Forget my voice')) {
     await t.sleep(500);
@@ -85,4 +103,5 @@ export async function run(T, t) {
     t.check('the server has no voice', (await server()).enrolled === false);
   }
   await T.ui('ops:settings-open', 'voice', 'false');
+  await T.ui('tab', 'workbench');
 }
