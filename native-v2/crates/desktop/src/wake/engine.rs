@@ -474,7 +474,7 @@ mod tests {
         if !Path::new(&models).join(MODEL_ID).exists() || !Path::new(&format!("{eval}/draco-train1.wav")).exists() { eprintln!("skip: no recordings or models"); return; }
         unsafe { std::env::set_var("CRUNDI_WAKE_MODELS", &models); }
         for noise_rms in [0.0f32, 0.02] {
-            let mic = |s: Vec<f32>| -> Vec<f32> {
+            let mic = |s: Vec<f32>| -> (Vec<f32>, Vec<f32>) {
                 let (rate, ch) = (44100usize, 2usize);
                 let mut seed = 7u32;
                 let mut lp = 0f32;

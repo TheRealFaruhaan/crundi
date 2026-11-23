@@ -317,7 +317,7 @@ fn mic(out: mpsc::Sender<(Vec<f32>, Vec<f32>)>, stop: Arc<AtomicBool>) -> Result
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
     std::thread::spawn(move || {
         use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-        let setup = || -> Result<(cpal::Stream, usize, mpsc::Receiver<Vec<f32>>), String> {
+        let setup = || -> Result<(cpal::Stream, usize, mpsc::Receiver<(Vec<f32>, Vec<f32>)>), String> {
             let host = cpal::default_host();
             let dev = host.default_input_device().ok_or("no microphone")?;
             let cfg = dev.default_input_config().map_err(|e| e.to_string())?;
