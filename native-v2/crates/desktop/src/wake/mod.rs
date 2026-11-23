@@ -246,7 +246,10 @@ fn start_worker() {
             while let Ok(b) = mrx.try_recv() { blocks.push(b); }
             if blocks.is_empty() { std::thread::sleep(Duration::from_millis(30)); continue; }
             for b in blocks {
-                let Some(h) = wake.accept(&b) else { continue };
+                let h = wake.accept(&b);
+                // A phrase that was not quite it (T16): its match, to tell a miss from not hearing at all.
+                if let Some((score, limit)) = wake.near_miss.take() { kit::main_thread(move || log(format!("near miss: a phrase matched {score:.3} (wakes under {limit:.3})"))); }
+                let Some(h) = h else { continue };
                 // The owner's voice, when the profile has it (ownerChecked).
                 let mut verdict = if h.ok { "detected" } else { "rejected" };
                 let mut voice = Value::Null;
@@ -255,6 +258,7 @@ fn start_worker() {
                         let (ok, s) = o.check(&current["voice"], &h.clip);
                         voice = json!(s);
                         if ok == Some(false) { verdict = "rejected"; wake.refused(); }
+                        if ok.is_none() { let s2 = s; kit::main_thread(move || log(format!("the owner's voice check could not tell (score {s2:.3})"))); }
                     }
                 }
                 let (kw, score, via) = (h.keyword.clone(), h.score, h.via);
@@ -289,6 +293,9 @@ fn mic(out: mpsc::Sender<Vec<f32>>, stop: Arc<AtomicBool>) -> Result<(), String>
             let dev = host.default_input_device().ok_or("no microphone")?;
             let cfg = dev.default_input_config().map_err(|e| e.to_string())?;
             let (rate, ch) = (cfg.sample_rate().0 as usize, cfg.channels() as usize);
+            // What it hears from (T16): to tell a wrong device or format from a quiet microphone.
+            let what = format!("microphone: {} ({:?}, {} Hz, {} channel{}), to 16 kHz mono", dev.name().unwrap_or_else(|_| "?".into()), cfg.sample_format(), rate, ch, if ch == 1 { "" } else { "s" });
+            kit::main_thread(move || log(what));
             let (tx, rx) = mpsc::channel::<Vec<f32>>();
             let err = |e| eprintln!("[voice-wake] microphone: {e}");
             let stream = match cfg.sample_format() {
@@ -302,9 +309,18 @@ fn mic(out: mpsc::Sender<Vec<f32>>, stop: Arc<AtomicBool>) -> Result<(), String>
         let (stream, rate, rx) = match setup() { Ok(x) => { let _ = ready_tx.send(Ok(())); x } Err(e) => { let _ = ready_tx.send(Err(e)); return; } };
         let _keep = stream;
         let mut down = engine::To16::new(rate);
+        // The input level, logged every 30 s: its loudest 100 ms and its median (dBFS).
+        let (mut lv, mut acc, mut n, mut since) = (Vec::<f64>::new(), 0f64, 0usize, Instant::now());
         while !stop.load(Ordering::Relaxed) {
             while let Ok(b) = rx.try_recv() {
                 let o = down.push(&b);
+                for x in &o { acc += (*x as f64).powi(2); n += 1; if n == enroll::RATE / 10 { lv.push(10.0 * (acc / n as f64 + 1e-12).log10()); acc = 0.0; n = 0; } }
+                if since.elapsed() >= Duration::from_secs(30) && !lv.is_empty() {
+                    lv.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                    let line = format!("input level: loudest {:.0} dBFS, median {:.0} dBFS", lv[lv.len() - 1], lv[lv.len() / 2]);
+                    kit::main_thread(move || log(line));
+                    lv.clear(); since = Instant::now();
+                }
                 if !o.is_empty() && out.send(o).is_err() { return; }
             }
             std::thread::sleep(Duration::from_millis(20));

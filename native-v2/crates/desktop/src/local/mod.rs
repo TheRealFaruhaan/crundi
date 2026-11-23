@@ -147,13 +147,52 @@ pub fn import_from(electron: &Path, cfg: &Path) -> Vec<String> {
     took
 }
 
+/// Copy a folder's files (recursively) where none are yet.
+fn copy_tree(from: &Path, to: &Path) -> bool {
+    let Ok(rd) = std::fs::read_dir(from) else { return false };
+    if std::fs::create_dir_all(to).is_err() { return false; }
+    let mut ok = true;
+    for e in rd.flatten() {
+        let (f, t) = (e.path(), to.join(e.file_name()));
+        if f.is_dir() { ok &= copy_tree(&f, &t); } else if !t.exists() { ok &= std::fs::copy(&f, &t).is_ok(); }
+    }
+    ok
+}
+
+/// Hey Cru's training (T16), once, apart from the import above (an install
+/// that already ran it still takes it): Electron's voice-wake folder (its
+/// profile.json with the owner's voice prints, speaker/ and the wake word
+/// model) when its profile is one this client reads and the client has none
+/// of its own. The marker is voice-wake/electron-import.json.
+pub fn import_voice_wake(electron: &Path, cfg: &Path) -> Vec<String> {
+    let (from, to) = (electron.join("voice-wake"), cfg.join("voice-wake"));
+    let marker = to.join("electron-import.json");
+    if marker.exists() || !from.join("profile.json").is_file() { return vec![]; }
+    let mut took = vec![];
+    let prof: Value = std::fs::read(from.join("profile.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+    let readable = crate::wake::enroll::valid_profile(&prof);
+    if std::fs::create_dir_all(&to).is_err() { return vec![]; }
+    if readable && !to.join("profile.json").exists() && take(&from, &to, "profile.json") { took.push("voice-wake/profile.json".to_string()); }
+    if let Ok(rd) = std::fs::read_dir(&from) {
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().to_string();
+            // The models (speaker/, the sherpa keyword model); not Electron's own sherpa-onnx runtime.
+            if e.path().is_dir() && (n == "speaker" || n.starts_with("sherpa-onnx-kws")) && copy_tree(&e.path(), &to.join(&n)) { took.push(format!("voice-wake/{n}")); }
+        }
+    }
+    let _ = std::fs::write(&marker, json!({ "from": from, "took": took, "profile": if readable { "readable" } else { "not this client's format" }, "at": chrono::Utc::now().to_rfc3339() }).to_string());
+    took
+}
+
 // ─── Local mode ───
 
 /// Set up at the desktop's init (before the session starts): the import,
 /// the edition and mode, the shell's hooks; local mode starts its server.
 pub fn init(cx: &mut gpui::App) {
     let took = if import_allowed_for(crundi_core::driver::port().is_some(), &config_home(), &real_config_home()) {
-        import_from(&user_data(), &crundi_core::store::config_dir())
+        let mut t = import_from(&user_data(), &crundi_core::store::config_dir());
+        t.extend(import_voice_wake(&user_data(), &crundi_core::store::config_dir()));
+        t
     } else { eprintln!("[lifecycle] Test driver on: not importing from the person's own Electron settings"); vec![] };
     if !took.is_empty() { eprintln!("[lifecycle] Took from Electron's settings: {}", took.join(", ")); }
     let b = bundled();
@@ -334,6 +373,28 @@ pub fn props() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T16: Electron's Hey Cru training is taken once into a fresh profile
+    /// dir (profile, speaker/, the keyword model; not Electron's runtime), and
+    /// read by the client as trained; a second start takes nothing.
+    #[test]
+    fn imports_electron_voice_wake_once() {
+        let t = std::env::temp_dir().join(format!("vw-import-{}", std::process::id()));
+        let (el, cfg) = (t.join("Crundi Client"), t.join("crundi-native"));
+        let vw = el.join("voice-wake");
+        for d in ["speaker", "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01", "sherpa-onnx-2.0.1"] { std::fs::create_dir_all(vw.join(d)).unwrap(); std::fs::write(vw.join(d).join("f.onnx"), d).unwrap(); }
+        let prof = json!({ "version": 4, "keyword": "\u{2581}HE Y \u{2581}C RU :1.5 #0.2 @HEY_CRU", "keywordsScore": 1.5, "keywordsThreshold": 0.2, "limit": 3.85, "phraseFrames": 81, "templates": [[[0.0]], [[0.0]], [[0.0]]] });
+        std::fs::write(vw.join("profile.json"), prof.to_string()).unwrap();
+        let took = import_voice_wake(&el, &cfg);
+        assert!(took.contains(&"voice-wake/profile.json".to_string()), "{took:?}");
+        assert!(took.contains(&"voice-wake/speaker".to_string()) && took.iter().any(|x| x.starts_with("voice-wake/sherpa-onnx-kws")), "{took:?}");
+        assert!(!cfg.join("voice-wake/sherpa-onnx-2.0.1").exists(), "not Electron's runtime");
+        let got: Value = serde_json::from_slice(&std::fs::read(cfg.join("voice-wake/profile.json")).unwrap()).unwrap();
+        assert!(crate::wake::enroll::valid_profile(&got), "the client reads it as trained");
+        assert_eq!(got["keywordsThreshold"], json!(0.2));
+        assert!(import_voice_wake(&el, &cfg).is_empty(), "once");
+        let _ = std::fs::remove_dir_all(&t);
+    }
 
     #[test]
     fn the_env_setup_save_writes() {

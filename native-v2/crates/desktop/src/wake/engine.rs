@@ -274,6 +274,9 @@ impl To16 {
     }
 }
 
+/// The phrase match a wake needs (the profile's limit; lower is closer).
+fn profile_limit(p: &Value) -> f64 { p["limit"].as_f64().unwrap_or(0.0) }
+
 pub struct Heard { pub ok: bool, pub keyword: String, pub score: f64, pub via: &'static str, pub clip: Vec<f32> }
 
 pub struct Wake {
@@ -286,13 +289,15 @@ pub struct Wake {
     filled: usize,
     at: usize,
     last_hit: Option<std::time::Instant>,
+    /// The last phrase that did not wake but came within twice its limit: (its match, the limit).
+    pub near_miss: Option<(f64, f64)>,
 }
 
 impl Wake {
     pub fn new(profile: &Value) -> Result<Wake, String> {
         if !enroll::valid_profile(profile) { return Err("Hey Cru is not trained".into()); }
         let spot = Spotter::new(&enroll::listen_lines(profile), profile["keywordsScore"].as_f64().unwrap_or(1.5) as f32, profile["keywordsThreshold"].as_f64().unwrap_or(0.2) as f32, true)?;
-        Ok(Wake { tpl: enroll::templates_of(profile), profile: profile.clone(), spot, seg: enroll::Segmenter::new(), loose: None, ring: vec![0.0; (VERIFY_SECONDS * RATE as f32) as usize], filled: 0, at: 0, last_hit: None })
+        Ok(Wake { tpl: enroll::templates_of(profile), profile: profile.clone(), spot, seg: enroll::Segmenter::new(), loose: None, ring: vec![0.0; (VERIFY_SECONDS * RATE as f32) as usize], filled: 0, at: 0, last_hit: None, near_miss: None })
     }
 
     fn push(&mut self, s: &[f32]) {
@@ -323,6 +328,8 @@ impl Wake {
             };
             let (ok, score, _) = enroll::match_phrase(&profile, &tpl, &b, Some(&mut confirm));
             self.tpl = tpl;
+            let limit = profile_limit(&self.profile);
+            if !ok && score.is_finite() && limit > 0.0 && score < limit * 2.0 { self.near_miss = Some((score, limit)); }
             if ok {
                 self.last_hit = Some(std::time::Instant::now());
                 let clip = enroll::trim(&b, 100).map(|c| c.to_vec()).unwrap_or(b);
