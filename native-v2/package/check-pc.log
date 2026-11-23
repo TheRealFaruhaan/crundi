@@ -7,18 +7,18 @@ v22.23.5
 == Worker (Ubuntu 24.04, the PC's Rust toolchain) (0 s)
 -rwxr-xr-x 2 farhan farhan 4662800 Nov 23 13:36 /home/farhan/.cache/crundi-pack/worker-target/release/crundi-worker
 
-== Server node_modules (built by the bundled Node, Ubuntu 24.04) (55 s)
+== Server node_modules (built by the bundled Node, Ubuntu 24.04) (1 s)
 the client binary needs glibc 2.43: upgrade test on Ubuntu 26.04
 
-== Stage and .deb (full) (55 s)
+== Stage and .deb (full) (1 s)
 /home/farhan/.cache/crundi-pack/stage-full
 /home/farhan/.cache/crundi-pack/dist/Crundi-1.21.8-dev.8-linux-x64.deb
 
-== Stage and .deb (client) (121 s)
+== Stage and .deb (client) (64 s)
 /home/farhan/.cache/crundi-pack/stage-client
 /home/farhan/.cache/crundi-pack/dist/Crundi-Client-1.21.8-dev.8-linux-x64.deb
 
-== Docker upgrade test (full): Crundi-1.21.7-linux-x64.deb -> Crundi-1.21.8-dev.8-linux-x64.deb (186 s)
+== Docker upgrade test (full): Crundi-1.21.7-linux-x64.deb -> Crundi-1.21.8-dev.8-linux-x64.deb (136 s)
 == apt
 == Electron: old.deb
 ok    Electron crundi installed (1.21.7)
@@ -36,7 +36,7 @@ ok    Electron's userData is /home/tester/.config/crundi-desktop
 user data: 5 files
 == Native: new.deb
 ok    apt installs the new .deb over Electron's
-  took 11 s
+  took 12 s
 ok    one crundi package, version 1.21.8-dev.8
 ok    Electron's files are gone (app.asar, libffmpeg)
 ok    /opt/Crundi/crundi is the native client
@@ -61,20 +61,20 @@ ok    it starts the native client
 ok    one autostart entry
 ok    the server from /opt/Crundi/server answers on :4861
 ok    /opt/Crundi/version is 1.21.8-dev.8
-ok    client running after 12 s
+ok    client running after 11 s
 ok    the client reports version 1.21.8-dev.8
   updater: [update] Up to date
 ok    it offers no update to its own version or older ([update] Up to date)
 ok    the client started the bundled server (473)
-ok    …and it answers on :46213
+ok    …and it answers on :34581
 == Remove
 ok    remove takes the files
 ok    remove keeps the data
-size: native 208 MB (.deb), Electron 353 MB
+size: native 209 MB (.deb), Electron 353 MB
 
 Linux upgrade test passed (full)
 
-== Docker upgrade test (client): Crundi-Client-1.21.7-linux-x64.deb -> Crundi-Client-1.21.8-dev.8-linux-x64.deb (251 s)
+== Docker upgrade test (client): Crundi-Client-1.21.7-linux-x64.deb -> Crundi-Client-1.21.8-dev.8-linux-x64.deb (590 s)
 == apt
 == Electron: old.deb
 ok    Electron crundi-client installed (1.21.7)
@@ -109,7 +109,7 @@ ok    launch at login kept, unchanged
 ok    it starts the native client
 ok    one autostart entry
 ok    /opt/Crundi Client/version is 1.21.8-dev.8
-ok    client running after 11 s
+ok    client running after 12 s
 ok    the client reports version 1.21.8-dev.8
   updater: [update] Up to date
 ok    it offers no update to its own version or older ([update] Up to date)
@@ -120,12 +120,12 @@ size: native 137 MB (.deb), Electron 87 MB
 
 Linux upgrade test passed (client)
 
-== Sizes (477 s)
-Crundi-1.21.8-dev.8-linux-x64.deb             207 MB
+== Sizes (915 s)
+Crundi-1.21.8-dev.8-linux-x64.deb             208 MB
 Crundi-Client-1.21.8-dev.8-linux-x64.deb      136 MB
 Crundi-1.21.7-linux-x64.deb                   352 MB
 Crundi-Client-1.21.7-linux-x64.deb             86 MB
 installed full     native   766 MB
 installed client   native   430 MB
 
-package check passed (477 s)
+package check passed (915 s)

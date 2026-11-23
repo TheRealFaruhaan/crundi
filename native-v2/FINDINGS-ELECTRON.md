@@ -1,3 +1,27 @@
+# Tester: fix round 5 verified on 133b76e8 (farhan-RP-15, Xvfb, fresh test servers on 4830)
+
+| Check | Result |
+|---|---|
+| cargo test --workspace | 396 passed, 0 failed |
+| electron.mjs (all parts, with the new window part) | 133/0 (local 84/0) |
+| chat-tail (stub) / operations full order / desktop / shell / workbench | 28/0, 432/0, 395/0, 34/0, 73/0 |
+| check.sh both (Docker upgrade from v1.21.7, both editions) | passed, 915 s (one earlier try hung in the container's apt-get update on a slow Ubuntu mirror; stopped and run again) |
+| Local mode from the package layout (stage-full of this head) | 91/0: chat streams, the worker as kind native, Electron's device id kept, Quit leaves no process (by PID) |
+| Package workflow | No run on this head: GitHub refuses the push (the token has no `workflow` scope and d5c6d60e changes native-v2-package.yml). Last green: 45146419021 (36d0e720); 45153765294 (e3f0626b, without the Kid lock step) windows success, linux in progress |
+
+| Item | Verified | How |
+|---|---|---|
+| F1 (F9) | yes, 20 of 23 lines | Lines 36-43 by electron/window.mjs (frameless, Minimize/Maximize/× by real clicks, tray icon, tooltip, click), 67 cargo test, 98 gaps.mjs clear per site, 111 local.mjs device id; the rest name suites that passed above. Not yet: 66 and 68 (their Windows tests are in a workflow step GitHub does not have, so they never ran) and 94 (PARTIAL, DevTools, F4) |
+| F2 (N4) | yes | operations.mjs in full order 432/0 |
+| F3 (N5) | yes | chat-tail.mjs 28/0; screens/electron/local-chat-streaming.png at the same moment as before: "twenty-s" right under "twenty-six", no blank row |
+
+New:
+- The Kid lock step in native-v2-package.yml (committed in d5c6d60e) is not on GitHub: pushing needs a token with `workflow` scope (the owner). Until it runs green on windows-latest, PARITY 66 and 68 are not tested, and no branch holding this head can be pushed.
+- PARITY 94 is PARTIAL (F4): the CR's first Done-when needs it done, or the owner's word that DevTools can be left out.
+- PARITY 56 and 58 say DONE but name no test (test/electron/updates.mjs, local.mjs "first-run consent…" cover them).
+
+---
+
 # Tester: fix round 4 verified on 7fd41030 (farhan-RP-15, Xvfb, fresh test servers on 4830)
 
 ## The full pass
