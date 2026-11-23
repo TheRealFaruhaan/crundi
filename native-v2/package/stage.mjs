@@ -5,6 +5,7 @@
 //   crundi[.exe] | crundi-client[.exe]   the native client (crundi-v2, renamed)
 //   crundi-browser-host[.exe] + CEF's files
 //   crundi-worker[.exe]                  the worker from worker/
+//   version                              package.json's version (the client reads it: lifecycle::version)
 //   node/                                Node 22 (Linux node/bin/node, Windows node/node.exe); all-in-one only
 //   server/                              src/, app/vendor/ and app/homepool-node.js, scripts/, skills/, assets/, package.json,
 //                                        .env.example and the production node_modules (built for that Node)
@@ -15,10 +16,11 @@
 //        --worker FILE  the built crundi-worker
 //        --node DIR     an unpacked Node 22 for the target OS (all-in-one)
 //        [--modules DIR] a server/node_modules already installed (skips npm ci)
+//        [--version V]  the version (default package.json's)
 //
 // The edition is only whether server/ exists (CONTRACT.md, "Editions").
 
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, copyFileSync, chmodSync, statSync } from 'node:fs';
+import { writeFileSync, readFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, copyFileSync, chmodSync, statSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -52,6 +54,9 @@ const put = (from, to) => {
 put(join(bin, exe('crundi-v2')), join(out, exe(full ? 'crundi' : 'crundi-client')));
 put(join(bin, exe('crundi-browser-host')), join(out, exe('crundi-browser-host')));
 put(worker, join(out, exe('crundi-worker')));
+// The release's version, for the client to report and the updater to compare.
+const version = (args.version || JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).version).replace(/^v/, '');
+writeFileSync(join(out, 'version'), `${version}\n`);
 
 // CEF next to the host, as native-gpui/scripts/stage-cef.mjs stages it (real copies).
 const skip = new Set(['include', 'cmake', 'libcef_dll', 'CMakeLists.txt', 'CREDITS.html', 'archive.json', 'README.txt', 'LICENSE.txt',

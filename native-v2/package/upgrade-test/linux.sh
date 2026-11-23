@@ -101,10 +101,28 @@ fi
 
 # The native client itself, as the desktop entry starts it: report whether it
 # stays up and, all-in-one, whether it starts the bundled server.
+check "/opt/$NAME/version is $VERSION" "[ \"\$(cat '/opt/$NAME/version' 2>/dev/null)\" = '$VERSION' ]"
 as_tester "/opt/$NAME/$EXE" >/tmp/client.log 2>&1 & CPID=$!
-sleep 20
-echo "client running after 20 s: $(kill -0 $CPID 2>/dev/null && echo yes || echo no)"
-[ "$EDITION" != client ] && echo "client started the bundled server: $(pgrep -u tester -f "/opt/$NAME/server/src/index.js" >/dev/null && echo yes || echo no)"
+CLOG="$H/.config/crundi-native/crundi.log"
+# The first update check is 8 s after launch (the carried update-config: on, dev).
+for i in $(seq 40); do grep -qE '\[update\] (Up to date|Available|check failed)' "$CLOG" 2>/dev/null && break; sleep 1; done
+check "client running after $i s" "kill -0 $CPID 2>/dev/null"
+check "the client reports version $VERSION" "grep -q '\[lifecycle\] version=$VERSION ' '$CLOG'"
+UPD=$(grep -oE '\[update\] (Up to date|Available: .*|check failed.*)' "$CLOG" | tail -1); echo "  updater: $UPD"
+OFFER=$(echo "$UPD" | sed -n 's/^\[update\] Available: //p')
+check "it offers no update to its own version or older ($UPD)" "[ \"\$UPD\" = '[update] Up to date' ] || [[ '$OFFER' != *-* && -n '$OFFER' && '$VERSION' == '$OFFER'-* ]] || { [ -n '$OFFER' ] && [ '$OFFER' != '$VERSION' ] && [ \"\$(printf '%s\n%s\n' '$VERSION' '$OFFER' | sort -V | tail -1)\" = '$OFFER' ]; }"
+if [ "$EDITION" != client ]; then
+  # The server the client starts (startBot): its port from the line the client reads, then it answers.
+  CPORT=; CUP=
+  for i in $(seq 90); do
+    CPORT=$(grep -oE 'HTTP server on [^ ]*:[0-9]+' /tmp/client.log | tail -1 | sed 's/.*://')
+    [ -n "$CPORT" ] && curl -s -o /dev/null "http://127.0.0.1:$CPORT/" && { CUP=1; break; }
+    sleep 1
+  done
+  check "the client started the bundled server ($(pgrep -u tester -f "/opt/$NAME/server/src/index.js" | head -1))" "pgrep -u tester -f '/opt/$NAME/server/src/index.js' >/dev/null"
+  check "…and it answers on :${CPORT:-?}" "[ -n '$CUP' ]"
+  [ -z "$CUP" ] && tail -40 /tmp/client.log
+fi
 for p in $(pgrep -u tester -f "/opt/$NAME/"); do kill "$p" 2>/dev/null; done
 sleep 2; for p in $(pgrep -u tester -f "/opt/$NAME/"); do kill -9 "$p" 2>/dev/null; done
 
