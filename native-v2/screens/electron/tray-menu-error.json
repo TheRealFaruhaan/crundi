@@ -1,0 +1,119 @@
+{
+  "tooltip": "Crundi — Error",
+  "menu": [
+    {
+      "id": "head",
+      "label": "Crundi",
+      "enabled": false,
+      "checked": null
+    },
+    {
+      "id": "-",
+      "label": "",
+      "enabled": false,
+      "checked": null
+    },
+    {
+      "id": "status",
+      "label": "Error",
+      "enabled": false,
+      "checked": null
+    },
+    {
+      "id": "-",
+      "label": "",
+      "enabled": false,
+      "checked": null
+    },
+    {
+      "id": "open",
+      "label": "Open",
+      "enabled": true,
+      "checked": null
+    },
+    {
+      "id": "lock-visible",
+      "label": "Lock (visible)",
+      "enabled": true,
+      "checked": null
+    },
+    {
+      "id": "lock-full",
+      "label": "Lock (full)",
+      "enabled": true,
+      "checked": null
+    },
+    {
+      "id": "kid",
+      "label": "Kid mode",
+      "enabled": true,
+      "checked": null
+    },
+    {
+      "id": "server",
+      "label": "Server…",
+      "enabled": true,
+      "checked": null
+    },
+    {
+      "id": "-",
+      "label": "",
+      "enabled": false,
+      "checked": null
+    },
+    {
+      "id": "start",
+      "label": "Start",
+      "enabled": true,
+      "checked": null
+    },
+    {
+      "id": "stop",
+      "label": "Stop",
+      "enabled": false,
+      "checked": null
+    },
+    {
+      "id": "-",
+      "label": "",
+      "enabled": false,
+      "checked": null
+    },
+    {
+      "id": "wake",
+      "label": "Listen for \"Hey Cru\" while plugged in",
+      "enabled": false,
+      "checked": false
+    },
+    {
+      "id": "wake-note",
+      "label": "    Train it first in Settings, Voice assistant",
+      "enabled": false,
+      "checked": null
+    },
+    {
+      "id": "-",
+      "label": "",
+      "enabled": false,
+      "checked": null
+    },
+    {
+      "id": "update",
+      "label": "Check for Updates…",
+      "enabled": true,
+      "checked": null
+    },
+    {
+      "id": "-",
+      "label": "",
+      "enabled": false,
+      "checked": null
+    },
+    {
+      "id": "quit",
+      "label": "Quit",
+      "enabled": true,
+      "checked": null
+    }
+  ]
+}
