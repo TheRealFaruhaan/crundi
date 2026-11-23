@@ -46,7 +46,9 @@ export async function run(T, t) {
   // decorations); gpui falls back to a frame (1) only where no compositor runs, as on Xvfb.
   const mwm = /_MOTIF_WM_HINTS\(_MOTIF_WM_HINTS\) = 0x2, 0x0, 0x([01]), 0x0, 0x0/.exec(props);
   t.check('…frameless: the decorations asked of the window manager (none with a compositor)', !!mwm, props.match(/_MOTIF_WM_HINTS.*/)?.[0]);
-  t.check('…the app\'s class and its icon', /WM_CLASS\(STRING\) = "crundi"/.test(props) && /_NET_WM_ICON\(CARDINAL\)/.test(props), props.match(/WM_CLASS.*/)?.[0]);
+  // FINDINGS T6: the class is the .desktop entry's StartupWMClass (the client edition
+  // here: crundi-client.desktop, StartupWMClass=Crundi Client), so the window groups under it.
+  t.check('…the app\'s class (StartupWMClass "Crundi Client") and its icon', /WM_CLASS\(STRING\) = "Crundi Client", "Crundi Client"/.test(props) && /_NET_WM_ICON\(CARDINAL\)/.test(props), props.match(/WM_CLASS.*/)?.[0]);
 
   // The top bar's buttons, clicked as a person would.
   const at = async (words) => { const b = await T.ui('find', words); return b.ok ? { x: b.x + b.w / 2, y: b.y + b.h / 2 } : null; };

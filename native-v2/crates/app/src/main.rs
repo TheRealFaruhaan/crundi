@@ -102,7 +102,7 @@ fn open_main(stores: &crundi_shell::Stores, bounds: Bounds<Pixels>, cx: &mut App
         window_min_size: Some(size(T::WINDOW_MIN_W, T::WINDOW_MIN_H)),
         titlebar: None,
         window_decorations: Some(WindowDecorations::Client),
-        app_id: Some("crundi".into()),
+        app_id: Some(crundi_shell::lifecycle::window_class(gpui::guess_compositor() == "Wayland").into()),
         icon: app_icon(),
         ..Default::default()
     };

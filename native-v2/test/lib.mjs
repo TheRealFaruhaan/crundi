@@ -35,6 +35,18 @@ const SCREENS = process.env.SCREENS_DIR || fileURLToPath(new URL('../screens/', 
 // This worktree's own client (tools/build.sh links it into .bin/debug),
 // unless NATIVE_BIN says otherwise: never another worktree's build left in
 // the shared target folder (F118). Set on import, for every suite.
+// FINDINGS T19: never the desktop's own session bus. A client on it puts a
+// tray icon in the person's top bar, can take their global shortcuts and post
+// real notifications. Unset is no better: D-Bus then falls back to
+// $XDG_RUNTIME_DIR/bus, the same bus. Every suite runs under dbus-run-session.
+{
+  const bus = process.env.DBUS_SESSION_BUS_ADDRESS || '';
+  if (process.platform === 'linux' && (!bus || /^unix:path=\/run\/user\/\d+\/bus$/.test(bus))) {
+    console.error('Run under dbus-run-session: this is the desktop\'s own session bus (the tray and notifications would reach it).');
+    process.exit(2);
+  }
+}
+
 const OWN_BIN = fileURLToPath(new URL('../.bin/debug/crundi-v2', import.meta.url));
 if (!process.env.NATIVE_BIN && existsSync(OWN_BIN)) process.env.NATIVE_BIN = OWN_BIN;
 
@@ -169,7 +181,6 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
   // behind it (the window is on Xvfb). Without it, as on the Crundi server
   // (test/desktop/tray.mjs then skips its bus check); under
   // dbus-run-session the private bus stays.
-  if (process.env.DBUS_SESSION_BUS_ADDRESS === `unix:path=/run/user/${process.getuid?.()}/bus`) delete process.env.DBUS_SESSION_BUS_ADDRESS;
   const env = { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_OPEN_URL_FILE: join(configDir, 'open-url.txt'), ZED_MEASUREMENTS: '1' };
   delete env.WAYLAND_DISPLAY;
   // A CEF profile of the suite's own (gone with the config folder): never
