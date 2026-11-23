@@ -661,7 +661,7 @@ impl Render for LogView {
         self.tail.act_seen = act.is_some();
         self.tail.act_inline = act == Some(false);
         if act != Some(true) { activity::begin(self, cx); }
-        let room = if act == Some(true) { room + activity::height(self.fs()) } else { room };
+        let room = self.foot_room(cx);
         self.tail.room = room;
         let geo = tail::measure(self, cx);
         // The pointer while a press is held, wherever it goes (over the
