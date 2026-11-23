@@ -323,7 +323,7 @@ fn mic(out: mpsc::Sender<Vec<f32>>, stop: Arc<AtomicBool>) -> Result<(), String>
             let cfg = dev.default_input_config().map_err(|e| e.to_string())?;
             let (rate, ch) = (cfg.sample_rate().0 as usize, cfg.channels() as usize);
             // What it hears from (T16): to tell a wrong device or format from a quiet microphone.
-            let what = format!("microphone: {} ({:?}, {} Hz, {} channel{}), levelled, low-passed to 16 kHz mono", dev.name().unwrap_or_else(|_| "?".into()), cfg.sample_format(), rate, ch, if ch == 1 { "" } else { "s" });
+            let what = format!("microphone: {} ({:?}, {} Hz, {} channel{}), denoised, low-passed to 16 kHz mono", dev.name().unwrap_or_else(|_| "?".into()), cfg.sample_format(), rate, ch, if ch == 1 { "" } else { "s" });
             kit::main_thread(move || log(what));
             let (tx, rx) = mpsc::channel::<Vec<f32>>();
             let err = |e| eprintln!("[voice-wake] microphone: {e}");

@@ -37,14 +37,14 @@ impl Clean {
         Clean { step: rate as f64 / OUT_RATE as f64, pos: 0.0, last: 0.0, frame: Vec::with_capacity(FRAME), ns: DenoiseState::new(), out: vec![0.0; FRAME], level: 0.0, gain: 1.0, warm: false, denoise: true }
     }
 
-    /// For the wake word (V2): the level brought up as Chromium's
-    /// autoGainControl does, but the audio itself not denoised. The keyword
-    /// model was trained on natural, noisy speech; RNNoise's output hides
-    /// "Hey Cru" from it (on the owner's PC it heard the word in 1 of 5
-    /// takes). CRUNDI_WAKE_DENOISE=1 denoises as before.
+    /// For the wake word: denoised as for voice (the phrase segmenter and
+    /// the takes' trimming need the fan noise gone: without it, on the
+    /// owner's PC, noise came through as phrases and his takes stretched to
+    /// 1.4 s). CRUNDI_WAKE_DENOISE=0 gives the audio undenoised (levelled
+    /// only), to compare.
     pub fn for_wake(rate: u32) -> Clean {
         let mut c = Clean::new(rate);
-        c.denoise = std::env::var("CRUNDI_WAKE_DENOISE").is_ok_and(|v| v == "1");
+        c.denoise = !std::env::var("CRUNDI_WAKE_DENOISE").is_ok_and(|v| v == "0");
         c
     }
 
