@@ -636,6 +636,13 @@ fn prepaint_view(
                 // deferred (an anchored popover is placed in window
                 // coordinates) or changed size. It renders once in view again.
                 let mut element_state = element_state;
+                // (T8: a paint range the last scene doesn't hold is stale:
+                // the view renders, its ranges are not used.)
+                if let Some(st) = element_state.as_mut()
+                    && !window.paint_range_valid(&st.paint_range)
+                {
+                    st.painted_in = 0;
+                }
                 // (Its bounds are part of its extent: only a view whose bounds
                 // are outside its clip is looked at further, so the common
                 // case costs two comparisons.)

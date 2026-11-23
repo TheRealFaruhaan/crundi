@@ -361,6 +361,8 @@ impl Render for PageView {
                 let (x, y) = this.at(e.position);
                 let dl = e.delta.pixel_delta(window.line_height());
                 let (dx, dy) = (f32::from(dl.x), f32::from(dl.y));
+                // (T7: a page takes a sideways scroll: the workbench strip doesn't.)
+                if dx.abs() > dy.abs() || e.modifiers.shift { window.claim_x(); }
                 engine::defer(move || engine::wheel(i, x, y, dx, dy));
             }))
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, _| this.key(&e.keystroke, true)))
