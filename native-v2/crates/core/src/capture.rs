@@ -30,11 +30,14 @@ pub struct Clean {
     warm: bool,
     /// Give out RNNoise's denoised audio (else the original, at the level RNNoise's voice detection sets).
     denoise: bool,
+    /// Also keep the original audio, at the same level, frame for frame (`push_both`).
+    keep_raw: bool,
+    raw_out: Vec<f32>,
 }
 
 impl Clean {
     pub fn new(rate: u32) -> Clean {
-        Clean { step: rate as f64 / OUT_RATE as f64, pos: 0.0, last: 0.0, frame: Vec::with_capacity(FRAME), ns: DenoiseState::new(), out: vec![0.0; FRAME], level: 0.0, gain: 1.0, warm: false, denoise: true }
+        Clean { step: rate as f64 / OUT_RATE as f64, pos: 0.0, last: 0.0, frame: Vec::with_capacity(FRAME), ns: DenoiseState::new(), out: vec![0.0; FRAME], level: 0.0, gain: 1.0, warm: false, denoise: true, keep_raw: false, raw_out: vec![] }
     }
 
     /// For the wake word: denoised as for voice (the phrase segmenter and
@@ -45,7 +48,17 @@ impl Clean {
     pub fn for_wake(rate: u32) -> Clean {
         let mut c = Clean::new(rate);
         c.denoise = !std::env::var("CRUNDI_WAKE_DENOISE").is_ok_and(|v| v == "0");
+        c.keep_raw = true;
         c
+    }
+
+    /// A block in: (the cleaned samples, the same samples not denoised, at
+    /// the same level), both at 48 kHz and of the same length (V2: the
+    /// keyword model hears the second, as Electron's heard Chromium's).
+    pub fn push_both(&mut self, x: &[f32]) -> (Vec<f32>, Vec<f32>) {
+        let c = self.push(x);
+        let r = std::mem::take(&mut self.raw_out);
+        (c, r)
     }
 
     /// A block in (mono, -1..1): the cleaned samples so far, at 48 kHz.
@@ -69,6 +82,7 @@ impl Clean {
 
     fn frame_done(&mut self, got: &mut Vec<f32>) {
         let vad = self.ns.process_frame(&mut self.out, &self.frame);
+        let raw = if self.keep_raw { self.frame.clone() } else { vec![] };
         if !self.denoise { self.out.copy_from_slice(&self.frame); }
         self.frame.clear();
         if !self.warm { self.warm = true; return; }
@@ -81,6 +95,7 @@ impl Clean {
         }
         let g = self.gain;
         got.extend(self.out.iter().map(|v| (v / 32768.0 * g).clamp(-1.0, 1.0)));
+        if self.keep_raw { self.raw_out.extend(raw.iter().map(|v| (v / 32768.0 * g).clamp(-1.0, 1.0))); }
     }
 }
 

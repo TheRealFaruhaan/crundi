@@ -352,9 +352,25 @@ pub enum Trained { Ok(Value), No { why: String, redo: Vec<usize> } }
 
 /// Train from five recordings; `make` builds the model with keyword lines and a threshold.
 pub fn train(recordings: &[Vec<f32>], make: &mut dyn FnMut(&str, f32) -> Option<Box<dyn Spot>>) -> Trained {
+    train_raw(recordings, None, make)
+}
+
+/// The part of `raw` (the segment not denoised, as long as it) that `clip`
+/// (a slice of `segment`) is; `clip` itself without one.
+pub fn same_span<'a>(segment: &[f32], clip: &'a [f32], raw: Option<&'a [f32]>) -> &'a [f32] {
+    let Some(r) = raw.filter(|r| r.len() == segment.len()) else { return clip };
+    let off = (clip.as_ptr() as usize).saturating_sub(segment.as_ptr() as usize) / std::mem::size_of::<f32>();
+    if off + clip.len() <= r.len() { &r[off..off + clip.len()] } else { clip }
+}
+
+/// [train], the keyword model hearing `raw`: each take not denoised (V2),
+/// when every take has one as long as it.
+pub fn train_raw(recordings: &[Vec<f32>], raw: Option<&[Vec<f32>]>, make: &mut dyn FnMut(&str, f32) -> Option<Box<dyn Spot>>) -> Trained {
+    let raw = raw.filter(|r| r.len() == recordings.len() && r.iter().zip(recordings).all(|(a, b)| a.len() == b.len()));
     let mut clips: Vec<Vec<f32>> = vec![];
+    let mut heard: Vec<Vec<f32>> = vec![];
     let mut redo = vec![];
-    for (i, r) in recordings.iter().enumerate() { match check_sample(r) { Ok(c) => clips.push(c.to_vec()), Err(_) => { clips.push(vec![]); redo.push(i); } } }
+    for (i, r) in recordings.iter().enumerate() { match check_sample(r) { Ok(c) => { heard.push(same_span(r, c, raw.map(|x| x[i].as_slice())).to_vec()); clips.push(c.to_vec()) }, Err(_) => { clips.push(vec![]); heard.push(vec![]); redo.push(i); } } }
     if !redo.is_empty() { return Trained::No { why: "Some recordings had nothing clear in them.".into(), redo }; }
     let templates: Vec<Feats> = clips.iter().map(|c| mfcc(c)).collect();
     let nearest: Vec<f64> = (0..templates.len()).map(|i| (0..templates.len()).filter(|j| *j != i).map(|j| distance(&templates[j], &templates[i])).fold(f64::INFINITY, f64::min)).collect();
@@ -378,7 +394,7 @@ pub fn train(recordings: &[Vec<f32>], make: &mut dyn FnMut(&str, f32) -> Option<
         let lines = competing_lines(CONFIRM_THRESHOLD, KEYWORDS_SCORE, &use_);
         let Some(mut spot) = make(&lines, CONFIRM_THRESHOLD) else { return Trained::No { why: "The keyword spotter could not be created (model files missing or damaged)".into(), redo: vec![] } };
         let mut more = false;
-        for c in &clips {
+        for c in &heard {
             for k in spotted(spot.as_mut(), &levelled(c)) {
                 if let Some(n) = k.strip_prefix("NOT_") { if let Some((name, _)) = DECOYS.iter().find(|(x, _)| *x == n) { if dropped.insert(name) { more = true; } } }
             }
@@ -391,7 +407,7 @@ pub fn train(recordings: &[Vec<f32>], make: &mut dyn FnMut(&str, f32) -> Option<
     let (mut best, mut most) = (THRESHOLDS.len() - 1, 0);
     for (t, th) in THRESHOLDS.iter().enumerate() {
         let Some(mut spot) = make(&competing_lines(*th, KEYWORDS_SCORE, &decoys), *th) else { continue };
-        let n = clips.iter().filter(|c| spotted(spot.as_mut(), c).iter().any(|k| k == WAKE)).count();
+        let n = heard.iter().filter(|c| spotted(spot.as_mut(), c).iter().any(|k| k == WAKE)).count();
         if n > most { most = n; best = t; }
         if n == clips.len() { break; }
     }
@@ -447,7 +463,14 @@ pub fn verify(p: &Value, tpl: &[Feats], recent: &[f32]) -> (bool, f64) {
 
 /// A burst matched against the owner's phrase; `confirm` is the model's second opinion.
 pub fn match_phrase(p: &Value, tpl: &[Feats], segment: &[f32], confirm: Option<&mut dyn FnMut(&[f32]) -> Vec<String>>) -> (bool, f64, &'static str) {
+    match_phrase_raw(p, tpl, segment, None, confirm)
+}
+
+/// [match_phrase], the model's second opinion on `raw`: the same segment
+/// not denoised (V2), the same samples as the trimmed clip.
+pub fn match_phrase_raw(p: &Value, tpl: &[Feats], segment: &[f32], raw: Option<&[f32]>, confirm: Option<&mut dyn FnMut(&[f32]) -> Vec<String>>) -> (bool, f64, &'static str) {
     let Ok(clip) = check_sample(segment) else { return (false, f64::INFINITY, "length") };
+    let heard = same_span(segment, clip, raw);
     let frames = pf(p, "phraseFrames");
     let len = (clip.len() as f64 - 400.0) / 160.0 + 1.0;
     if len < frames * LENGTH_RANGE.0 || len > frames * LENGTH_RANGE.1 { return (false, f64::INFINITY, "length"); }
@@ -462,7 +485,7 @@ pub fn match_phrase(p: &Value, tpl: &[Feats], segment: &[f32], confirm: Option<&
         if w > wl { return (false, score, "onset"); }
     }
     if let Some(c) = confirm {
-        let names = c(&levelled(clip));
+        let names = c(&levelled(heard));
         if !names.iter().any(|k| k == WAKE) { return (false, score, if names.is_empty() { "no word" } else { "decoy" }); }
         if (p.get("modelHeard").and_then(|v| v.as_i64()).unwrap_or(0)) < MODEL_TRUSTED && names.iter().any(|k| k != WAKE) { return (false, score, "decoy"); }
     }

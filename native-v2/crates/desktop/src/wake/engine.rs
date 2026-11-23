@@ -308,6 +308,8 @@ pub struct Wake {
     filled: usize,
     at: usize,
     last_hit: Option<std::time::Instant>,
+    /// The last few seconds not denoised (V2): what the keyword model hears.
+    raw_hist: Vec<f32>,
     /// The last phrase that did not wake but came within twice its limit:
     /// (its match, the limit, the gate that refused it, the burst at 16 kHz).
     pub near_miss: Option<(f64, f64, &'static str, Vec<f32>)>,
@@ -317,7 +319,7 @@ impl Wake {
     pub fn new(profile: &Value) -> Result<Wake, String> {
         if !enroll::valid_profile(profile) { return Err("Hey Cru is not trained".into()); }
         let spot = Spotter::new(&enroll::listen_lines(profile), profile["keywordsScore"].as_f64().unwrap_or(1.5) as f32, profile["keywordsThreshold"].as_f64().unwrap_or(0.2) as f32, true)?;
-        Ok(Wake { tpl: enroll::templates_of(profile), profile: profile.clone(), spot, seg: enroll::Segmenter::new(), loose: None, ring: vec![0.0; (VERIFY_SECONDS * RATE as f32) as usize], filled: 0, at: 0, last_hit: None, near_miss: None })
+        Ok(Wake { tpl: enroll::templates_of(profile), profile: profile.clone(), spot, seg: enroll::Segmenter::new(), loose: None, ring: vec![0.0; (VERIFY_SECONDS * RATE as f32) as usize], filled: 0, at: 0, last_hit: None, raw_hist: vec![], near_miss: None })
     }
 
     fn push(&mut self, s: &[f32]) {
@@ -334,9 +336,18 @@ impl Wake {
     }
 
     /// A block of 16 kHz samples in: a wake (or a refused one), or nothing.
-    pub fn accept(&mut self, samples: &[f32]) -> Option<Heard> {
+    pub fn accept(&mut self, samples: &[f32]) -> Option<Heard> { self.accept_both(samples, samples) }
+
+    /// A block in, cleaned (the phrase, its match, the owner's voice) and
+    /// the same block not denoised (V2: the keyword model's, as Electron's
+    /// model heard Chromium's audio, not RNNoise's).
+    pub fn accept_both(&mut self, samples: &[f32], raw: &[f32]) -> Option<Heard> {
+        let raw = if raw.len() == samples.len() { raw } else { samples };
         self.push(samples);
-        let k = self.spot.accept(samples);
+        self.raw_hist.extend_from_slice(raw);
+        let keep = RATE * 4;
+        if self.raw_hist.len() > keep { let cut = self.raw_hist.len() - keep; self.raw_hist.drain(..cut); }
+        let k = self.spot.accept(raw);
         let burst = self.seg.accept(samples);
         if self.last_hit.is_some_and(|t| t.elapsed().as_millis() as u64 <= COOLDOWN_MS) { return None; }
         if let Some(b) = burst {
@@ -346,7 +357,9 @@ impl Wake {
                 if loose.is_none() { *loose = Spotter::new(&enroll::confirm_lines(&profile), profile["keywordsScore"].as_f64().unwrap_or(1.5) as f32, enroll::CONFIRM_THRESHOLD, false).ok(); }
                 match loose.as_mut() { Some(s) => enroll::spotted(s, clip), None => vec![] }
             };
-            let (ok, score, why) = enroll::match_phrase(&profile, &tpl, &b, Some(&mut confirm));
+            // The burst ends with this block: its undenoised twin, the same last samples.
+            let raw_b = (b.len() <= self.raw_hist.len()).then(|| self.raw_hist[self.raw_hist.len() - b.len()..].to_vec());
+            let (ok, score, why) = enroll::match_phrase_raw(&profile, &tpl, &b, raw_b.as_deref(), Some(&mut confirm));
             self.tpl = tpl;
             let limit = profile_limit(&self.profile);
             if !ok && score.is_finite() && limit > 0.0 && score < limit * 2.0 { self.near_miss = Some((score, limit, why, b.clone())); }
@@ -367,13 +380,16 @@ impl Wake {
 
     /// The owner's voice refused it: the cooldown does not hide the next.
     pub fn refused(&mut self) { self.last_hit = None; }
-    pub fn reset(&mut self) { self.spot.reset(); self.seg.reset(); self.filled = 0; self.at = 0; }
+    pub fn reset(&mut self) { self.spot.reset(); self.seg.reset(); self.filled = 0; self.at = 0; self.raw_hist.clear(); }
 }
 
 /// Train from five recordings, with the owner's voice when its model is there.
-pub fn train_with_voice(recordings: &[Vec<f32>]) -> Result<(Value, String), (String, Vec<usize>)> {
+pub fn train_with_voice(recordings: &[Vec<f32>]) -> Result<(Value, String), (String, Vec<usize>)> { train_with_voice_raw(recordings, None) }
+
+/// [train_with_voice], the keyword model hearing the takes not denoised (V2).
+pub fn train_with_voice_raw(recordings: &[Vec<f32>], raw: Option<&[Vec<f32>]>) -> Result<(Value, String), (String, Vec<usize>)> {
     let mut make = maker();
-    match enroll::train(recordings, &mut make) {
+    match enroll::train_raw(recordings, raw, &mut make) {
         enroll::Trained::No { why, redo } => Err((why, redo)),
         enroll::Trained::Ok(mut p) => {
             let clips: Vec<Vec<f32>> = recordings.iter().filter_map(|r| enroll::check_sample(r).ok().map(|c| c.to_vec())).collect();
@@ -473,16 +489,21 @@ mod tests {
                     let v = s.get(a).copied().unwrap_or(0.0) * (1.0 - f) + s.get(a + 1).copied().unwrap_or(0.0) * f + noise() * noise_rms / 0.053;
                     for _ in 0..ch { st.push(v); }
                 }
+                // V2: as the client does, the cleaned audio and its undenoised twin.
                 let mut c = crundi_core::capture::Clean::for_wake(rate as u32);
-                let mut d = To16::new(crundi_core::capture::OUT_RATE as usize);
-                st.chunks(441 * ch).flat_map(|b| d.push(&c.push(&crundi_core::voice::mono(b, ch)))).collect()
+                let (mut d, mut dr) = (To16::new(crundi_core::capture::OUT_RATE as usize), To16::new(crundi_core::capture::OUT_RATE as usize));
+                let (mut clean, mut raw) = (vec![], vec![]);
+                for b in st.chunks(441 * ch) { let (x, r) = c.push_both(&crundi_core::voice::mono(b, ch)); let o = d.push(&x); let mut q = dr.push(&r); q.resize(o.len(), 0.0); clean.extend(o); raw.extend(q); }
+                (clean, raw)
             };
             let wav = |n: &str| std::fs::read(format!("{eval}/{n}.wav")).ok().and_then(|b| read_wav(&b)).map(&mic);
-            let recs: Vec<Vec<f32>> = (1..=5).map(|i| wav(&format!("draco-train{i}")).unwrap()).collect();
-            let (profile, _) = train_with_voice(&recs).unwrap_or_else(|(why, redo)| panic!("noise {noise_rms}: training: {why} {redo:?}"));
+            let pairs: Vec<(Vec<f32>, Vec<f32>)> = (1..=5).map(|i| wav(&format!("draco-train{i}")).unwrap()).collect();
+            let recs: Vec<Vec<f32>> = pairs.iter().map(|p| p.0.clone()).collect();
+            let raws: Vec<Vec<f32>> = pairs.iter().map(|p| p.1.clone()).collect();
+            let (profile, _) = train_with_voice_raw(&recs, Some(&raws)).unwrap_or_else(|(why, redo)| panic!("noise {noise_rms}: training: {why} {redo:?}"));
             eprintln!("noise {noise_rms}: trained: threshold {} modelHeard {} phraseFrames {}", profile["keywordsThreshold"], profile["modelHeard"], profile["phraseFrames"]);
             assert!(profile["modelHeard"].as_f64().unwrap_or(0.0) >= 3.0, "noise {noise_rms}: the model hears the phrase in most takes");
-            let heard = |s: Vec<f32>| -> bool { let mut w = Wake::new(&profile).unwrap(); s.chunks(1600).any(|c| w.accept(c).is_some_and(|h| h.ok)) };
+            let heard = |s: (Vec<f32>, Vec<f32>)| -> bool { let mut w = Wake::new(&profile).unwrap(); s.0.chunks(1600).zip(s.1.chunks(1600)).any(|(c, r)| w.accept_both(c, r).is_some_and(|h| h.ok)) };
             assert!(heard(wav("draco-pos-heycru").unwrap()), "noise {noise_rms}: the owner's Hey Cru wakes through the microphone path");
             assert!(!heard(wav("draco-neg-heyyou").unwrap()), "noise {noise_rms}: other speech does not wake");
             assert!(!heard(mic(vec![0.0; RATE * 3])), "noise {noise_rms}: silence (and the fan) does not wake");
