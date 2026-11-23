@@ -294,6 +294,10 @@ pub(crate) struct PlaceView {
     edit_src: String,
     edit_lang: Option<String>,
     edit_done: bool,
+    /// T13: the box's soft wrap (off while a code block that scrolls sideways has the caret).
+    edit_wrap: bool,
+    /// T13: each code block's sideways scroll (the driver reads it).
+    code_scroll: HashMap<String, ScrollHandle>,
     editing: bool,
     last_sel: (usize, usize),
     width: f32,
@@ -367,7 +371,7 @@ impl PlaceView {
         ];
         PlaceView {
             key, store, title_in, edit_in, search_in, query_in, link_in, sel_focus: cx.focus_handle(), div_focus: cx.focus_handle(),
-            applied_focus: 0, applied_title: -1, menu_gen: 0, fmt_gen: 0, menu_scroll: ScrollHandle::new(), menu_shown: std::cell::Cell::new((u64::MAX, -1)), fmt_size: Rc::new(std::cell::Cell::new((0., 0.))), edit: None, edit_src: String::new(), edit_lang: None, edit_done: false, editing: false, last_sel: (0, 0), width: 0.,
+            applied_focus: 0, applied_title: -1, menu_gen: 0, fmt_gen: 0, menu_scroll: ScrollHandle::new(), menu_shown: std::cell::Cell::new((u64::MAX, -1)), fmt_size: Rc::new(std::cell::Cell::new((0., 0.))), edit: None, edit_src: String::new(), edit_lang: None, edit_done: false, edit_wrap: true, code_scroll: HashMap::new(), editing: false, last_sel: (0, 0), width: 0.,
             page: ListState::new(0, ListAlignment::Top, T::SP_48 * 8.), page_sigs: vec![], pick: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.), pick_sigs: vec![],
             mode: String::new(), shown_page: String::new(), rich: HashMap::new(), tsel: None, dspot: None, _subs: subs,
         }
@@ -454,6 +458,16 @@ impl PlaceView {
                 }
             }
         }
+        // T13: a code block set to scroll (not wrap) keeps its long lines
+        // while edited: the box doesn't wrap them, it scrolls sideways to
+        // the caret (the web's pre in .nt-code-wrap).
+        let want = self.edit.as_ref().filter(|e| self.editing && e.1 == -1)
+            .and_then(|(id, _, _)| p.blocks.iter().find(|x| &x.b.id == id))
+            .is_none_or(|row| row.b.kind != "code" || row.b.wrap);
+        if want != self.edit_wrap {
+            self.edit_wrap = want;
+            self.edit_in.update(cx, |st, cx| st.set_soft_wrap(want, window, cx));
+        }
         // The menu's search, and the link box, take the caret as they open.
         let (mg, query_on, q, fg, link, lv, mine) = {
             let s = self.store.read(cx);
@@ -476,7 +490,10 @@ impl PlaceView {
         let r = st.selected_range();
         serde_json::json!({ "id": self.edit.as_ref().map(|e| e.0.clone()).unwrap_or_default(), "on": self.editing, "text": st.value().to_string(),
             "decos": st.decorations().len(), "bold": st.decorations().iter().filter(|d| d.style.font_weight.is_some()).count(), "colours": st.decorations().iter().filter(|d| d.style.color.is_some()).count(),
-            "a": r.start, "b": r.end })
+            "a": r.start, "b": r.end, "softWrap": self.edit_wrap,
+            "caretX": st.cursor_layout().map(|(b, _)| f32::from(b.origin.x)),
+            "code": self.code_scroll.iter().map(|(id, h)| (id.clone(), serde_json::json!({ "x": -f32::from(h.offset().x), "max": f32::from(h.max_offset().x),
+                "left": f32::from(h.bounds().origin.x), "w": f32::from(h.bounds().size.width) }))).collect::<serde_json::Map<_, _>>() })
     }
 
     /// A byte offset of the box's words as an offset of the block's source.
@@ -949,7 +966,9 @@ impl PlaceView {
         let (lay_g, k_g, i_g, src_g) = (layout.clone(), k.clone(), i.clone(), src_at.clone());
         let caret_ix = self.dspot.as_ref().filter(|d| d.key == key && d.id == id && d.r == r && d.c == c).and_then(|d| d.ix);
         let lay_c = layout.clone();
-        div().id(sid(format!("nt-t-{key}-{id}-{r}-{c}"))).w_full().cursor_text().font_weight(weight).text_color(ink)
+        // (T13: not wrapped, the words are as wide as their longest line, at
+        // least the box's: its sideways scroll has that to go through.)
+        div().id(sid(format!("nt-t-{key}-{id}-{r}-{c}"))).when(!nowrap, |d| d.w_full()).when(nowrap, |d| d.flex_none().min_w_full()).cursor_text().font_weight(weight).text_color(ink)
             .on_drag_move::<w::RefDrag>(move |e, _, cx| {
                 if e.drag(cx).kind == "note" && super::drag_key(cx).as_deref() == Some(k_g.as_str()) { return; }
                 let p = e.event.position;
@@ -999,7 +1018,7 @@ impl PlaceView {
                 };
                 super::request_focus(&k, &i, r, c, at, at, cx);
             })
-            .child(div().w_full().text_size(fs).line_height(relative(T::LH_CHAT)).when(mono, |d| d.font_family(T::MONO)).when(nowrap, |d| d.whitespace_nowrap()).child(styled))
+            .child(div().when(!nowrap, |d| d.w_full()).text_size(fs).line_height(relative(T::LH_CHAT)).when(mono, |d| d.font_family(T::MONO)).when(nowrap, |d| d.whitespace_nowrap()).child(styled))
             .into_any_element()
     }
 
@@ -1019,11 +1038,15 @@ impl PlaceView {
             .child(w::head_button(sid(format!("nt-copy-{key}-{}", b.id)), C::Icon(IconName::Copy), L::Rest, T::SP_24, T::SP_20 + T::SP_2, "Copy code")
                 .on_click(move |_, _, cx| super::code_act(&k3, &b3, "copy", 0., 0., cx)));
         let hl_lang = code_lang(b);
+        // (Wrapped, it has no sideways scroll: none is kept for it.)
+        if b.wrap { self.code_scroll.remove(&b.id); }
+        let scroll = if b.wrap { ScrollHandle::new() } else { self.code_scroll.entry(b.id.clone()).or_insert_with(ScrollHandle::new).clone() };
         let code = self.text_cell(key, &b.id, -1, -1, &b.text, "Code", T::TEXT_12 * k, T::W_REGULAR, T::text(), false, true, !b.wrap, Some(&hl_lang));
         div().relative().w_full().pt(T::SP_24 + T::SP_4).pb(T::SP_4)
             .child(div().id(sid(format!("nt-code-{key}-{}", b.id))).w_full().p(T::SP_12).rounded(T::R_FIELD).bg(T::bg_secondary()).border_1()
                 .border_color(if editing { T::accent_edge() } else { T::border_subtle() })
-                .when(!b.wrap && !editing, |d| d.overflow_x_scroll())
+                // (T13: up and down go on to the page, as a browser's pre: no turning them sideways.)
+                .when(!b.wrap && !editing, |d| d.flex().overflow_x_scroll().restrict_scroll_to_axis().track_scroll(&scroll))
                 .child(code))
             .child(head)
     }
