@@ -60,6 +60,13 @@ jobs:
         working-directory: native-v2
         run: cargo build --release -p crundi-app -p crundi-browser-host --bin crundi-v2 --bin crundi-browser-host
 
+      # Kid mode's Windows side, headless (PARITY-ELECTRON.md §4): the keyboard
+      # filter's process runs, is started again when it ends and goes with the
+      # lock; the touchpad's gestures go off in HKCU and come back as they were.
+      - name: Kid lock (keyboard filter, touchpad)
+        working-directory: native-v2
+        run: cargo test --release -p crundi-desktop --lib kidlock -- --test-threads=1
+
       - name: Build the worker
         run: |
           export CRUNDI_WORKER_VERSION=$(node -p "require('./package.json').version")
