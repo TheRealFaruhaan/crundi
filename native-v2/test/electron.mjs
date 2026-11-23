@@ -48,10 +48,9 @@ if (/^unix:path=\/run\/user\/\d+\/bus$/.test(bus)) {
   console.error('Run under dbus-run-session: this is the desktop\'s own session bus (the tray and notifications would reach it).');
   process.exit(2);
 }
-// Never the person's autostart entries or CEF profile.
-const xdg = mkdtempSync(join(tmpdir(), 'crundi-v2-electron-xdg-'));
-process.env.XDG_CONFIG_HOME = xdg;
-const ctx = { drop: [xdg] };
+// Never the person's autostart entries or CEF profile: the config home
+// test/lib.mjs gives every suite (XDG_CONFIG_HOME, APPDATA).
+const ctx = { drop: [] };
 if (!process.env.CRUNDI_CEF_CACHE) { const cef = mkdtempSync(join(tmpdir(), 'crundi-v2-electron-cef-')); process.env.CRUNDI_CEF_CACHE = cef; ctx.drop.push(cef); }
 process.on('exit', () => { for (const d of ctx.drop) { try { rmSync(d, { recursive: true, force: true }); } catch { /* gone */ } } });
 process.env.CRUNDI_PW_TEST_KEY ||= Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');

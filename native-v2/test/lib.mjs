@@ -38,6 +38,21 @@ const SCREENS = process.env.SCREENS_DIR || fileURLToPath(new URL('../screens/', 
 const OWN_BIN = fileURLToPath(new URL('../.bin/debug/crundi-v2', import.meta.url));
 if (!process.env.NATIVE_BIN && existsSync(OWN_BIN)) process.env.NATIVE_BIN = OWN_BIN;
 
+// A config home of the run's own for every suite (FINDINGS-ELECTRON 5):
+// XDG_CONFIG_HOME (Linux) and APPDATA (Windows), so the client's one-time
+// Electron import, the autostart entry and every other per-user file never
+// reach the person's real profile. A run started by another suite keeps the
+// one it was given (CRUNDI_TEST_XDG); it goes when the run ends.
+if (!process.env.CRUNDI_TEST_XDG) {
+  const xdg = mkdtempSync(join(tmpdir(), 'crundi-v2-xdg-'));
+  process.env.CRUNDI_TEST_XDG = xdg;
+  process.env.XDG_CONFIG_HOME = xdg;
+  if (process.platform === 'win32') process.env.APPDATA = xdg;
+  process.on('exit', () => { try { rmSync(xdg, { recursive: true, force: true }); } catch { /* gone */ } });
+}
+/** The run's own config home (XDG_CONFIG_HOME / APPDATA). */
+export const configHome = process.env.CRUNDI_TEST_XDG;
+
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;

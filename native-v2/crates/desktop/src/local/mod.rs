@@ -39,12 +39,23 @@ pub fn node() -> (PathBuf, bool) {
     if b.is_file() { (b, true) } else { ("node".into(), false) }
 }
 
-fn config_home() -> PathBuf {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_default();
-    if cfg!(windows) { std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| home.join("AppData").join("Roaming")) }
-    else if cfg!(target_os = "macos") { home.join("Library").join("Application Support") }
-    else { std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".config")) }
+fn home() -> PathBuf { std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_default() }
+
+/// The person's own config home, whatever the environment says.
+fn real_config_home() -> PathBuf {
+    if cfg!(windows) { home().join("AppData").join("Roaming") }
+    else if cfg!(target_os = "macos") { home().join("Library").join("Application Support") }
+    else { home().join(".config") }
 }
+
+fn config_home() -> PathBuf {
+    let var = if cfg!(windows) { std::env::var_os("APPDATA") } else if cfg!(target_os = "macos") { None } else { std::env::var_os("XDG_CONFIG_HOME") };
+    var.map(PathBuf::from).unwrap_or_else(real_config_home)
+}
+
+/// Under the test driver the one-time import reads only a config home the
+/// run made, never the person's real Electron profile (FINDINGS-ELECTRON 5).
+pub fn import_allowed_for(testing: bool, home: &Path, real: &Path) -> bool { !testing || home != real }
 
 /// Electron's userData (CONTRACT.md "Where things live"): the server's .env
 /// and data, and where the client imports from.
@@ -141,7 +152,9 @@ pub fn import_from(electron: &Path, cfg: &Path) -> Vec<String> {
 /// Set up at the desktop's init (before the session starts): the import,
 /// the edition and mode, the shell's hooks; local mode starts its server.
 pub fn init(cx: &mut gpui::App) {
-    let took = import_from(&user_data(), &crundi_core::store::config_dir());
+    let took = if import_allowed_for(crundi_core::driver::port().is_some(), &config_home(), &real_config_home()) {
+        import_from(&user_data(), &crundi_core::store::config_dir())
+    } else { eprintln!("[lifecycle] Test driver on: not importing from the person's own Electron settings"); vec![] };
     if !took.is_empty() { eprintln!("[lifecycle] Took from Electron's settings: {}", took.join(", ")); }
     let b = bundled();
     let active = b && crundi_shell::local::client_config(b).0 == "local";
@@ -325,6 +338,14 @@ mod tests {
             assert!(user_data_for(true).ends_with("crundi-desktop"));
             assert!(user_data_for(false).ends_with("Crundi Client"));
         }
+    }
+
+    #[test]
+    fn tests_never_import_the_real_profile() {
+        let real = std::path::Path::new("/home/me/.config");
+        assert!(import_allowed_for(false, real, real));
+        assert!(!import_allowed_for(true, real, real));
+        assert!(import_allowed_for(true, std::path::Path::new("/tmp/crundi-v2-xdg-1"), real));
     }
 
     #[test]
