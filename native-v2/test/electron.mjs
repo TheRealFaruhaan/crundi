@@ -21,6 +21,8 @@
 //              and focus, browser_touch's listeners, drawer downloads,
 //              notification clicks and the raise, the homepool public IP,
 //              the kid lock's watchdog, power and lock, the DisconnectRDP status
+//   trial      the owner's trial findings: T5 the kid lock clicked, the
+//              PIN keyed; T12 a project clicked leaves the Inbox
 //   install    (needs updates) the Linux install: sudo -n refused, then
 //              pkexec and its terminal offer, then sudo -n: the relaunch
 //
@@ -42,7 +44,7 @@ import { fileURLToPath } from 'node:url';
 
 // The order they run in: the updater first (its prompt comes 8 s after
 // launch), its install last (it quits the app and starts it again).
-const PARTS = ['local', 'updates', 'lifecycle', 'browserstart', 'window', 'gaps', 'install'];
+const PARTS = ['local', 'updates', 'lifecycle', 'browserstart', 'window', 'gaps', 'trial', 'install'];
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
 const parts = PARTS.filter((p) => !ONLY.length || ONLY.includes(p) || (p === 'install' && ONLY.includes('updates')));
 

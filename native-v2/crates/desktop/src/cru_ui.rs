@@ -315,7 +315,11 @@ impl CruScreen {
         let top = div().flex().items_center().px(T::SP_24).pt(T::SP_16)
             .child(div().id("kid-wordmark").child(w::cru_mark_kid()))
             .child(div().flex_1())
-            .child(w::icon_button("kid-lock", IconName::Lock, "Grown-ups").on_click(|_, _, _| cru_kid::pin_open()));
+            // The grown-ups' lock (.cv-ov.kid .cv-lock): 30px round, indigo, calm (.45) until hovered (.9).
+            .child(div().id("kid-lock").flex().flex_none().items_center().justify_center().size(T::KID_LOCK).rounded_full().cursor_pointer()
+                .text_color(T::accent()).text_size(T::ICON_LG).opacity(0.45).hover(|s| s.opacity(0.9))
+                .child(IconName::Lock).child(w::find::label_mark("Grown-ups")).tooltip(w::tooltip("Grown-ups"))
+                .on_click(|_, _, cx| { cx.stop_propagation(); cru_kid::pin_open() }));
         let mut words = div().flex().flex_col().items_center().gap(T::SP_8).px(T::SP_24).w_full();
         if !heard.is_empty() {
             words = words.child(div().flex().w_full().max_w(T::KID_BUBBLE_W).justify_end()

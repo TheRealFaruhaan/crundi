@@ -30,7 +30,7 @@ use gpui::{prelude::FluentBuilder as _, *};
 pub fn log_jump(id: impl Into<ElementId>, new: bool) -> Stateful<Div> {
     div().id(id).occlude().relative().size(T::LOG_JUMP).rounded_full().flex().items_center().justify_center().cursor_pointer()
         .bg(T::bg_secondary()).border_1().border_color(if new { T::accent() } else { T::border() }).shadow_lg().text_color(T::text())
-        .hover(|d| d.border_color(T::accent()).bg(T::accent_dim()))
+        .hover(|d| d.border_color(T::accent()).bg(T::accent_dim_on_secondary()))
         .child(icon(IconName::ArrowDown, T::LOG_JUMP_ICON))
         .when(new, |d| d.child(div().absolute().top(-T::SP_2).right(-T::SP_2).size(T::SP_10).rounded_full().bg(T::accent()).border_2().border_color(T::bg())))
 }
@@ -123,7 +123,7 @@ pub fn suggest_bubble(id: impl Into<ElementId>, fs: f32) -> Stateful<Div> {
         .rounded_tl(T::R_BUBBLE).rounded_tr(T::R_BUBBLE).rounded_bl(T::R_BUBBLE).rounded_br(T::R_CHIP)
         .border_1().border_dashed().border_color(T::accent_edge()).bg(T::bg_secondary()).shadow_lg()
         .text_size(T::TEXT_13 * fs).text_color(T::text_secondary()).line_height(relative(T::LH_CHAT)).cursor_pointer()
-        .hover(|d| d.border_color(T::accent()).bg(T::accent_dim()).text_color(T::text()))
+        .hover(|d| d.border_color(T::accent()).bg(T::accent_dim_on_secondary()).text_color(T::text()))
 }
 
 /// A short id that copies on a click: mono, a dashed underline, brighter on hover.

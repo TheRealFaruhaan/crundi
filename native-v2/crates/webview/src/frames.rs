@@ -53,6 +53,9 @@ struct Fv {
     failed: bool,
     /// The referrer its first request carries ("" for none).
     referrer: String,
+    /// Whether the page plays media now (None: not asked yet), and the call that asks.
+    playing: Option<bool>,
+    media_call: i32,
 }
 
 #[derive(Default)]
@@ -87,7 +90,7 @@ pub fn open(key: &str, target: &str, w: f32, h: f32, scale: f32) -> bool {
     if with(|s| s.frames.contains_key(key)) { resize(key, w, h, scale); return true; }
     let referrer = if target.starts_with("https://") || loopback(target) { with(|s| s.origin.clone()) } else { String::new() };
     let (w, h, scale) = (w.round().max(1.0) as i32, h.round().max(1.0) as i32, scale.max(1.0));
-    with(|s| s.frames.insert(key.to_string(), Fv { messages: vec![], loads: 0, browser: None, crashed: false, w, h, scale, frames: 0, image: None, hidden: false, painted: false, cursor: 0, title: String::new(), focused: false, held: None, scroll: None, cdp_next: 0, url: target.to_string(), failed: false, referrer }));
+    with(|s| s.frames.insert(key.to_string(), Fv { messages: vec![], loads: 0, browser: None, crashed: false, w, h, scale, frames: 0, image: None, hidden: false, painted: false, cursor: 0, title: String::new(), focused: false, held: None, scroll: None, cdp_next: 0, url: target.to_string(), failed: false, referrer, playing: None, media_call: 0 }));
     if !make(key) { with(|s| s.frames.remove(key)); return false; }
     changed();
     true
@@ -127,6 +130,9 @@ pub fn hidden(key: &str, on: bool) {
     let ch = with(|s| s.frames.get_mut(key).map(|f| { let ch = f.hidden != on; f.hidden = on; ch }).unwrap_or(false));
     if ch { send(key, |id| Cmd::Hidden { id, on }); }
 }
+
+/// The view's id in the browser host (the test driver: the same page, or none).
+pub fn page_id(key: &str) -> Option<u64> { view(key) }
 
 /// Is the view hidden (the test driver)?
 pub fn is_hidden(key: &str) -> bool { with(|s| s.frames.get(key).is_some_and(|f| f.hidden)) }
@@ -237,6 +243,20 @@ fn ask_scroll(key: &str) {
     }) });
 }
 
+/// Ask whether the page plays media now (audible audio or a playing video):
+/// the answer is `playing`.
+pub fn ask_media(key: &str) {
+    let call = with(|s| s.frames.get_mut(key).map(|f| { f.cdp_next += 1; f.media_call = f.cdp_next; f.cdp_next }));
+    let Some(call) = call else { return };
+    send(key, |id| Cmd::Cdp { id, call, method: "Runtime.evaluate".into(), params: serde_json::json!({
+        "returnByValue": true,
+        "expression": "[...document.querySelectorAll('video,audio')].some(e=>!e.paused&&!e.ended&&(e.tagName==='VIDEO'||(!e.muted&&e.volume>0)))"
+    }) });
+}
+
+/// The page's last answer to `ask_media` (None: none yet).
+pub fn playing(key: &str) -> Option<bool> { with(|s| s.frames.get(key).and_then(|f| f.playing)) }
+
 const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
 
 /// The pointer in the view (x, y in its logical px): 0 move, 1 down, 2 up,
@@ -333,7 +353,12 @@ pub(crate) fn on_event(key: &str, id: u64, ev: Ev) {
         Ev::LoadEnd { status, .. } => if status >= 400 { set(&mut |f| f.failed = true); changed(); },
         Ev::LoadError { .. } => { set(&mut |f| f.failed = true); changed(); }
         Ev::Scrolled { .. } => ask_scroll(key),
-        Ev::CdpResult { ok, result, .. } => {
+        Ev::CdpResult { ok, result, call, .. } => {
+            if with(|s| s.frames.get(key).is_some_and(|f| f.media_call == call && call != 0)) {
+                let on = ok && result.pointer("/result/value").and_then(|x| x.as_bool()).unwrap_or(false);
+                set(&mut |f| f.playing = Some(on));
+                return;
+            }
             if !ok { return; }
             let Some(a) = result.pointer("/result/value").and_then(|x| x.as_array()) else { return };
             let n = |i: usize| a.get(i).and_then(|x| x.as_f64()).unwrap_or(0.0);
