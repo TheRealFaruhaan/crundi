@@ -14,9 +14,9 @@ Rules: `package/CONTRACT.md`. Gap list: `PARITY-ELECTRON.md` (mark each line don
 ## Change request
 | Item | Stream | Done | Tested |
 |---|---|---|---|
-| Local mode (start, watch, restart, stop the bundled server) | local | | |
-| Local or remote with the first-run wizard | local | | |
-| PC worker through worker/ | local | | |
+| Local mode (start, watch, restart, stop the bundled server) | local | yes | yes (test/electron/local.mjs 76/0) |
+| Local or remote with the first-run wizard | local | yes | yes (test/electron/local.mjs) |
+| PC worker through worker/ | local | yes | yes (test/electron/local.mjs, the real crundi-worker when built) |
 | Electron install moved over (data, config, start at login, shortcuts) | local, updates, pack | | |
 | Updates for the combined install | updates | yes | yes (test/electron.mjs updates, install; cargo tests) |
 | Windows .exe and Linux .deb replacing Electron's | pack | yes | .deb: Docker upgrade test, both editions; .exe: CI windows-latest upgrade test, both editions |
@@ -27,6 +27,13 @@ Rules: `package/CONTRACT.md`. Gap list: `PARITY-ELECTRON.md` (mark each line don
 | Owner: the first browser start froze the window ("not responding") | gaps | yes: webview client.rs starts the host on a thread of its own (commands wait in the link); the drawer tab shows its page loading from the start (Reload arrow turning, Electron's .brd-loading) | yes (test/electron.mjs browserstart: host start slowed to 3 s, real Tab presses answered within 200 ms, the tab loading meanwhile) |
 | Owner: a long chat title pushed the pane head's badge and buttons off the pane | gaps | yes: workbench head.rs (the shared pane head, every pane): the title takes only the room left, elided (the web's .term-head-title); the badge and the tools keep their size | yes (test/workbench.mjs "a very long title in a narrow pane": the drawn title, badge and buttons against the pane; fails without the fix) |
 | Owner: touchpad scrolling stopped dead when the fingers lifted (no momentum) | gaps | yes: vendor/gpui patch (f), the one scroll dispatch every list and pane uses: a precise (pixel) scroll glides on at its last ~100 ms's speed with exponential decay, stops at the edge; new input or a press stops it; Linux only (Windows and macOS send their own momentum; X11 sends lines, unchanged); the wheel's line scroll never glides | yes (test/workbench.mjs "Kinetic scrolling": synthetic precise steps keep moving after the last one then stop, the edge, a press, a line scroll does not glide) |
+| Fix round 4, local: F3 the tray test expects Electron's menu with Start/Stop | local | yes: test/desktop/tray.mjs: Crundi / status / Open / Lock ×2 / Kid mode / Server… / Start / Stop / Hey Cru…, Start off and Stop on while Running | yes (desktop.mjs ONLY=tray 22/0; electron/local.mjs the tray at Stopped, Running, Error) |
+| Fix round 4, local: F6 PARITY-ELECTRON.md section 1 | local | yes: every line done (naming its test) or n/a (with why) | yes (test/electron/local.mjs, test/desktop/tray.mjs, cargo tests) |
+| Fix round 4, local: F8 the Server screen's option text ran past the card | local | yes: signin.rs: the option's words take the room beside the mark and wrap (flex 1, min width 0, as index.html's label); the card 460 wide at most 90% of the window (index.html's .setup-card) | yes (electron/local.mjs: the drawn bounds of the card, both options and the address box at 1100 and 800 wide; "Connect to a server"'s words on two lines) |
+| Fix round 4, local: N1 no sign-in method: the app with errors | local | yes: local/mod.rs `ready_now` asks /api/auth/methods first (as the web page does): setupRequired shows the sign-in page's first-run setup, not the app | yes (electron/local.mjs "the next start: … the setup page, not the app", then the password, the authenticator step, Continue) |
+| Fix round 4, local: N2 Escape on step 3's alert flaky | local | yes: local_ui.rs: a step box's focus still waiting for its render is dropped when the alert opens (it took the keys from the alert when Next came right after the step showed) | yes (electron/local.mjs: Next twice at once, Escape, the keys back in the box, Backspace, again) |
+| Fix round 4, local: N3 the worker registered as "electron" | local | yes: worker.rs runs crundi-worker with `--kind native` (its hello said electron, the embedded default) | yes (electron/local.mjs with the packaged crundi-worker: online, the server lists it as kind native, its command line, gone when switched off) |
+| Local: restart-server message, remote mode with no server | local | yes (already) | yes, new tests (electron/local.mjs: /api/backup/restart → a new server; client.json remote and no address → the server step, no local server) |
 | UI review approves | reviewer | | |
 | Owner has tried it | owner | | |
 | Owner: a Mindmap idea dropped on a chat's box left its drag picture floating there | pack | yes: the map takes the release outside it in the capture phase (the chat's drop stops the bubble) (mindmap/draw.rs) | yes: test/planning/drops.mjs drags an idea onto a chat's box with the pointer, checks the reference goes in and no idea is left in hand; fails without the fix |

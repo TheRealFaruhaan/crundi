@@ -299,7 +299,9 @@ writeFileSync(join(CFG, 'worker.json'), JSON.stringify({ workDir: join(ROOT, 'wo
 await ui('desktop:worker-toggle', 'on');
 if (WORKER) {
   s = await until('the worker: joined, crundi-worker running and online', (s) => local(s).worker?.configured && local(s).worker?.state === 'online', 30000);
-  const list = await fetch(`http://localhost:${SERVER_PORT}/api/workers`, { headers: { Authorization: `Bearer ${su.token}` } }).then((r) => r.json()).catch((e) => ({ error: String(e) }));
+  // Signed in again: the server was started anew since the first sign-in.
+  const t2 = await fetch(`http://localhost:${SERVER_PORT}/api/auth/password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password, code: totpNow(secret) }) }).then((r) => r.json()).catch(() => ({}));
+  const list = await fetch(`http://localhost:${SERVER_PORT}/api/workers`, { headers: { Authorization: `Bearer ${t2.token}` } }).then((r) => r.json()).catch((e) => ({ error: String(e) }));
   const me = (list.workers || []).find((w) => w.deviceId === DEVICE) || (list.workers || [])[0] || {};
   check('the server has this PC as a worker of kind "native" (join-self and the worker\'s hello)', me.kind === 'native' && (list.workers || []).every((w) => w.kind === 'native'), list.workers || list);
   const wp = pgrepWorker();

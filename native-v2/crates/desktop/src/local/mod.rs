@@ -255,7 +255,7 @@ fn ready_now(_cx: &mut gpui::App) {
     // (#login-setup), not the app. Asked off the window's thread.
     std::thread::spawn(move || {
         let setup = crundi_core::api::methods(&base).ok().and_then(|m| m.get("setupRequired").and_then(|v| v.as_bool())).unwrap_or(false);
-        crate::ctx::on_app(move |_, cx| {
+        crate::ctx::main_thread(move || crate::ctx::on_app(move |_, cx| {
             let session = crundi_shell::stores(cx).session;
             if restore || setup {
                 // The sign-in page's first-run form (on its restore, when restoring).
@@ -272,7 +272,7 @@ fn ready_now(_cx: &mut gpui::App) {
                 return;
             }
             session.update(cx, |s, cx| s.sign_in_local(base, key, cx));
-        });
+        }));
     });
 }
 static RESTORE_SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
