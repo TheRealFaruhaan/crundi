@@ -52,6 +52,9 @@
 
   var REDUCED = false;
   try { REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { /* old browser: animate */ }
+  // Settings > On this device: Mini turned off here (kept per device, read
+  // every time so the switch takes effect at once).
+  function OFF() { try { return localStorage.getItem('crundi_mini_off') === '1'; } catch (e) { return false; } }
 
   var CANCEL = { cancelled: true };
   var GROUND = 90;        // feet, in the drawing's own units
@@ -1599,7 +1602,7 @@
     return true;
   }
   function topTick() {
-    if (document.hidden || HOLDER || LOGO.away || TOP.busy || REDUCED) return;
+    if (document.hidden || HOLDER || LOGO.away || TOP.busy || REDUCED || OFF()) return;
     if (!logoMark()) return;
     var r = topRead(), t = Date.now(), ready = [];
     function due(kind, on, first, again) {
@@ -1964,6 +1967,7 @@
     }
     var coming = null;
     function start(name) {
+      if (OFF() && !o.force) return;
       if (HOLDER === TOPKEY) { if (TOP.cut) TOP.cut(); return; }   // it is busy in the top bar: call it away
       if (HOLDER && HOLDER !== me) return;      // it is busy in another chat
       HOLDER = me;

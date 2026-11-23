@@ -15977,6 +15977,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '<button data-action="voice-ptt-reset" style="' + btnStyle + '">Reset</button>'
           + '<span id="voice-ptt-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
           + '</div>'
+          // Mini, the chat mascot, on or off on this device (crundi-mini.js reads it).
+          + '<div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">'
+          + '<label style="' + labelStyle + ';margin:0;display:flex;gap:8px;align-items:center;cursor:pointer;"><input type="checkbox" id="mini-on" data-action="mini-toggle"' + ((() => { try { return localStorage.getItem('crundi_mini_off') === '1'; } catch (e) { return false; } })() ? '' : ' checked') + '> Show Mini</label>'
+          + '<span style="font-size:0.78rem;color:var(--text-muted);">The little robot that keeps you company while you wait.</span></div>'
           // The PC client only (D40): its wake word, while the PC is on charge.
           // A client that can train it (vwCan) listens for "Hey Cru" only once
           // trained from the owner's voice; an older one still listens for
@@ -16701,6 +16705,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
         case 'voice-wake-rec': if (vwt.rec) vwFinish(); else vwRecord(); break;
         case 'voice-wake-cancel': vwt.msg = ''; vwStop(); break;
         case 'voice-wake-forget': vwForget(); break;
+        case 'mini-toggle': {
+          const on = !!(document.getElementById('mini-on') || {}).checked;
+          try { if (on) localStorage.removeItem('crundi_mini_off'); else localStorage.setItem('crundi_mini_off', '1'); } catch (err) { /* private mode */ }
+          break;
+        }
         case 'voice-ptt-reset': {
           const lbl = window.CrundiVoice && window.CrundiVoice.resetShortcut();
           const k = document.getElementById('voice-ptt-key'); if (k && lbl) k.textContent = lbl;

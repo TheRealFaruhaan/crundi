@@ -118,6 +118,23 @@ pub fn write_client_config(mode: &str, server_url: &str) -> bool {
     std::fs::write(&p, serde_json::to_string_pretty(&v).unwrap_or_default()).is_ok()
 }
 
+/// Mini, the chat mascot, on this device (client.json "mini"; on unless
+/// turned off in Settings > Desktop App). Read once, then kept in memory.
+static MINI: std::sync::OnceLock<std::sync::atomic::AtomicBool> = std::sync::OnceLock::new();
+fn mini_flag() -> &'static std::sync::atomic::AtomicBool {
+    MINI.get_or_init(|| std::sync::atomic::AtomicBool::new(client_raw()["mini"].as_bool().unwrap_or(true)))
+}
+pub fn mini_on() -> bool { mini_flag().load(std::sync::atomic::Ordering::Relaxed) }
+/// Saved with client.json's other keys kept.
+pub fn set_mini(on: bool) -> bool {
+    mini_flag().store(on, std::sync::atomic::Ordering::Relaxed);
+    let mut v = client_raw();
+    v["mini"] = json!(on);
+    let p = client_file();
+    if let Some(d) = p.parent() { let _ = std::fs::create_dir_all(d); }
+    std::fs::write(&p, serde_json::to_string_pretty(&v).unwrap_or_default()).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{client_config, client_raw, status_label, write_client_config};

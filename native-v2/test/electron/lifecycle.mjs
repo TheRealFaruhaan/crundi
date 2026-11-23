@@ -67,4 +67,20 @@ export async function run(T, t) {
   await T.key('2468');
   await T.key('Enter');
   await T.until('keys: …and unlocks with the PIN', (p) => !D(p).lock?.on && !D(p).windowLocked, 10000);
+
+  // ─── T20: Mini on/off on this device (Settings > Desktop App, client.json "mini") ───
+  await T.ops('settings-open', 'desktop');
+  await T.until('T20: Settings > Desktop App shows Mini on by default', (p) => st(p).desktop.mini === true);
+  await T.ops('settings-do', 'mini-toggle', 'false');
+  await T.until('T20: Show Mini off', (p) => st(p).desktop.mini === false);
+  const cj = () => { try { return JSON.parse(readFileSync(join(T.configDir, 'client.json'), 'utf8')); } catch { return {}; } };
+  t.check('T20: saved in client.json ("mini": false)', cj().mini === false, cj());
+  let m = await T.ui('mini-top', 'party');
+  t.check('T20: off, Mini does not come out', m?.ok === false, m);
+  await T.ops('settings-do', 'mini-toggle', 'true');
+  await T.until('T20: Show Mini on again', (p) => st(p).desktop.mini === true);
+  t.check('T20: saved in client.json ("mini": true)', cj().mini === true, cj());
+  m = await T.ui('mini-top', 'party');
+  t.check('T20: on, Mini comes out again', m?.ok === true, m);
+  await T.ops('settings-open', 'desktop', 'false');
 }
