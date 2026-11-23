@@ -249,8 +249,13 @@ fn start_worker() {
             for b in blocks {
                 let h = wake.accept(&b);
                 // A phrase that was not quite it (T16): its match, to tell a miss from not hearing at all.
-                if let Some((score, limit)) = wake.near_miss.take() { kit::main_thread(move || log(format!("near miss: a phrase matched {score:.3} (wakes under {limit:.3})"))); }
+                // (its gate, and the burst kept in voice-wake/misses/ to replay a miss.)
+                if let Some((score, limit, why, clip)) = wake.near_miss.take() {
+                    let file = keep_miss(&format!("phrase-{why}-{score:.3}"), &clip);
+                    kit::main_thread(move || log(format!("near miss: a phrase matched {score:.3} (strict limit {:.3} of {limit:.3}), refused by the {why} check{file}", enroll::strict_limit_of(limit))));
+                }
                 let Some(h) = h else { continue };
+                if !h.ok { let file = keep_miss(&format!("model-{:.3}", h.score), &h.clip); if !file.is_empty() { kit::main_thread(move || log(format!("the model's hit kept{file}"))); } }
                 // The owner's voice, when the profile has it (ownerChecked).
                 let mut verdict = if h.ok { "detected" } else { "rejected" };
                 let mut voice = Value::Null;
@@ -267,6 +272,29 @@ fn start_worker() {
             }
         }
     });
+}
+
+/// A refused wake's audio (16 kHz mono WAV) in voice-wake/misses/, the
+/// last 20 kept: to replay a miss on the owner's own microphone (T16).
+fn keep_miss(name: &str, clip: &[f32]) -> String {
+    let d = dir().join("misses");
+    if std::fs::create_dir_all(&d).is_err() || clip.is_empty() { return String::new(); }
+    let pcm: Vec<u8> = clip.iter().flat_map(|x| (((x.clamp(-1.0, 1.0)) * 32767.0) as i16).to_le_bytes()).collect();
+    let rate = enroll::RATE as u32;
+    let mut w = Vec::with_capacity(44 + pcm.len());
+    w.extend_from_slice(b"RIFF"); w.extend_from_slice(&(36 + pcm.len() as u32).to_le_bytes()); w.extend_from_slice(b"WAVEfmt ");
+    w.extend_from_slice(&16u32.to_le_bytes()); w.extend_from_slice(&1u16.to_le_bytes()); w.extend_from_slice(&1u16.to_le_bytes());
+    w.extend_from_slice(&rate.to_le_bytes()); w.extend_from_slice(&(rate * 2).to_le_bytes()); w.extend_from_slice(&2u16.to_le_bytes()); w.extend_from_slice(&16u16.to_le_bytes());
+    w.extend_from_slice(b"data"); w.extend_from_slice(&(pcm.len() as u32).to_le_bytes()); w.extend_from_slice(&pcm);
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let f = d.join(format!("{ms}-{name}.wav"));
+    if std::fs::write(&f, w).is_err() { return String::new(); }
+    if let Ok(rd) = std::fs::read_dir(&d) {
+        let mut all: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wav")).collect();
+        all.sort();
+        while all.len() > 20 { let _ = std::fs::remove_file(all.remove(0)); }
+    }
+    format!(" ({})", f.display())
 }
 
 fn stop_worker() {

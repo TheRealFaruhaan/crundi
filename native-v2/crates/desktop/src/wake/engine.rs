@@ -289,8 +289,9 @@ pub struct Wake {
     filled: usize,
     at: usize,
     last_hit: Option<std::time::Instant>,
-    /// The last phrase that did not wake but came within twice its limit: (its match, the limit).
-    pub near_miss: Option<(f64, f64)>,
+    /// The last phrase that did not wake but came within twice its limit:
+    /// (its match, the limit, the gate that refused it, the burst at 16 kHz).
+    pub near_miss: Option<(f64, f64, &'static str, Vec<f32>)>,
 }
 
 impl Wake {
@@ -326,10 +327,10 @@ impl Wake {
                 if loose.is_none() { *loose = Spotter::new(&enroll::confirm_lines(&profile), profile["keywordsScore"].as_f64().unwrap_or(1.5) as f32, enroll::CONFIRM_THRESHOLD, false).ok(); }
                 match loose.as_mut() { Some(s) => enroll::spotted(s, clip), None => vec![] }
             };
-            let (ok, score, _) = enroll::match_phrase(&profile, &tpl, &b, Some(&mut confirm));
+            let (ok, score, why) = enroll::match_phrase(&profile, &tpl, &b, Some(&mut confirm));
             self.tpl = tpl;
             let limit = profile_limit(&self.profile);
-            if !ok && score.is_finite() && limit > 0.0 && score < limit * 2.0 { self.near_miss = Some((score, limit)); }
+            if !ok && score.is_finite() && limit > 0.0 && score < limit * 2.0 { self.near_miss = Some((score, limit, why, b.clone())); }
             if ok {
                 self.last_hit = Some(std::time::Instant::now());
                 let clip = enroll::trim(&b, 100).map(|c| c.to_vec()).unwrap_or(b);

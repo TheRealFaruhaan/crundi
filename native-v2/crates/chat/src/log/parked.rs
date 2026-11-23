@@ -185,12 +185,26 @@ pub fn wrap(v: &mut LogView, log: AnyElement, _window: &mut Window, cx: &mut Con
         .when(var == 0, |d| d.child(div().text_size(T::TEXT_11).text_color(T::text_secondary()).child(what)))
         .children(warn)
         .children(choices);
+    // V3: the veil blocks presses but not the wheel, so a sideways scroll
+    // that nothing here can use reaches the workbench strip (T7's rule, as
+    // over any pane); an up-and-down one, or one a box took, stops at
+    // "pk-stop", in front of the darkened log, which never scrolls under
+    // the card (T11: the layer on top owns the scroll).
     base.child(div().absolute().size_full().flex().flex_col().opacity(0.35).child(log))
-        .child(div().id("pk-veil").occlude().absolute().size_full().bg(T::scrim()).overflow_y_scroll()
+        .child(div().id("pk-stop").absolute().size_full().block_mouse_except_scroll()
+            .on_scroll(|e: &ScrollEvent, window, cx| if !sideways(e, window) || window.claimed_x() { cx.stop_propagation(); }))
+        .child(div().id("pk-veil").block_mouse_except_scroll().absolute().size_full().bg(T::scrim()).overflow_y_scroll()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().min_h_full().flex().items_center().justify_center().child(card))
             .children(s_veil))
         .into_any_element()
+}
+
+/// A sideways scroll (Shift and the wheel, or more across than down), as the workbench reads it.
+fn sideways(e: &ScrollEvent, window: &Window) -> bool {
+    let d = e.delta.pixel_delta(window.line_height());
+    if e.modifiers.shift && d.x == px(0.) { return d.y != px(0.); }
+    d.x.abs() > d.y.abs()
 }
 
 #[cfg(test)]

@@ -428,6 +428,8 @@ pub fn templates_of(p: &Value) -> Vec<Feats> {
 }
 
 pub fn verify_limit(p: &Value) -> f64 { pf(p, "limit") / LIMIT_MARGIN * STRICT_MARGIN }
+/// The strict limit a phrase must meet, from the profile's limit (when it has no strictLimit of its own).
+pub fn strict_limit_of(limit: f64) -> f64 { limit / LIMIT_MARGIN * STRICT_MARGIN }
 pub fn strict_limit(p: &Value) -> f64 { if pf(p, "strictLimit") > 0.0 { pf(p, "strictLimit") } else { pf(p, "limit") / LIMIT_MARGIN * STRICT_MARGIN } }
 pub fn window_limit(p: &Value, tpl: &[Feats]) -> f64 {
     if pf(p, "windowLimit") > 0.0 { return pf(p, "windowLimit"); }
