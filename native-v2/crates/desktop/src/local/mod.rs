@@ -245,24 +245,35 @@ pub fn pump(cx: &mut gpui::App) {
 }
 
 /// "[crundi] Ready": running; the window signs in with the server's key.
-fn ready_now(cx: &mut gpui::App) {
+fn ready_now(_cx: &mut gpui::App) {
     let (port, key, restore) = server::with(|s| { s.status = "running"; let r = s.open_restore; s.open_restore = false; (s.port, s.key.clone(), r) });
     let Some(port) = port else { return };
     let base = format!("http://localhost:{port}");
     server::log(&format!("[lifecycle] Navigating to {base}"));
-    let session = crundi_shell::stores(cx).session;
-    if restore {
-        // Restoring: the sign-in page's first-run form, on its restore.
-        session.update(cx, |s, cx| { s.hold = false; s.check_server(&base, cx) });
-        let b = base.clone();
-        crate::web::later(Duration::from_millis(1500), move || crate::ctx::on_app(move |_, cx| {
-            crundi_shell::local::open_restore(cx, &b);
+    // Electron loads the server's page, which asks /api/auth/methods first: a
+    // server with no sign-in method yet shows its first-run setup page
+    // (#login-setup), not the app. Asked off the window's thread.
+    std::thread::spawn(move || {
+        let setup = crundi_core::api::methods(&base).ok().and_then(|m| m.get("setupRequired").and_then(|v| v.as_bool())).unwrap_or(false);
+        crate::ctx::main_thread(move || crate::ctx::on_app(move |_, cx| {
+            let session = crundi_shell::stores(cx).session;
+            if restore || setup {
+                // The sign-in page's first-run form (on its restore, when restoring).
+                if setup && !restore { server::log("[lifecycle] No sign-in method set up yet: the setup page"); }
+                session.update(cx, |s, cx| { s.hold = false; s.check_server(&base, cx) });
+                if restore {
+                    let b = base.clone();
+                    crate::web::later(Duration::from_millis(1500), move || crate::ctx::on_app(move |_, cx| {
+                        crundi_shell::local::open_restore(cx, &b);
+                    }));
+                }
+                crundi_shell::local::update(cx, |l| l.active = false);
+                RESTORE_SHOWN.store(true, std::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+            session.update(cx, |s, cx| s.sign_in_local(base, key, cx));
         }));
-        crundi_shell::local::update(cx, |l| l.active = false);
-        RESTORE_SHOWN.store(true, std::sync::atomic::Ordering::Relaxed);
-        return;
-    }
-    session.update(cx, |s, cx| s.sign_in_local(base, key, cx));
+    });
 }
 static RESTORE_SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 

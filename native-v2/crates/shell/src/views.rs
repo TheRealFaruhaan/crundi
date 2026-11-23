@@ -884,9 +884,17 @@ pub fn driver_state(stores: &Stores, cx: &App) -> Value {
         "role": p.role, "mode": p.mode,
         "rows": p.list.iter().map(|x| json!({ "alias": x.alias, "heart": x.heart.map(|h| json!([h.0, h.1])), "heartTip": x.heart_tip(), "sched": x.sched, "factory": x.factory_tip() })).collect::<Vec<_>>(),
         "signin": { "setupRequired": s.setup_required, "enrol": s.enrol.is_some(), "enrolSecret": s.enrol.as_ref().map(|e| e.0.clone()), "collab": s.collab, "bootSlow": s.boot_slow, "serverOver": s.server_over, "serverNote": s.server_note,
+            "rects": stores_spots(cx),
             "prompt": crate::signin::prompt(s.setup_required, s.offer_telegram, s.offer_google, s.offer_github, s.offer_password) },
         "localScreen": local_props(cx),
     })
+}
+
+/// The server screen's card and parts as drawn (window coordinates).
+fn stores_spots(cx: &App) -> Value {
+    let Some(h) = cx.try_global::<crate::spots::SpotsGlobal>() else { return Value::Null };
+    let s = h.0.borrow();
+    Value::Object(s.all("srv:").into_iter().map(|(k, b)| (k[4..].to_string(), json!({ "x": f32::from(b.left()), "y": f32::from(b.top()), "w": f32::from(b.size.width), "h": f32::from(b.size.height) }))).collect())
 }
 
 /// Local mode's screens, for the driver: what the window shows of it.

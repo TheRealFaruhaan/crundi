@@ -202,19 +202,26 @@ impl Render for SignIn {
             let noted = !note.is_empty();
             let (err, had_server) = if over { (note, true) } else if noted { (note, had_server) } else { (err, had_server) };
             let (bundled, remote) = (lo.bundled, self.srv_remote);
-            let radio = |id: &'static str, title: &'static str, sub: &'static str, on: bool, v: bool| div().id(id).flex().items_start().gap(T::SP_8).mb(T::SP_8).cursor_pointer()
+            // Where the card and its parts are drawn (the driver's "signin.rects":
+            // nothing may reach past the card's padding, at any width).
+            crate::spots::begin(cx, "server-screen");
+            let mut spot = |name: &str| crate::spots::spot(cx, "server-screen", format!("srv:{name}"));
+            let (sp_card, sp_local, sp_remote, sp_input) = (spot("card"), spot("srv-local"), spot("srv-remote"), spot("input"));
+            // The option's words take the room beside the mark and wrap there
+            // (index.html's label: flex, the text a block that wraps).
+            let radio = |id: &'static str, title: &'static str, sub: &'static str, on: bool, v: bool, sp: Canvas<()>| div().id(id).flex().items_start().gap(T::SP_8).mb(T::SP_8).cursor_pointer()
                 .child(w::choice_mark(false, on, false))
-                .child(div().flex().flex_col().child(div().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(title))
-                    .child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child(sub)))
+                .child(div().relative().flex().flex_col().flex_1().min_w_0().child(div().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(title))
+                    .child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child(sub)).child(sp))
                 .on_click(cx.listener(move |this, _, _, cx| this.set_srv_remote(v, cx)));
-            let card = w::card().w(T::DIALOG_W_LG).p(T::SP_24).gap(T::SP_6).bg(T::bg_secondary())
+            let card = w::card().relative().w(T::DIALOG_W_LG).max_w(window.viewport_size().width * 0.9).p(T::SP_24).gap(T::SP_6).bg(T::bg_secondary()).child(sp_card)
                 .child(div().text_size(T::TEXT_20).font_weight(T::W_SEMIBOLD).text_color(T::text()).child("Server"))
                 .child(div().mb(T::SP_10).text_size(T::TEXT_13).text_color(T::text_muted())
                     .child("Crundi can run its own server on this machine, or connect to one running elsewhere — a container on your network, for instance. Either way the browser panel opens here, in front of you."))
                 .when(bundled, |d| d
-                    .child(radio("srv-local", "Run a server on this machine", "The standard setup. Everything local.", !remote, false))
-                    .child(radio("srv-remote", "Connect to a server", "Your projects and Claude live there; this app is the window onto them.", remote, true)))
-                .child(div().when(bundled && !remote, |d| d.opacity(0.45)).child(w::input(&self.server_input)))
+                    .child(radio("srv-local", "Run a server on this machine", "The standard setup. Everything local.", !remote, false, sp_local))
+                    .child(radio("srv-remote", "Connect to a server", "Your projects and Claude live there; this app is the window onto them.", remote, true, sp_remote)))
+                .child(div().relative().when(bundled && !remote, |d| d.opacity(0.45)).child(w::input(&self.server_input)).child(sp_input))
                 .child(div().min_h(T::SP_16).mb(T::SP_6).text_size(T::TEXT_12).text_color(if err.is_empty() || over || noted { T::text_muted() } else { T::red() }).child(err.clone()))
                 .child(div().flex().gap(T::SP_8)
                     .child(w::disabled(w::primary("srv-save", "Save"), busy).on_click(cx.listener(|this, _, _, cx| this.submit(Submit::Server, cx))))

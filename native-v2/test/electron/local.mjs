@@ -6,7 +6,8 @@
 //      history, update settings, client.json), the setup wizard (seven
 //      steps, the alert, Skip, Back; keys typed and pressed), "Restore from a
 //      backup" writing setup:save's .env and starting the server;
-//   2. the next start: the bundled server started as startBot does (its
+//   2. the next start: no sign-in method yet, the server's setup page (as
+//      Electron's page shows), a password set; the bundled server started as startBot does (its
 //      environment: DATA_DIR, DOTENV_PATH, CRUNDI_DEVICE_ID, CRUNDI_DEV, no
 //      NODE_OPTIONS, the IPC channel, the PATH), signed in with its key, the
 //      tray's status, Start and Stop; Stop (shutdown, the tree gone), Start
@@ -27,6 +28,7 @@ import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { check, counts, driver, sleep } from '../lib.mjs';
+import { totpNow } from '../../../src/auth-password.js';
 
 const REPO = fileURLToPath(new URL('../../../', import.meta.url));
 const OWN_BIN = fileURLToPath(new URL('../../.bin/debug/crundi-v2', import.meta.url));
@@ -49,6 +51,10 @@ const CFG = join(ROOT, 'native');
 const ELECTRON = join(XDG, 'crundi-desktop');
 const OUT = process.env.DRIVE_OUT || join(tmpdir(), 'crundi-v2-electron-out');
 mkdirSync(OUT, { recursive: true });
+// The worker program the package bundles (worker/, built by package/check.sh), if built here:
+// it then runs for real (its lock and config under the run's XDG folder, its work folder the run's).
+const PACKED = join(homedir(), '.cache', 'crundi-pack', 'worker-target', 'release', 'crundi-worker');
+const WORKER = process.env.WORKER_BIN || (existsSync(PACKED) ? PACKED : '');
 const DEVICE = 'pc-electrontest' + Math.random().toString(36).slice(2, 8);
 
 // An Electron all-in-one's userData, as v1.21 leaves it (no .env yet: a first run).
@@ -64,7 +70,7 @@ const baseEnv = Object.fromEntries(keep.filter((k) => process.env[k]).map((k) =>
 const env = {
   ...baseEnv,
   CRUNDI_TEST_PORT: String(DRIVER_PORT), CRUNDI_CONFIG_DIR: CFG, XDG_CONFIG_HOME: XDG,
-  CRUNDI_SERVER_DIR: REPO, CRUNDI_NODE: process.execPath, CRUNDI_WORKER: join(ROOT, 'no-worker'),
+  CRUNDI_SERVER_DIR: REPO, CRUNDI_NODE: process.execPath, CRUNDI_WORKER: WORKER || join(ROOT, 'no-worker'),
   CRUNDI_DEV: '1', DEV_WEB_PORT: String(SERVER_PORT), HOMEPOOL_DISABLE: '1', FACTORY_WORKTREES_DIR: join(ROOT, 'worktrees'),
   CRUNDI_OPEN_URL_FILE: join(ROOT, 'open-url.txt'),
   // Removed for the server, as Electron's startBot does.
@@ -118,6 +124,11 @@ function tree(pid) {
   while (todo.length) { const p = todo.pop(); for (const [c, pp] of kids) if (pp === p && !out.includes(c)) { out.push(c); todo.push(c); } }
   return out;
 }
+/** The command lines of crundi-worker processes under the client (by its PID's tree). */
+function pgrepWorker() {
+  if (!app?.pid) return [];
+  return tree(app.pid).map((p) => { try { return readFileSync(`/proc/${p}/cmdline`, 'utf8'); } catch { return ''; } }).filter((c) => c.split('\0')[0].endsWith('crundi-worker'));
+}
 const environ = (pid) => Object.fromEntries(readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter(Boolean).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
 async function gone(pids, ms = 8000) { const end = Date.now() + ms; while (Date.now() < end) { if (pids.every((p) => !alive(p))) return true; await sleep(100); } return pids.every((p) => !alive(p)); }
 
@@ -145,12 +156,22 @@ s = await until('the token typed and corrected', (s) => s.localScreen.setup.toke
 await ui('setup-next');
 s = await until('step 2', (s) => s.localScreen.setup.step === 2);
 await type('@owner');
+// Next twice at once (N2): step 3's box focus, still waiting for its render,
+// must not take the keys from step 3's alert; Escape closes it every time.
 await ui('setup-next');
-s = await until('step 3, its box has the keys', (s) => s.localScreen.setup.step === 3 && s.localScreen.setup.username === '@owner');
 await ui('setup-next');
-s = await until('step 3 refused without a folder', (s) => s.dialog?.message === 'Choose your projects directory (or switch to Multiple folders).');
+s = await until('step 3 refused without a folder (Next pressed as the step showed)', (s) => s.localScreen.setup.step === 3 && s.localScreen.setup.username === '@owner' && s.dialog?.message === 'Choose your projects directory (or switch to Multiple folders).');
+await sleep(300);
 await key('Escape');
-await until('the alert closed', (s) => !s.dialog);
+await until('Escape closes the alert', (s) => !s.dialog, 5000);
+await type('p');
+s = await until('…and the keys are back in step 3\'s box', (s) => s.localScreen.setup.projects === 'p', 5000);
+await key('Backspace');
+await until('Backspace empties it', (s) => s.localScreen.setup.projects === '', 5000);
+await ui('setup-next');
+await until('the alert again', (s) => !!s.dialog);
+await key('Escape');
+await until('the alert closed again by Escape', (s) => !s.dialog, 5000);
 await ui('setup-mode', 'multi');
 s = await until('multiple folders: no folder needed', (s) => s.localScreen.setup.single === false);
 await ui('setup-mode', 'single');
@@ -185,7 +206,20 @@ check('Quit: the server and everything under it are gone', await gone(t0), t0.fi
 
 // ─── 2. The next start ───
 await launch('second');
-s = await until('the next start: Starting, then Running and signed in with the server\'s key', (s) => local(s).status === 'running' && s.signedIn && s.online, 90000);
+// No sign-in method on the server yet (N1): Electron's page shows the server's
+// first-run setup (#login-setup), never the app with its errors.
+s = await until('the next start: Running, no sign-in method yet: the setup page, not the app', (s) => local(s).status === 'running' && !s.signedIn && s.signinStep === 'Login' && s.signin?.setupRequired && !s.localScreen?.active, 90000);
+check('…the web\'s words: "Set up a way to sign in"', s.signin?.prompt === 'Set up a way to sign in', s.signin);
+await sleep(1500);
+check('…and still not in the app', !(await state()).signedIn);
+const password = 'native-v2-local-' + Math.random().toString(36).slice(2, 10);
+await ui('set-up-password', password);
+s = await until('the password set: the authenticator step', (s) => s.signin?.enrol && s.signin?.enrolSecret, 20000);
+const secret = s.signin.enrolSecret;
+await ui('finish-enrol');
+s = await until('Continue: in the app, online', (s) => s.signedIn && s.online, 30000);
+const su = await fetch(`http://localhost:${SERVER_PORT}/api/auth/password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password, code: totpNow(secret) }) }).then((r) => r.json()).catch((e) => ({ error: String(e) }));
+check('the test signs in to the server\'s API', !!su.token, su);
 pid = local(s).pid; pidsSeen.add(pid);
 const e = environ(pid);
 check('startBot\'s environment: DATA_DIR and DOTENV_PATH in Electron\'s folder', e.DATA_DIR === join(ELECTRON, 'data') && e.DOTENV_PATH === join(ELECTRON, '.env'), { DATA_DIR: e.DATA_DIR, DOTENV_PATH: e.DOTENV_PATH });
@@ -219,26 +253,68 @@ const starts = local(s).starts;
 await ui('local-restart');
 s = await until('Restart: a new server, running and signed in', (s) => local(s).status === 'running' && s.signedIn && local(s).starts > starts && local(s).pid !== pid, 90000);
 pid = local(s).pid; pidsSeen.add(pid);
+// The server's restart-server message (restartSelf, as a restored backup asks):
+// the client stops it and starts a new one, as Electron's startBot does.
+const tok = await fetch(`http://localhost:${SERVER_PORT}/api/auth/password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password, code: totpNow(secret) }) }).then((r) => r.json()).catch((e) => ({ error: String(e) }));
+const rs = await fetch(`http://localhost:${SERVER_PORT}/api/backup/restart`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok.token}` }, body: '{}' }).then((r) => r.json()).catch((e) => ({ error: String(e) }));
+check('the server can restart itself here (its IPC channel: restartMode "desktop")', rs.ok === true, rs);
+const starts2 = local(s).starts;
+s = await until('restart-server: a new server, running and signed in', (s) => local(s).status === 'running' && s.signedIn && local(s).starts > starts2 && local(s).pid !== pid, 90000);
+check('…"Restarting the server as it asked" (startBot\'s restart)', /Restarting the server as it asked/.test(readFileSync(join(OUT, 'native-electron-second.log'), 'utf8')));
+pid = local(s).pid; pidsSeen.add(pid);
 
 // The server screen (Tray › Server…): this machine or another server.
 await ui('desktop:tray-pick', 'server');
 s = await until('Server…: the server screen over the app, "Run a server on this machine" chosen', (s) => s.signin?.serverOver && s.localScreen?.serverRemote === false);
 await ui('server-mode', 'remote');
 s = await until('"Connect to a server" chosen', (s) => s.localScreen?.serverRemote === true);
+// The owner's finding: the options' words wrap inside the card, the address box
+// stays in its padding: at the normal width and at Electron's narrowest (800).
+const PAD = 24;
+async function inside(tag) {
+  const st = await until(`the server screen drawn (${tag})`, (s) => s.signin?.rects?.card && s.signin?.rects?.['srv-remote'] && s.signin?.rects?.input);
+  const r = st.signin?.rects || {};
+  const c = r.card || {};
+  const right = c.x + c.w - PAD + 0.5;
+  const bad = ['srv-local', 'srv-remote', 'input'].filter((k) => !r[k] || r[k].x < c.x + PAD - 0.5 || r[k].x + r[k].w > right);
+  check(`${tag}: the options' words and the address box end inside the card's padding`, !bad.length, { card: c, ...Object.fromEntries(Object.entries(r)) });
+  check(`${tag}: "Connect to a server"'s words wrap (two lines, not one past the card)`, (r['srv-remote']?.h || 0) > (r['srv-local']?.h || 0), r);
+  if (tag !== 'normal') check(`${tag}: the card inside the window`, c.x >= 0 && c.x + c.w <= 800.5, c);
+}
+await d.send({ cmd: 'resize', w: 1100, h: 750 });
+await sleep(400);
+await inside('normal');
+await d.send({ cmd: 'resize', w: 800, h: 500 });
+await sleep(400);
+await inside('narrow');
+await d.send({ cmd: 'resize', w: 1100, h: 750 });
+await sleep(300);
 await ui('server-mode', 'local');
 await ui('server-screen', 'false');
 await until('Cancel: back to the app', (s) => !s.signin?.serverOver && s.signedIn);
 
 // This PC as a worker: the switch joins it (join-self, kind native) and keeps the key.
-// The server takes workers once a sign-in method is set up (as a person does on its sign-in page).
-const su = await fetch(`http://localhost:${SERVER_PORT}/api/auth/setup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ method: 'password', password: 'native-v2-local-' + Math.random().toString(36).slice(2, 10) }) }).then((r) => r.json()).catch((e) => ({ error: String(e) }));
-check('a sign-in method set up on the server', !!su.token, su);
+// Its work folder the run's (never the person's ~/crundi-work).
+writeFileSync(join(CFG, 'worker.json'), JSON.stringify({ workDir: join(ROOT, 'work') }));
 await ui('desktop:worker-toggle', 'on');
-s = await until('the worker: joined, its key kept, no worker program in this build', (s) => local(s).worker?.configured && local(s).worker?.state === 'missing', 20000);
+if (WORKER) {
+  s = await until('the worker: joined, crundi-worker running and online', (s) => local(s).worker?.configured && local(s).worker?.state === 'online', 30000);
+  // Signed in again: the server was started anew since the first sign-in.
+  const t2 = await fetch(`http://localhost:${SERVER_PORT}/api/auth/password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password, code: totpNow(secret) }) }).then((r) => r.json()).catch(() => ({}));
+  const list = await fetch(`http://localhost:${SERVER_PORT}/api/workers`, { headers: { Authorization: `Bearer ${t2.token}` } }).then((r) => r.json()).catch((e) => ({ error: String(e) }));
+  const me = (list.workers || []).find((w) => w.deviceId === DEVICE) || (list.workers || [])[0] || {};
+  check('the server has this PC as a worker of kind "native" (join-self and the worker\'s hello)', me.kind === 'native' && (list.workers || []).every((w) => w.kind === 'native'), list.workers || list);
+  const wp = pgrepWorker();
+  check('crundi-worker started with --kind native and the run\'s work folder', wp.length === 1 && wp[0].includes('--kind\0native') && wp[0].includes(join(ROOT, 'work')), wp.map((c) => c.split('\0').join(' ')));
+} else {
+  s = await until('the worker: joined, its key kept, no worker program in this build', (s) => local(s).worker?.configured && local(s).worker?.state === 'missing', 20000);
+  console.log('  (no crundi-worker built: WORKER_BIN, or package/check.sh builds one; its run is not checked)');
+}
 const wj = existsSync(join(CFG, 'worker.json')) ? JSON.parse(readFileSync(join(CFG, 'worker.json'), 'utf8')) : {};
 check('worker.json: the server, a cw_w key, enabled', /^cw_w[0-9a-f]{10}\./.test(wj.key || '') && wj.enabled === true && wj.server === `http://localhost:${SERVER_PORT}`, { ...wj, key: (wj.key || '').slice(0, 6) });
 await ui('desktop:worker-toggle', 'off');
 await until('the worker switched off', (s) => local(s).worker?.enabled === false);
+if (WORKER) { const end2 = Date.now() + 8000; while (pgrepWorker().length && Date.now() < end2) await sleep(100); check('…its crundi-worker gone', !pgrepWorker().length); }
 
 // Quit: nothing left running.
 t0 = [pid, ...tree(pid)];
@@ -246,6 +322,19 @@ await d.send({ cmd: 'ui', name: 'desktop:tray-pick', args: ['quit'] });
 end = Date.now() + 15000; while (!exited && Date.now() < end) await sleep(100);
 check('Quit: the client exits', exited);
 check('Quit: no process left behind (the server, its tree)', await gone(t0), t0.filter(alive));
+
+// ─── 3. Remote mode with no server (startBot's remote branch): the server step, no local server ───
+writeFileSync(join(CFG, 'client.json'), JSON.stringify({ mode: 'remote', serverUrl: '' }));
+{ const sp = join(CFG, 'session.json'); const v = existsSync(sp) ? JSON.parse(readFileSync(sp, 'utf8')) : {}; v.server = ''; v.refresh_token = ''; writeFileSync(sp, JSON.stringify(v)); }
+d.close();
+await launch('third');
+s = await until('remote, no address: the server step (showServerScreen), not the status screen', (s) => s.signinStep === 'Server' && !s.signedIn && !s.localScreen?.active, 30000);
+await sleep(1500);
+s = await state();
+check('…and no local server started', !local(s).pid && local(s).status !== 'running' && local(s).status !== 'starting' && !tree(app.pid).some((p) => { try { return readFileSync(`/proc/${p}/cmdline`, 'utf8').includes('src/index.js'); } catch { return false; } }), local(s));
+await d.send({ cmd: 'ui', name: 'desktop:tray-pick', args: ['quit'] });
+end = Date.now() + 15000; while (!exited && Date.now() < end) await sleep(100);
+check('Quit (remote): the client exits', exited);
 
 d.close();
 cleanup();

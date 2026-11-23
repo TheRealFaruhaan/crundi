@@ -151,6 +151,9 @@ Write-Host "client running after 25 s: $alive"
 if ($full) {
   $srv = UnderInstall | Where-Object { $_.CommandLine -like '*server\src\index.js*' }
   Write-Host "client started the bundled server: $([bool]$srv) $($srv.CommandLine)"
+  # What the client and its server said (startBot's lines, as Electron's crundi.log).
+  $clog = Join-Path $env:APPDATA 'Crundi Native\crundi.log'
+  if (Test-Path $clog) { Write-Host "-- $clog (last 60 lines)"; Get-Content $clog -Tail 60 | Write-Host }
 }
 StopTree $c.Id
 Start-Sleep 2

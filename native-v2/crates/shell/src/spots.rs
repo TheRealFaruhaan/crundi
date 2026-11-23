@@ -43,8 +43,9 @@ impl Spots {
 
 /// The spots' handle (set once; a handle, not data: rule 1).
 pub type SpotsRef = Rc<RefCell<Spots>>;
-struct SpotsHandle(SpotsRef);
+pub(crate) struct SpotsHandle(pub(crate) SpotsRef);
 impl Global for SpotsHandle {}
+pub(crate) type SpotsGlobal = SpotsHandle;
 
 pub fn spots(cx: &mut App) -> SpotsRef {
     if let Some(h) = cx.try_global::<SpotsHandle>() { return h.0.clone(); }
