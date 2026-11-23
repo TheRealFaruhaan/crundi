@@ -1043,7 +1043,8 @@ impl PlaceView {
         div().relative().w_full().pt(T::SP_24 + T::SP_4).pb(T::SP_4)
             .child(div().id(sid(format!("nt-code-{key}-{}", b.id))).w_full().p(T::SP_12).rounded(T::R_FIELD).bg(T::bg_secondary()).border_1()
                 .border_color(if editing { T::accent_edge() } else { T::border_subtle() })
-                .when(!b.wrap && !editing, |d| d.flex().overflow_x_scroll().track_scroll(&scroll))
+                // (T13: up and down go on to the page, as a browser's pre: no turning them sideways.)
+                .when(!b.wrap && !editing, |d| d.flex().overflow_x_scroll().restrict_scroll_to_axis().track_scroll(&scroll))
                 .child(code))
             .child(head)
     }

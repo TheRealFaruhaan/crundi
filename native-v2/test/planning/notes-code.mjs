@@ -45,8 +45,13 @@ export async function run(T, t) {
   p = await T.until('T13: End goes to the long line\'s end', (p) => E(p).a === long.length, 3000);
   const cx = E(p).caretX;
   t.check('T13: …the caret stays in view (inside the block)', cx != null && cx >= c0.left - 1 && cx <= c0.left + c0.w + 1, { caretX: cx, block: c0 });
-  await T.key('Escape');
-  p = await T.until('(Escape leaves the box)', (p) => !E(p).on, 3000);
+  // Into the paragraph above (a click on its words, right of its "+").
+  const b0 = tabPage(p).boxes.find((x) => x.id === blocks(p)[0].id);
+  await T.mouse('move', c0.left + c0.w / 2, b0.y + b0.h / 2);
+  const s0 = await T.until('(the paragraph\'s "+")', (p) => tabPage(p).plus.some((x) => x.id === blocks(p)[0].id), 3000);
+  const pl = tabPage(s0).plus.find((x) => x.id === blocks(s0)[0].id);
+  await T.mouse('click', pl.x + 50, b0.y + b0.h / 2);
+  p = await T.until('(the caret in the paragraph)', (p) => E(p).on && E(p).id === blocks(p)[0].id, 3000);
   t.check('T13: out of the code, the box wraps again (other blocks)', E(p).softWrap === true, E(p));
 
   // The wrap button (shown on hover, at the block's top right): a real click.
