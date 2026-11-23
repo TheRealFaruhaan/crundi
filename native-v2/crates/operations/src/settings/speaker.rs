@@ -10,6 +10,7 @@ use crundi_core::capture::{wav16, Recorder};
 use crundi_theme::{IconName, T};
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
+use gpui_component::Disableable as _;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 
@@ -35,8 +36,6 @@ pub fn load(cx: &mut App) {
     });
 }
 
-/// Settings went away: the microphone is let go (vsSpkEnd from its watch).
-pub fn left(cx: &mut App) { if with(|s| s.active) { end(cx, "", false); } }
 
 fn start(cx: &mut App, words: bool, msg: &str) {
     let m = msg.to_string();
@@ -185,8 +184,7 @@ pub fn part() -> Option<Div> {
         } else { b = b.children(say("Not enrolled yet: Cru acts on any voice. Read a few short phrases so it knows yours (about a minute).", false)); }
         if available {
             let only = c::t(&st, "ownerOnly");
-            let check = w::check("vs-spk-only", "Only act on my voice", only, |on, _, cx| owner_only(cx, *on));
-            b = b.child(div().when(!enrolled, |d| d.opacity(T::SETTINGS_O_DIM)).child(if enrolled { check.into_any_element() } else { check.disabled(true).into_any_element() }))
+            b = b.child(w::check("vs-spk-only", "Only act on my voice", only, |on, _, cx| owner_only(cx, *on)).disabled(!enrolled))
                 .child(hint("Anyone may still ask Cru questions; only your voice, or typing, changes anything. Admin mode always needs your voice."));
             let mut btns = div().flex().flex_wrap().gap(T::SP_8);
             btns = btns.child(if enrolled { w::button("vs-spk-start", "Enrol again") } else { w::primary("vs-spk-start", "Enrol my voice") }.on_click(|_, _, cx| start(cx, false, "")));
