@@ -51,6 +51,12 @@ thread_local! {
     /// own; "server", each homepool network and each hidden browser ("mem:")
     /// their own.
     static CONTEXTS: RefCell<HashMap<String, RequestContext>> = RefCell::new(HashMap::new());
+    /// A profile is usable once CEF has initialised it (it does so
+    /// asynchronously): its proxy can be set and its browsers made only then.
+    /// Until then the opens wait here, by network (V4).
+    static PENDING: RefCell<HashMap<String, Vec<PendingOpen>>> = RefCell::new(HashMap::new());
+    /// The proxy each profile has (to set it again if the app's changes).
+    static CTX_PROXY: RefCell<HashMap<String, Option<Proxy>>> = RefCell::new(HashMap::new());
     /// Browsers made and not yet gone (on_before_close).
     static LIVE: Cell<usize> = const { Cell::new(0) };
     static STATS: RefCell<(Stats, Stats)> = RefCell::new(Default::default());
@@ -101,7 +107,7 @@ pub fn handle(c: Cmd) -> bool {
         Cmd::Hello { .. } => {}
         Cmd::Quit => return false,
         Cmd::Open { id, url, frame, network, proxy, origin, w, h, dpr } => open(id, &url, frame, &network, proxy, &origin, w, h, dpr),
-        Cmd::Close { id } => close(id),
+        Cmd::Close { id } => { PENDING.with(|p| for v in p.borrow_mut().values_mut() { v.retain(|o| o.id != id); }); close(id) }
         Cmd::Size { id, w, h, dpr, screen } => {
             let known = with(|v| v.get_mut(&id).map(|x| { x.w = w.max(1); x.h = h.max(1); x.dpr = dpr.max(0.5); }).is_some());
             if known { with(|v| if let Some(x) = v.get_mut(&id) { x.full = true; }); if let Some(hh) = host_of(id) { if screen { hh.notify_screen_info_changed(); } hh.was_resized(); } }
@@ -162,6 +168,12 @@ pub fn handle(c: Cmd) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn open(id: u64, url: &str, frame: bool, network: &str, proxy: Option<Proxy>, origin: &str, w: i32, h: i32, dpr: f32) {
     if with(|v| v.contains_key(&id)) { return; }
+    // V4: a profile of its own not ready yet: made (or still being made) by
+    // CEF, this open waits for it (ContextInit below).
+    if !frame && !ready(network, proxy.as_ref()) {
+        PENDING.with(|p| p.borrow_mut().entry(network.to_string()).or_default().push(PendingOpen { id, url: url.to_string(), network: network.to_string(), proxy, origin: origin.to_string(), w, h, dpr }));
+        return;
+    }
     with(|v| v.insert(id, HView { browser: None, frame, w: w.max(1), h: h.max(1), dpr: dpr.max(0.5), seg: None, epoch: 0, busy: false, dirty: false, full: true, seg_wh: (0, 0), hidden: false, _obs: None }));
     let referrer = if frame && !origin.is_empty() { origin.to_string() } else { String::new() };
     let mut client = ViewClient::new(
@@ -190,22 +202,68 @@ fn open(id: u64, url: &str, frame: bool, network: &str, proxy: Option<Proxy>, or
     }
 }
 
-fn context_for(network: &str, proxy: Option<&Proxy>) -> Option<RequestContext> {
-    // A hidden browser: a profile of its own, in memory (main.js "mcp-browser-<key>").
-    if network.starts_with("mem:") {
-        let ctx = request_context_create_context(Some(&RequestContextSettings::default()), None)?;
-        CONTEXTS.with(|c| c.borrow_mut().insert(network.to_string(), ctx.clone()));
-        return Some(ctx);
+/// An open waiting for its network's profile (V4).
+struct PendingOpen { id: u64, url: String, network: String, proxy: Option<Proxy>, origin: String, w: i32, h: i32, dpr: f32 }
+
+/// Is [network]'s profile ready for a browser? "client" (CEF's own) always
+/// is; another network's is made on first use, asynchronously, and is ready
+/// once ContextInit has run (its proxy set). A ready profile whose proxy
+/// the app changed gets the new one.
+fn ready(network: &str, proxy: Option<&Proxy>) -> bool {
+    if !network.starts_with("mem:") && crate::common::profile_dir(network).is_empty() { return true; }
+    if let Some(ctx) = CONTEXTS.with(|c| c.borrow().get(network).cloned()) {
+        let have = CTX_PROXY.with(|c| c.borrow().get(network).cloned());
+        match have {
+            // Initialised: the proxy again if it changed.
+            Some(had) => {
+                if had.as_ref() != proxy { if let Some(p) = proxy { set_proxy(network, &ctx, p); } CTX_PROXY.with(|c| c.borrow_mut().insert(network.to_string(), proxy.cloned())); }
+                true
+            }
+            None => false,
+        }
+    } else {
+        make_context(network, proxy);
+        false
     }
-    let dir = crate::common::profile_dir(network);
-    if dir.is_empty() { return None; }
-    if let Some(c) = CONTEXTS.with(|c| c.borrow().get(network).cloned()) { return Some(c); }
-    let path = crate::common::cef_root().join(&dir);
-    let settings = RequestContextSettings { cache_path: CefString::from(path.to_string_lossy().as_ref()), persist_session_cookies: 1, ..Default::default() };
-    let ctx = request_context_create_context(Some(&settings), None)?;
-    CONTEXTS.with(|c| c.borrow_mut().insert(network.to_string(), ctx.clone()));
-    if let Some(p) = proxy { set_proxy(network, &ctx, p); }
-    Some(ctx)
+}
+
+/// A network's profile, made: on disk ("server", homepool) or in memory
+/// (a hidden browser, "mem:"); ContextInit finishes it.
+fn make_context(network: &str, proxy: Option<&Proxy>) {
+    let settings = if network.starts_with("mem:") { RequestContextSettings::default() } else {
+        let path = crate::common::cef_root().join(crate::common::profile_dir(network));
+        RequestContextSettings { cache_path: CefString::from(path.to_string_lossy().as_ref()), persist_session_cookies: 1, ..Default::default() }
+    };
+    let mut init = ContextInit::new(network.to_string(), proxy.cloned());
+    match request_context_create_context(Some(&settings), Some(&mut init)) {
+        Some(ctx) => { CONTEXTS.with(|c| c.borrow_mut().insert(network.to_string(), ctx)); }
+        None => {
+            eprintln!("[browser host] the {network} network's profile could not be made");
+            for o in PENDING.with(|p| p.borrow_mut().remove(network)).unwrap_or_default() { emit(&Ev::Gone { id: o.id, status: -1 }); }
+        }
+    }
+}
+
+fn context_for(network: &str, _proxy: Option<&Proxy>) -> Option<RequestContext> {
+    // (open() has waited for it: ready.)
+    CONTEXTS.with(|c| c.borrow().get(network).cloned())
+}
+
+wrap_request_context_handler! {
+    pub struct ContextInit {
+        network: String,
+        proxy: Option<Proxy>,
+    }
+    impl RequestContextHandler {
+        // CEF has made the profile: its proxy, then the browsers that waited (V4).
+        fn on_request_context_initialized(&self, request_context: Option<&mut RequestContext>) {
+            if let (Some(ctx), Some(p)) = (request_context, self.proxy.as_ref()) { set_proxy(&self.network, ctx, p); }
+            CTX_PROXY.with(|c| c.borrow_mut().insert(self.network.clone(), self.proxy.clone()));
+            for o in PENDING.with(|p| p.borrow_mut().remove(&self.network)).unwrap_or_default() {
+                open(o.id, &o.url, false, &o.network, o.proxy, &o.origin, o.w, o.h, o.dpr);
+            }
+        }
+    }
 }
 
 /// A network's profile goes out through the app's proxy (net.rs), which
