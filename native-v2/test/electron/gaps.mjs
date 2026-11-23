@@ -9,7 +9,7 @@
 // status is Windows-only.
 
 import http from 'node:http';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
@@ -46,6 +46,7 @@ export async function before() {
 }
 
 // As a window manager would answer (none on Xvfb); xprop cannot set two atoms.
+const NOTIFYD = fileURLToPath(new URL('../tools/notifyd.py', import.meta.url));
 const XWMSTATE = fileURLToPath(new URL('../tools/xwmstate.py', import.meta.url));
 const xprop = (id, ...states) => execFileSync('python3', ['-I', XWMSTATE, String(id), ...states]);
 
@@ -150,6 +151,29 @@ export async function run(T, t) {
   await T.act('notify-click', '');
   await T.until('a notification\'s click raises the window, held above', (p) => D(p).win.raises > raises0 && D(p).win.raisedAbove === true, 3000);
   await T.until('…and lets go of "above" after 300 ms', (p) => D(p).win.raisedAbove === false, 3000);
+
+  // ─── FINDINGS T9: a server notice through the session bus's notification service ───
+  {
+    const d = spawn('python3', ['-I', NOTIFYD], { stdio: ['pipe', 'pipe', 'inherit'] });
+    const lines = [];
+    let buf = '';
+    d.stdout.on('data', (b) => { buf += b; let i; while ((i = buf.indexOf('\n')) >= 0) { try { lines.push(JSON.parse(buf.slice(0, i))); } catch { /* not ours */ } buf = buf.slice(i + 1); } });
+    for (let i = 0; i < 50 && !lines.some((l) => l.ready); i++) await t.sleep(100);
+    t.check('T9: a notification service owns org.freedesktop.Notifications', lines.some((l) => l.ready));
+    await T.ui('tab', 'kanban');
+    await T.until('T9: away from the chats (Kanban)', (p) => p.tab === 'kanban');
+    const raises1 = D(await T.state()).win.raises;
+    await T.act('notify-show', 'Done -1', "--help 'quoted' {}", '/chat/t9chat');
+    for (let i = 0; i < 50 && !lines.some((l) => l.id); i++) await t.sleep(100);
+    const n = lines.find((l) => l.id) || {};
+    t.check('T9: Notify called with the spec\'s arguments (app, 0, icon, summary, body, the default action, desktop-entry, -1)',
+      n.app === 'Crundi Client' && n.replaces === 0 && n.icon === 'crundi-client' && n.summary === 'Done -1' && n.body === "--help 'quoted' {}"
+      && JSON.stringify(n.actions) === '["default","Open"]' && n.hints?.['desktop-entry'] === 'crundi-client' && n.expire === -1, n);
+    d.stdin.write(`click ${n.id}\n`);
+    await T.until('T9: its click (ActionInvoked) raises the window and opens the chats', (p) => D(p).win.raises > raises1 && p.tab === 'workbench', 8000);
+    d.stdin.end();
+    d.kill();
+  }
 
   // ─── The homepool node: this PC's public IP (api.ipify.org every 10 min) ───
   const s0 = await T.act('homepool-status');

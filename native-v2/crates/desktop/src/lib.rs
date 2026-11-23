@@ -572,6 +572,8 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "inbox-delete" => { inbox::delete_item(&a(0)); ok() }
         "inbox-open-chat" => { inbox::open_chat(); ok() }
         "notify-click" => { notify::clicked(&a(0)); ok() }
+        // The server's notice as the Desktop app channel brings it (title, body, url).
+        "notify-show" => { notify::from_server(&json!({ "title": a(0), "body": a(1), "url": a(2) })); ok() }
         "cru" => { cru::toggle(); ok() }
         "cru-keyboard" => { cru::set_keyboard(a(0) != "false"); ok() }
         "cru-send" => { cru::utter(&a(0), true); ok() }

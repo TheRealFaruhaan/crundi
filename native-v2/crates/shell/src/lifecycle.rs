@@ -35,6 +35,20 @@ pub fn launch_name() -> &'static str { if cfg!(target_os = "linux") && !client_e
 /// The appId / AppUserModelId.
 pub fn app_id() -> &'static str { if client_edition() { "com.crundi.client" } else { "com.crundi.app" } }
 
+/// The window's identity with the desktop (FINDINGS T6), so the window
+/// groups under its .desktop entry and takes its icon: on Wayland the
+/// app_id is the entry's id ("crundi" / "crundi-client"); on X11 gpui puts
+/// the same string in WM_CLASS, which must be the entry's StartupWMClass
+/// ("Crundi" / "Crundi Client", Electron's productName).
+pub fn window_class(wayland: bool) -> &'static str {
+    match (wayland, client_edition()) {
+        (true, false) => "crundi",
+        (true, true) => "crundi-client",
+        (false, false) => "Crundi",
+        (false, true) => "Crundi Client",
+    }
+}
+
 /// The update file's name stem (app-update.yml's channel): "latest" or "client".
 pub fn update_channel_file() -> &'static str { if client_edition() { "client" } else { "latest" } }
 
@@ -302,6 +316,14 @@ pub fn on_second_instance(f: impl Fn() + Send + 'static) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_window_class_is_the_desktop_entrys() {
+        // build-deb.sh: <package>.desktop, StartupWMClass=<product name>.
+        let pkg = if client_edition() { "crundi-client" } else { "crundi" };
+        assert_eq!(window_class(true), pkg);
+        assert_eq!(window_class(false), app_name());
+    }
 
     #[test]
     fn the_run_value_is_electrons() {
