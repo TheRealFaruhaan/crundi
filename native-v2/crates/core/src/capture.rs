@@ -28,11 +28,24 @@ pub struct Clean {
     gain: f32,
     /// The first frame RNNoise gives back is its start-up; dropped.
     warm: bool,
+    /// Give out RNNoise's denoised audio (else the original, at the level RNNoise's voice detection sets).
+    denoise: bool,
 }
 
 impl Clean {
     pub fn new(rate: u32) -> Clean {
-        Clean { step: rate as f64 / OUT_RATE as f64, pos: 0.0, last: 0.0, frame: Vec::with_capacity(FRAME), ns: DenoiseState::new(), out: vec![0.0; FRAME], level: 0.0, gain: 1.0, warm: false }
+        Clean { step: rate as f64 / OUT_RATE as f64, pos: 0.0, last: 0.0, frame: Vec::with_capacity(FRAME), ns: DenoiseState::new(), out: vec![0.0; FRAME], level: 0.0, gain: 1.0, warm: false, denoise: true }
+    }
+
+    /// For the wake word (V2): the level brought up as Chromium's
+    /// autoGainControl does, but the audio itself not denoised. The keyword
+    /// model was trained on natural, noisy speech; RNNoise's output hides
+    /// "Hey Cru" from it (on the owner's PC it heard the word in 1 of 5
+    /// takes). CRUNDI_WAKE_DENOISE=1 denoises as before.
+    pub fn for_wake(rate: u32) -> Clean {
+        let mut c = Clean::new(rate);
+        c.denoise = std::env::var("CRUNDI_WAKE_DENOISE").is_ok_and(|v| v == "1");
+        c
     }
 
     /// A block in (mono, -1..1): the cleaned samples so far, at 48 kHz.
@@ -56,6 +69,7 @@ impl Clean {
 
     fn frame_done(&mut self, got: &mut Vec<f32>) {
         let vad = self.ns.process_frame(&mut self.out, &self.frame);
+        if !self.denoise { self.out.copy_from_slice(&self.frame); }
         self.frame.clear();
         if !self.warm { self.warm = true; return; }
         let rms = (self.out.iter().map(|v| (v / 32768.0).powi(2)).sum::<f32>() / FRAME as f32).sqrt();

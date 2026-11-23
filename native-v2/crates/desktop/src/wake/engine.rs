@@ -252,24 +252,43 @@ impl Owner {
 // ─── The wake (worker.js createWake) ───
 
 /// A wake: how it was heard, its score, and the clip the owner's voice is checked on.
-/// The microphone's mono samples at its own rate to 16 kHz (mic): the mean
-/// of each step's samples.
-pub struct To16 { pos: f64, step: f64, carry: Vec<f32> }
+/// The microphone's mono samples at its own rate to 16 kHz (mic), as
+/// Chromium's AudioContext({ sampleRate: 16000 }) resamples Electron's: a
+/// low-pass (63-tap windowed sinc, cut at 7 kHz) first, then the 16 kHz
+/// points between its samples. (V2: the mean of each step it used to take
+/// folded everything over 8 kHz back into the band, which the keyword model
+/// does not hear "Hey Cru" through.)
+pub struct To16 { step: f64, pos: f64, buf: Vec<f32>, taps: Vec<f32> }
 
 impl To16 {
-    pub fn new(rate: usize) -> To16 { To16 { pos: 0.0, step: rate as f64 / RATE as f64, carry: vec![] } }
+    pub fn new(rate: usize) -> To16 {
+        const N: usize = 63;
+        let fc = 7000.0 / rate as f64;
+        let m = (N - 1) as f64 / 2.0;
+        let mut taps: Vec<f64> = (0..N).map(|k| {
+            let x = k as f64 - m;
+            let sinc = if x == 0.0 { 2.0 * fc } else { (2.0 * std::f64::consts::PI * fc * x).sin() / (std::f64::consts::PI * x) };
+            sinc * (0.54 - 0.46 * (2.0 * std::f64::consts::PI * k as f64 / (N - 1) as f64).cos())
+        }).collect();
+        let sum: f64 = taps.iter().sum();
+        for t in &mut taps { *t /= sum; }
+        To16 { step: rate as f64 / RATE as f64, pos: (N - 1) as f64, buf: vec![0.0; N - 1], taps: taps.into_iter().map(|t| t as f32).collect() }
+    }
+    fn at(&self, i: usize) -> f32 { self.taps.iter().enumerate().map(|(k, t)| t * self.buf[i - k]).sum() }
     pub fn push(&mut self, b: &[f32]) -> Vec<f32> {
-        self.carry.extend_from_slice(b);
+        self.buf.extend_from_slice(b);
         let mut o = vec![];
-        while self.pos + self.step <= self.carry.len() as f64 {
-            let a = self.pos as usize;
-            let z = ((self.pos + self.step) as usize).min(self.carry.len()).max(a + 1);
-            o.push(self.carry[a..z].iter().sum::<f32>() / (z - a) as f32);
+        while self.pos + 1.0 < self.buf.len() as f64 {
+            let i = self.pos as usize;
+            let f = (self.pos - i as f64) as f32;
+            let (a, c) = (self.at(i), self.at(i + 1));
+            o.push(a + (c - a) * f);
             self.pos += self.step;
         }
-        let used = (self.pos as usize).min(self.carry.len());
-        self.carry.drain(..used);
-        self.pos -= used as f64;
+        // Keep what the next samples' filter still reaches back to.
+        let keep = (self.pos as usize).saturating_sub(self.taps.len() - 1).min(self.buf.len());
+        self.buf.drain(..keep);
+        self.pos -= keep as f64;
         o
     }
 }
@@ -377,6 +396,26 @@ pub fn read_wav(b: &[u8]) -> Option<Vec<f32>> {
 
 #[cfg(test)]
 mod tests {
+    /// V2: To16 keeps speech (1 kHz) at its level, removes what would fold
+    /// back into the band (12 kHz from 48 kHz), and gives 16 000 a second
+    /// whatever the blocks.
+    #[test]
+    fn to16_low_passes_and_keeps_the_rate() {
+        let tone = |hz: f64, rate: usize, n: usize| -> Vec<f32> { (0..n).map(|i| (2.0 * std::f64::consts::PI * hz * i as f64 / rate as f64).sin() as f32 * 0.5).collect() };
+        let rms = |x: &[f32]| (x.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / x.len() as f64).sqrt();
+        for rate in [48_000usize, 44_100] {
+            let mut d = super::To16::new(rate);
+            let mut out = vec![];
+            for b in tone(1000.0, rate, rate).chunks(441) { out.extend(d.push(b)); }
+            assert!((out.len() as i64 - 16_000).abs() <= 64, "{rate}: {} samples", out.len());
+            let r = rms(&out[1000..]);
+            assert!((r - 0.5 / 2f64.sqrt()).abs() < 0.02, "{rate}: speech kept at {r}");
+            let mut d = super::To16::new(rate);
+            let hi: Vec<f32> = tone(12_000.0, rate, rate).chunks(441).flat_map(|b| d.push(b)).collect();
+            assert!(rms(&hi[1000..]) < 0.01, "{rate}: 12 kHz folded back at {}", rms(&hi[1000..]));
+        }
+    }
+
     use super::*;
 
     /// Trained on one voice's five takes: its "Hey Cru" wakes, its decoys do
@@ -434,7 +473,7 @@ mod tests {
                     let v = s.get(a).copied().unwrap_or(0.0) * (1.0 - f) + s.get(a + 1).copied().unwrap_or(0.0) * f + noise() * noise_rms / 0.053;
                     for _ in 0..ch { st.push(v); }
                 }
-                let mut c = crundi_core::capture::Clean::new(rate as u32);
+                let mut c = crundi_core::capture::Clean::for_wake(rate as u32);
                 let mut d = To16::new(crundi_core::capture::OUT_RATE as usize);
                 st.chunks(441 * ch).flat_map(|b| d.push(&c.push(&crundi_core::voice::mono(b, ch)))).collect()
             };

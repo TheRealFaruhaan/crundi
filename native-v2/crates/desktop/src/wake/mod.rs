@@ -323,13 +323,13 @@ fn mic(out: mpsc::Sender<Vec<f32>>, stop: Arc<AtomicBool>) -> Result<(), String>
             let cfg = dev.default_input_config().map_err(|e| e.to_string())?;
             let (rate, ch) = (cfg.sample_rate().0 as usize, cfg.channels() as usize);
             // What it hears from (T16): to tell a wrong device or format from a quiet microphone.
-            let what = format!("microphone: {} ({:?}, {} Hz, {} channel{}), denoised, to 16 kHz mono", dev.name().unwrap_or_else(|_| "?".into()), cfg.sample_format(), rate, ch, if ch == 1 { "" } else { "s" });
+            let what = format!("microphone: {} ({:?}, {} Hz, {} channel{}), levelled, low-passed to 16 kHz mono", dev.name().unwrap_or_else(|_| "?".into()), cfg.sample_format(), rate, ch, if ch == 1 { "" } else { "s" });
             kit::main_thread(move || log(what));
             let (tx, rx) = mpsc::channel::<Vec<f32>>();
             let err = |e| eprintln!("[voice-wake] microphone: {e}");
             let stream = match cfg.sample_format() {
-                cpal::SampleFormat::F32 => { let o = tx.clone(); let mut c = Clean::new(rate as u32); dev.build_input_stream(&cfg.into(), move |d: &[f32], _| { let b = c.push(&crundi_core::voice::mono(d, ch)); if !b.is_empty() { let _ = o.send(b); } }, err, None) }
-                cpal::SampleFormat::I16 => { let o = tx.clone(); let mut c = Clean::new(rate as u32); dev.build_input_stream(&cfg.into(), move |d: &[i16], _| { let f: Vec<f32> = d.iter().map(|x| *x as f32 / 32768.0).collect(); let b = c.push(&crundi_core::voice::mono(&f, ch)); if !b.is_empty() { let _ = o.send(b); } }, err, None) }
+                cpal::SampleFormat::F32 => { let o = tx.clone(); let mut c = Clean::for_wake(rate as u32); dev.build_input_stream(&cfg.into(), move |d: &[f32], _| { let b = c.push(&crundi_core::voice::mono(d, ch)); if !b.is_empty() { let _ = o.send(b); } }, err, None) }
+                cpal::SampleFormat::I16 => { let o = tx.clone(); let mut c = Clean::for_wake(rate as u32); dev.build_input_stream(&cfg.into(), move |d: &[i16], _| { let f: Vec<f32> = d.iter().map(|x| *x as f32 / 32768.0).collect(); let b = c.push(&crundi_core::voice::mono(&f, ch)); if !b.is_empty() { let _ = o.send(b); } }, err, None) }
                 _ => return Err("this microphone's format is not supported".into()),
             }.map_err(|e| e.to_string())?;
             stream.play().map_err(|e| e.to_string())?;
