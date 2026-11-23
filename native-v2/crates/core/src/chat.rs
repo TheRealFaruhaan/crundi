@@ -156,6 +156,15 @@ impl Conversation {
                     None => {
                         if !id.is_empty() { self.index.insert(id.clone(), self.entries.len()); }
                         self.entries.push(e.clone());
+                        // V6: a handed-over message now in the conversation as
+                        // the user's (the server adds it the moment the CLI
+                        // reads it, then says "injected"): its slot goes with
+                        // it, even when that word is lost.
+                        if s(e, "kind") == "user" {
+                            let t = s(e, "text");
+                            let t = t.trim_start_matches('\u{200b}');
+                            if let Some(i) = self.slots.iter().position(|x| x.text.trim_start_matches('\u{200b}') == t) { self.slots.remove(i); }
+                        }
                     }
                 }
                 self.touched(&id);
@@ -225,6 +234,9 @@ impl Conversation {
             }
             "state" => {
                 self.state = s(event, "state");
+                // V6: idle, the server has settled every handed-over message
+                // (settleInjections): none is in flight any more.
+                if self.state == "idle" { self.slots.retain(|x| x.state == "queued"); }
                 // A suggestion is for an idle chat: it goes for good the
                 // moment the chat is anything else (2.17).
                 if self.state != "idle" { self.suggestion.clear(); }
@@ -473,6 +485,20 @@ mod v2_tests {
 
 #[cfg(test)]
 mod tests {
+    /// V6: a handed-over message's slot goes when it shows up as the user's
+    /// entry, and when the chat goes idle, even without the "injected" word.
+    #[test]
+    fn handed_over_slots_settle() {
+        let mut c = Conversation::default();
+        c.load(&json!({ "id": "c", "messages": [] }));
+        c.add_slot("change the ticker");
+        c.apply(&json!({ "type": "entry", "entry": { "id": "u1", "kind": "user", "text": "change the ticker" } }));
+        assert!(c.slots.is_empty(), "the entry took the slot");
+        c.add_slot("another");
+        c.apply(&json!({ "type": "state", "state": "idle" }));
+        assert!(c.slots.is_empty(), "idle settled it");
+    }
+
     use super::*;
     use serde_json::json;
 
