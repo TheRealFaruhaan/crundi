@@ -900,7 +900,10 @@ pub fn marks(i: usize) -> Value {
 
 /// DevTools for panel [i], in a window of its own (BD devtools: detached;
 /// the host's window), or closed when open.
-pub fn devtools(i: usize) { to_view(i, |id| Cmd::DevTools { id }); }
+/// DevTools for a panel's page, opened (or closed) by the browser host.
+pub fn devtools(i: usize) { DEVTOOLS_SENT.fetch_add(1, std::sync::atomic::Ordering::Relaxed); to_view(i, |id| Cmd::DevTools { id }); }
+/// How many times DevTools was asked of the host (the driver's look).
+pub static DEVTOOLS_SENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub const MAX_NET: usize = 1000;
 

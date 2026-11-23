@@ -192,6 +192,20 @@ impl Render for BrowserDrawer {
                 .when_some(l.note_at, |d, (x, y)| d.child(self.note.clone().cached(sr().absolute().left(px(x)).top(px(y) + T::SP_4).w(T::DRAWER_NOTE_W).h(note_h))))
                 .into_any_element()
         };
+        // The browser starting: over the page's place only (the tabs, address bar and close stay usable), until it is up.
+        let body: AnyElement = match boot_shown(l.boot.clone()) {
+            None => body,
+            Some(b) => {
+                let (slow, err) = match b { crundi_webview::Boot::Starting { slow } => (slow, None), crundi_webview::Boot::Failed(e) => (false, Some(SharedString::from(e))) };
+                div().relative().w_full().flex_1().min_h_0().flex().flex_col().child(body)
+                    .child(w::browser_booting(T::bg_secondary(), slow, err, |_, _, _| browser::defer(|| {
+                        crundi_webview::retry_host();
+                        if let Some(i) = drawer::active_tab().and_then(|t| t.panel) { browser::reload(i); }
+                        drawer::render();
+                    })))
+                    .into_any_element()
+            }
+        };
         let focused = self.addr_focus.contains_focused(window, cx);
         div().relative().flex().flex_col().size_full().min_h_0().min_w_0().bg(T::bg_secondary()).overflow_hidden()
             .child(canvas(|b, _, _| drawer::set_root(b), |_, _, _, _| {}).absolute().top_0().left_0().size_full())
@@ -202,15 +216,6 @@ impl Render for BrowserDrawer {
             .child(body)
             // The address field's suggestions, under it.
             .when(focused && l.suggest, |d| d.child(self.suggest.clone().cached(sr().absolute().top(T::TABBAR_H + addr_h).left(T::DRAWER_NAV_W).right(T::DRAWER_TOOLS_W).h(sug_h))))
-            // The browser starting: over everything (tabs, address bar, page) until it is up.
-            .when_some(boot_shown(l.boot.clone()), |d, b| {
-                let (slow, err) = match b { crundi_webview::Boot::Starting { slow } => (slow, None), crundi_webview::Boot::Failed(e) => (false, Some(SharedString::from(e))) };
-                d.child(w::browser_booting(T::bg_secondary(), slow, err, |_, _, _| browser::defer(|| {
-                    crundi_webview::retry_host();
-                    if let Some(i) = drawer::active_tab().and_then(|t| t.panel) { browser::reload(i); }
-                    drawer::render();
-                })))
-            })
     }
 }
 

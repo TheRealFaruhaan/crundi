@@ -41,7 +41,17 @@ export async function run(T, t) {
   t.check('…the drawer tab shows its page loading meanwhile', !!tab && tab.loading === true, tab);
   await T.act('drawer', 'true');
   await T.until('…the drawer shown while the host starts', (p) => D(p).drawer?.open && D(p).browserHost?.state === 'starting', 3000);
-  await T.until('…the "browser booting" overlay over the whole drawer', (p) => D(p).drawer?.boot === 'starting', 3000);
+  await T.until('…the "browser booting" overlay over the page\'s place', (p) => D(p).drawer?.boot === 'starting', 3000);
+  // Its header stays usable: the tab (loading), the address bar, Close; the overlay only below them.
+  {
+    const close = await T.ui('find', 'Hide the browser (pages keep running)');
+    const addr = await T.ui('find', 'Back');
+    t.check('…the tab strip\'s hide button and the address bar\'s Back shown above it', close.ok && addr.ok && close.y < 90 && addr.y < 130, { close, addr });
+    await T.mouse('click', close.x + close.w / 2, close.y + close.h / 2);
+    await T.until('…a real click on it hides the drawer while the browser starts', (p) => !D(p).drawer?.open && D(p).browserHost?.state === 'starting', 3000);
+    await T.act('browser');
+    await T.until('…and the Browser button opens it again, still starting', (p) => D(p).drawer?.open && D(p).drawer?.boot === 'starting', 3000);
+  }
   t.check('…not yet its second line', D(await T.state()).browserHost?.boot === 'starting');
   await T.snap('electron', 'browser-first-start-loading');
   {

@@ -118,7 +118,13 @@ export async function run(T, t) {
   }
   await T.until('the drawer shown, on the 127.0.0.1 tab', (p) => DR(p).open && (DR(p).tabs || []).find((x) => x.id === DR(p).active)?.url?.includes('127.0.0.1'), 8000);
   await t.sleep(600);
-  // (The DevTools button: no window opens under Xvfb; a finding of its own, not checked here.)
+  // The DevTools button, clicked: the host is asked for the page's DevTools (Cmd::DevTools).
+  // (Xvfb opens no DevTools window: the window itself is the owner's check on a real desktop.)
+  {
+    const n0 = DR(await T.state()).devtoolsSent;
+    await click('DevTools');
+    await T.until('a click on DevTools asks the browser host for the page\'s DevTools (Cmd::DevTools)', (p) => DR(p).devtoolsSent === n0 + 1, 3000);
+  }
   await T.act('panel', 'clear');
   await T.until('the Clear browsing data panel, for this tab\'s site', (p) => DR(p).panel === 'clear', 5000);
   await t.sleep(400);
