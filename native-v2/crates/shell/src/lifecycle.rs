@@ -231,11 +231,14 @@ pub fn init_log(default_filter: &str) {
     log_line(&format!("[lifecycle] platform={} arch={}", std::env::consts::OS, std::env::consts::ARCH));
 }
 
-/// This build's version (the release's, given at package time as
-/// CRUNDI_VERSION; the crate's otherwise). The test driver may say another.
+/// This build's version: the release's (package.json's), written next to the
+/// executable at package time (package/stage.mjs: `<exe dir>/version`), else
+/// given at build time as CRUNDI_VERSION, else the crate's. The test driver
+/// may say another.
 pub fn version() -> String {
     if testing() { if let Ok(v) = std::env::var("CRUNDI_TEST_VERSION") { return v; } }
-    option_env!("CRUNDI_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")).trim_start_matches('v').to_string()
+    let staged = std::fs::read_to_string(exe_dir().join("version")).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty() && s.len() < 64);
+    staged.unwrap_or_else(|| option_env!("CRUNDI_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")).to_string()).trim_start_matches('v').to_string()
 }
 
 // ─── Single instance (requestSingleInstanceLock, second-instance) ───

@@ -61,7 +61,7 @@ build() {
   local ed=$1
   step "Stage and .deb ($ed)"
   node "$REPO/native-v2/package/stage.mjs" --out "$OUT/stage-$ed" --edition "$ed" --bin "$BIN" --cef "$CEF" \
-    --worker "$WORKER" --node "$NODE_DIR" --modules "$MOD/node_modules"
+    --worker "$WORKER" --node "$NODE_DIR" --modules "$MOD/node_modules" --version "$VERSION"
   "$REPO/native-v2/package/linux/build-deb.sh" "$ed" "$OUT/stage-$ed" "$DIST" "$VERSION"
 }
 upgrade() {

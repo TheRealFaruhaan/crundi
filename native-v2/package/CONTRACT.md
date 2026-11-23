@@ -11,6 +11,7 @@ Every stream builds to this. A change is a question for the Manager.
 - `crundi[.exe]`: the native client (all-in-one; `crundi-client[.exe]` for the client edition).
 - `crundi-browser-host[.exe]` and CEF files.
 - `crundi-worker[.exe]`: the worker binary from worker/.
+- `version`: the release's version (package.json's), one line. The client reports it (logs, Settings, the updater's current version).
 - `node/`: Node 22 for that OS. Linux: `node/bin/node`; Windows: `node/node.exe`. Bundled on both in the all-in-one; Windows falls back to the system node. The client edition ships no `node/`.
 - `server/`: `src/`, `app/vendor/`, `app/homepool-node.js` (the server imports it), `scripts/`, `skills/`, `assets/`, `package.json`, `.env.example`, and the production `node_modules`. node-pty and the other native modules are built for that Node; cloudflared is in its usual `node_modules` place.
 - The client finds the server at `<exe dir>/server/src/index.js` and Node at `<exe dir>/node/...`. Overrides `CRUNDI_SERVER_DIR` and `CRUNDI_NODE` are for tests.

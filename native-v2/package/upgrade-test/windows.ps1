@@ -144,13 +144,43 @@ if ($full) {
 
 # The native client itself, started as the shortcut starts it: report whether it
 # stays up and, all-in-one, whether it starts the bundled server.
-$c = Start-Process "$inst\$newExe" -PassThru
-Start-Sleep 25
-$alive = -not $c.HasExited
-Write-Host "client running after 25 s: $alive"
+Check ((Test-Path "$inst\version") -and ((Get-Content "$inst\version" -Raw).Trim() -eq $Version)) "$inst\version is $Version"
+$clog = Join-Path $env:TEMP 'crundi-upgrade-client.log'
+$c = Start-Process "$inst\$newExe" -PassThru -RedirectStandardError $clog -RedirectStandardOutput "$clog.out"
+$nlog = Join-Path $env:APPDATA 'Crundi Native\crundi.log'
+# The first update check is 8 s after launch (the carried update-config: on, dev).
+$upd = $null
+for ($i = 0; $i -lt 40 -and -not $upd; $i++) {
+  Start-Sleep 1
+  if (Test-Path $nlog) { $upd = Select-String -Path $nlog -Pattern '\[update\] (Up to date|Available: .*|check failed.*)' | Select-Object -Last 1 }
+}
+Check (-not $c.HasExited) "client running after $i s"
+Check ((Test-Path $nlog) -and (Select-String -Path $nlog -SimpleMatch "[lifecycle] version=$Version " -Quiet)) "the client reports version $Version"
+$u = if ($upd) { $upd.Matches[0].Value } else { '' }
+Write-Host "  updater: $u"
+$offer = if ($u -match '^\[update\] Available: (.+)$') { $Matches[1].Trim() } else { '' }
+# Newer: a release of this prerelease's version (1.21.8 over 1.21.8-dev.8), or higher by number.
+$newer = [bool]($offer -and $offer -notmatch '-' -and $Version.StartsWith("$offer-"))
+if (-not $newer -and $offer -and $offer -ne $Version) { $newer = ((@($Version, $offer) | Sort-Object { [regex]::Replace($_, '\d+', { $args[0].Value.PadLeft(8, '0') }) })[-1] -eq $offer) }
+Check ($u -eq '[update] Up to date' -or $newer) "it offers no update to its own version or older ($u)"
 if ($full) {
+  # The server the client starts (startBot): its port from the line the client
+  # reads ("HTTP server on <host>:<port>"), then it must answer.
+  $cport = $null; $cup = $false
+  for ($i = 0; $i -lt 120 -and -not $cup; $i++) {
+    if (Test-Path $clog) {
+      $m = Select-String -Path $clog -Pattern 'HTTP server on \S*:(\d+)' | Select-Object -Last 1
+      if ($m) { $cport = $m.Matches[0].Groups[1].Value }
+    }
+    if ($cport) {
+      try { $r = Invoke-WebRequest "http://127.0.0.1:$cport/" -UseBasicParsing -TimeoutSec 3; $cup = $r.StatusCode -lt 500 } catch { if ($_.Exception.Response) { $cup = [int]$_.Exception.Response.StatusCode -lt 500 } }
+    }
+    if (-not $cup) { Start-Sleep 1 }
+  }
   $srv = UnderInstall | Where-Object { $_.CommandLine -like '*server\src\index.js*' }
-  Write-Host "client started the bundled server: $([bool]$srv) $($srv.CommandLine)"
+  Check ([bool]$srv) "the client started the bundled server: $($srv.CommandLine)"
+  Check $cup "...and it answers on :$cport within 120 s"
+  if (-not $cup) { Write-Host '-- client stderr:'; Get-Content $clog -Tail 60 -ErrorAction SilentlyContinue | Write-Host; Write-Host '-- crundi.log:'; Get-Content $nlog -Tail 40 -ErrorAction SilentlyContinue | Write-Host }
 }
 StopTree $c.Id
 Start-Sleep 2
