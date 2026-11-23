@@ -371,7 +371,7 @@ fn pump(id: u32, mut rd: TcpStream, tx: mpsc::Sender<Out>, paused: Paused) {
 fn info() -> String {
     let platform = if cfg!(target_os = "windows") { "windows" } else if cfg!(target_os = "macos") { "darwin" } else { "linux" };
     let ip = with(|n| n.public_ip.clone());
-    json!({ "type": "info", "platform": platform, "app": "crundi-desktop", "version": env!("CARGO_PKG_VERSION"), "network": "PC", "publicIp": ip, "paused": false, "pauseReason": "", "bytesToday": UP.load(Ordering::Relaxed) + DOWN.load(Ordering::Relaxed), "mobileBytesToday": 0 }).to_string()
+    json!({ "type": "info", "platform": platform, "app": "crundi-desktop", "version": crundi_shell::lifecycle::version(), "network": "PC", "publicIp": ip, "paused": false, "pauseReason": "", "bytesToday": UP.load(Ordering::Relaxed) + DOWN.load(Ordering::Relaxed), "mobileBytesToday": 0 }).to_string()
 }
 
 #[cfg(test)]

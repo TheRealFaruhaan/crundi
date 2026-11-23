@@ -95,7 +95,7 @@ pub fn registration() -> Option<Value> {
 /// server with several PCs attached can tell them apart).
 fn register() -> Value {
     json!({ "type": "register-native-host", "capabilities": CAPABILITIES, "deviceId": device_id(),
-        "name": gethostname::gethostname().to_string_lossy(), "clientKind": CLIENT_KIND, "version": env!("CARGO_PKG_VERSION") })
+        "name": gethostname::gethostname().to_string_lossy(), "clientKind": CLIENT_KIND, "version": crundi_shell::lifecycle::version() })
 }
 
 /// The kind this client says it is (the workers' kinds: src/workers.js).

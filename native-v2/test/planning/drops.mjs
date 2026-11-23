@@ -4,6 +4,8 @@
 // web's labelled reference ("[Kanban Task ID: …]") or, for a Notes block,
 // its Markdown, typed into the program ("Sent to terminal").
 
+import { saveView, restoreView } from './map-view.mjs';
+
 const PA = (p) => p.areas?.planning ?? p.planningArea ?? {};
 const K = (p) => PA(p).kanban;
 const M = (p) => PA(p).mindmap;
@@ -93,6 +95,7 @@ export async function run(T, t) {
   await T.ui('tab', 'workbench');
   const ideaShown = (p) => inLeaf(leaf(p, 'panel:mindmap'), M(p)?.nodes?.find((r) => r.id === idea.id)?.box);
   s = await T.until('a Mindmap pane beside the terminal', (p) => leaf(p, 'panel:mindmap') && M(p)?.state === 'ok' && M(p).nodes?.some((r) => r.id === idea.id && r.box));
+  const view0 = await saveView(T);
   if (s && !ideaShown(s)) {
     // (A big map: panned to the idea, as a person would.)
     const ml = leaf(s, 'panel:mindmap');
@@ -158,6 +161,7 @@ export async function run(T, t) {
       await T.until('…the second closes it', (p) => !p.panes?.includes(ck), 10000);
     }
   }
+  await restoreView(T, t, view0, 'drops');
   await T.ui('workbench:pane-close', 'panel:mindmap');
   await T.until('the Mindmap pane closes', (p) => !p.panes?.includes('panel:mindmap'));
 

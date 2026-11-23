@@ -1,6 +1,7 @@
 // An idea at rest (drawn by the map's one element, idea_el.rs) is the same
 // picture as its div (run by test/planning.mjs; needs the snapshots).
 import { execFileSync } from 'node:child_process';
+import { saveView, restoreView } from './map-view.mjs';
 
 let T;
 const M = (p) => p.planningArea?.mindmap;
@@ -22,6 +23,7 @@ export async function run(T_, t) {
   await mpost({ action: 'addNode', text: 'Hidden under it', parentId: folded });
   await T.ui('tab', 'mindmap');
   await T.until('the look ideas show', (p) => M(p)?.state === 'ok' && M(p).nodes.some((n) => n.text === 'Inherits the project' && n.chip === 'inherited'));
+  const view0 = await saveView(T);
   await T.ui('mindmap-zoom', '1');
   await T.ui('mindmap-act', 'toggle', folded);
   await t.sleep(500);
@@ -145,4 +147,5 @@ export async function run(T_, t) {
     }
     await mpost({ action: 'deleteNode', id: hroot });
   }
+  await restoreView(T, t, view0, 'mindmap-look');
 }

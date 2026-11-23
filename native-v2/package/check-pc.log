@@ -1,24 +1,24 @@
 
-== Build tools image (0 s)
+== Build tools image (1 s)
 
-== Node 22 (0 s)
+== Node 22 (1 s)
 v22.23.5
 
-== Worker (Ubuntu 24.04, the PC's Rust toolchain) (0 s)
--rwxr-xr-x 2 farhan farhan 4662800 Nov 22 23:48 /home/farhan/.cache/crundi-pack/worker-target/release/crundi-worker
+== Worker (Ubuntu 24.04, the PC's Rust toolchain) (1 s)
+-rwxr-xr-x 2 farhan farhan 4662800 Nov 23 12:06 /home/farhan/.cache/crundi-pack/worker-target/release/crundi-worker
 
-== Server node_modules (built by the bundled Node, Ubuntu 24.04) (61 s)
+== Server node_modules (built by the bundled Node, Ubuntu 24.04) (58 s)
 the client binary needs glibc 2.43: upgrade test on Ubuntu 26.04
 
-== Stage and .deb (full) (62 s)
+== Stage and .deb (full) (58 s)
 /home/farhan/.cache/crundi-pack/stage-full
 /home/farhan/.cache/crundi-pack/dist/Crundi-1.21.8-dev.8-linux-x64.deb
 
-== Stage and .deb (client) (134 s)
+== Stage and .deb (client) (124 s)
 /home/farhan/.cache/crundi-pack/stage-client
 /home/farhan/.cache/crundi-pack/dist/Crundi-Client-1.21.8-dev.8-linux-x64.deb
 
-== Docker upgrade test (full): Crundi-1.21.7-linux-x64.deb -> Crundi-1.21.8-dev.8-linux-x64.deb (196 s)
+== Docker upgrade test (full): Crundi-1.21.7-linux-x64.deb -> Crundi-1.21.8-dev.8-linux-x64.deb (169 s)
 == apt
 == Electron: old.deb
 ok    Electron crundi installed (1.21.7)
@@ -36,7 +36,7 @@ ok    Electron's userData is /home/tester/.config/crundi-desktop
 user data: 5 files
 == Native: new.deb
 ok    apt installs the new .deb over Electron's
-  took 13 s
+  took 12 s
 ok    one crundi package, version 1.21.8-dev.8
 ok    Electron's files are gone (app.asar, libffmpeg)
 ok    /opt/Crundi/crundi is the native client
@@ -60,8 +60,13 @@ ok    launch at login kept, unchanged
 ok    it starts the native client
 ok    one autostart entry
 ok    the server from /opt/Crundi/server answers on :4861
-client running after 20 s: yes
-client started the bundled server: yes
+ok    /opt/Crundi/version is 1.21.8-dev.8
+ok    client running after 11 s
+ok    the client reports version 1.21.8-dev.8
+  updater: [update] Up to date
+ok    it offers no update to its own version or older ([update] Up to date)
+ok    the client started the bundled server (472)
+ok    …and it answers on :35377
 == Remove
 ok    remove takes the files
 ok    remove keeps the data
@@ -69,7 +74,7 @@ size: native 208 MB (.deb), Electron 353 MB
 
 Linux upgrade test passed (full)
 
-== Docker upgrade test (client): Crundi-Client-1.21.7-linux-x64.deb -> Crundi-Client-1.21.8-dev.8-linux-x64.deb (272 s)
+== Docker upgrade test (client): Crundi-Client-1.21.7-linux-x64.deb -> Crundi-Client-1.21.8-dev.8-linux-x64.deb (230 s)
 == apt
 == Electron: old.deb
 ok    Electron crundi-client installed (1.21.7)
@@ -87,7 +92,7 @@ ok    Electron's userData is /home/tester/.config/Crundi Client
 user data: 5 files
 == Native: new.deb
 ok    apt installs the new .deb over Electron's
-  took 6 s
+  took 7 s
 ok    one crundi-client package, version 1.21.8-dev.8
 ok    Electron's files are gone (app.asar, libffmpeg)
 ok    /opt/Crundi Client/crundi-client is the native client
@@ -103,7 +108,11 @@ ok    data and config kept (5 files)
 ok    launch at login kept, unchanged
 ok    it starts the native client
 ok    one autostart entry
-client running after 20 s: yes
+ok    /opt/Crundi Client/version is 1.21.8-dev.8
+ok    client running after 11 s
+ok    the client reports version 1.21.8-dev.8
+  updater: [update] Up to date
+ok    it offers no update to its own version or older ([update] Up to date)
 == Remove
 ok    remove takes the files
 ok    remove keeps the data
@@ -111,13 +120,12 @@ size: native 137 MB (.deb), Electron 87 MB
 
 Linux upgrade test passed (client)
 
-== Sizes (330 s)
+== Sizes (286 s)
 Crundi-1.21.8-dev.8-linux-x64.deb             207 MB
 Crundi-Client-1.21.8-dev.8-linux-x64.deb      136 MB
 Crundi-1.21.7-linux-x64.deb                   352 MB
 Crundi-Client-1.21.7-linux-x64.deb             86 MB
 installed full     native   766 MB
-installed client   native   429 MB
+installed client   native   430 MB
 
-package check passed (330 s)
-exit 0
+package check passed (286 s)

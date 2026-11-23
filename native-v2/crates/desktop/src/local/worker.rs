@@ -80,7 +80,7 @@ pub fn status() -> Value {
         "supported": true, "available": binary().is_some(), "enabled": c["enabled"].as_bool().unwrap_or(false),
         "configured": !s("server").is_empty() && !s("key").is_empty(), "server": s("server"), "id": s("id"),
         "workDir": if s("workDir").is_empty() { default_dir() } else { s("workDir") },
-        "deviceId": crate::host::device_id(), "name": host_name(), "os": os(), "version": env!("CARGO_PKG_VERSION"),
+        "deviceId": crate::host::device_id(), "name": host_name(), "os": os(), "version": crundi_shell::lifecycle::version(),
     });
     with(|w| { if let (Some(o), Some(st)) = (v.as_object_mut(), w.state.as_object()) { for (k, x) in st { o.insert(k.clone(), x.clone()); } } v["log"] = json!(w.log.iter().rev().take(25).rev().cloned().collect::<Vec<_>>()); });
     v

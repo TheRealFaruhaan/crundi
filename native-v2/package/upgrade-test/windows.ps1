@@ -146,8 +146,10 @@ if ($full) {
 # stays up and, all-in-one, whether it starts the bundled server.
 Check ((Test-Path "$inst\version") -and ((Get-Content "$inst\version" -Raw).Trim() -eq $Version)) "$inst\version is $Version"
 $clog = Join-Path $env:TEMP 'crundi-upgrade-client.log'
-$c = Start-Process "$inst\$newExe" -PassThru -RedirectStandardError $clog -RedirectStandardOutput "$clog.out"
 $nlog = Join-Path $env:APPDATA 'Crundi Native\crundi.log'
+# Both editions keep their log there: this run reads only its own lines.
+Remove-Item $nlog, $clog, "$clog.out" -Force -ErrorAction SilentlyContinue
+$c = Start-Process "$inst\$newExe" -PassThru -RedirectStandardError $clog -RedirectStandardOutput "$clog.out"
 # The first update check is 8 s after launch (the carried update-config: on, dev).
 $upd = $null
 for ($i = 0; $i -lt 40 -and -not $upd; $i++) {
