@@ -587,6 +587,23 @@ pub fn loading(text: impl Into<SharedString>) -> Div {
         .child(div().text_size(T::TEXT_13).text_color(T::text_muted()).child(text.into()))
 }
 
+/// The browser itself starting (the browser host, before any page can
+/// load), over every surface that waits for it: opaque on the surface's own
+/// ground, a centred spinner and "Starting the browser…"; after about 10 s
+/// (`slow`) a second line. Its start failed (`error`): the error state, with
+/// Retry.
+pub fn browser_booting(ground: Hsla, slow: bool, error: Option<SharedString>, retry: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Stateful<Div> {
+    // Opaque, and taking the pointer: nothing under it is pressed while it shows.
+    let d = div().id("browser-booting").absolute().inset_0().flex().flex_col().bg(ground).occlude();
+    match error {
+        Some(e) => d.child(error_state("browser-boot-retry", e, retry)),
+        None => d.items_center().justify_center().gap(T::SP_12).p(T::SP_24)
+            .child(spinner::spinner(T::SPINNER))
+            .child(div().text_size(T::TEXT_13).text_color(T::text_muted()).child("Starting the browser\u{2026}"))
+            .when(slow, |d| d.child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child("This can take a moment the first time."))),
+    }
+}
+
 /// A web page whose browser stopped (its page process, or the whole
 /// browser host, crashed): the words and Reload, over the page's place.
 pub fn page_crashed(id: impl Into<ElementId>, reload: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Div {

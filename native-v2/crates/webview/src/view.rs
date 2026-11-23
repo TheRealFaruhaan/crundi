@@ -38,16 +38,19 @@ struct Snap {
     chat_down: bool,
     /// The chat's presses so far (a new one rings: VD cursorRipple).
     ripples: u64,
+    /// The browser itself starting, or failed to start (the booting overlay).
+    boot: Option<crate::client::Boot>,
 }
 
 impl Snap {
     fn of(i: usize) -> Snap {
+        let boot = crate::client::boot();
         engine::with(|st| st.panels.get(i).filter(|p| !p.closed).map(|p| {
             let (vw, vh, ..) = p.view();
             let (k, ox, oy) = p.fit();
             Snap { vw, vh, k, ox, oy, anns: p.ann.clone(), hover: p.hover.clone(), chat_at: p.cursor_at.map(|c| (c.0, c.1)), cursor: p.cursor,
                 sized: p.custom.is_some() || p.device != 0, crashed: p.crashed, waiting: p.browser.is_some() && p.frames == 0,
-                diag: p.load_error.clone().unwrap_or_default(), chat_ms: p.cursor_ms, chat_down: p.mouse_down.is_some(), ripples: p.ripples }
+                diag: p.load_error.clone().unwrap_or_default(), chat_ms: p.cursor_ms, chat_down: p.mouse_down.is_some(), ripples: p.ripples, boot: boot.clone() }
         })).unwrap_or(Snap { k: 1., ..Snap::default() })
     }
 }
@@ -335,7 +338,12 @@ impl Render for PageView {
         // spinner; its page process or the whole host gone, or a load failed: the line saying so.
         if self.panel.is_some() {
             // (.brd-diag: one centred muted line over the page; Reload is the bar's.)
-            if crashed {
+            if let Some(b) = self.snap.boot.clone() {
+                // The browser itself starting: the shared booting overlay (the drawer draws its own over all of it).
+                let (slow, err) = match b { crate::client::Boot::Starting { slow } => (slow, None), crate::client::Boot::Failed(e) => (false, Some(SharedString::from(e))) };
+                let panel = self.panel;
+                d = d.child(crundi_widgets::browser_booting(T::bg(), slow, err, move |_, _, _| engine::defer(move || { crate::client::retry(); if let Some(i) = panel { engine::reload(i); } })));
+            } else if crashed {
                 d = d.child(crundi_widgets::page_message("The page crashed. Reload to try again."));
             } else if !diag.is_empty() {
                 d = d.child(crundi_widgets::page_message(diag));

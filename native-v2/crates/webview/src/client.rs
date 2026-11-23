@@ -78,6 +78,8 @@ struct Client {
     config_dir: PathBuf,
     reaped: Option<u32>,
     last_error: String,
+    /// When the host now starting was started (the booting overlay's 10 s line).
+    started_at: Option<Instant>,
     /// The host's last counters (`Ev::Stats`).
     stats: Value,
 }
@@ -86,10 +88,14 @@ thread_local! {
     static C: RefCell<Client> = RefCell::new(Client {
         state: State::Off, epoch: 0, child: None, pid: 0, out: None, owners: HashMap::new(), next: 1,
         idle_since: None, stop_at: None, starts: 0, crashes: 0, failures: 0, available: true,
-        config_dir: PathBuf::new(), reaped: None, last_error: String::new(), stats: Value::Null,
+        config_dir: PathBuf::new(), reaped: None, last_error: String::new(), started_at: None, stats: Value::Null,
     });
     static KEEP_ALIVE: Cell<fn() -> bool> = const { Cell::new(|| false) };
 }
+
+/// The test driver: the next host start slowed this long (ms), once.
+static TEST_DELAY_ONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub fn test_delay_next_start(ms: u64) { TEST_DELAY_ONCE.store(ms, std::sync::atomic::Ordering::Relaxed); }
 
 fn with<R>(f: impl FnOnce(&mut Client) -> R) -> R { C.with(|c| f(&mut c.borrow_mut())) }
 
@@ -188,7 +194,9 @@ fn spawn() -> bool {
         crate::proc::clear_stale_locks(&crate::common::cef_root());
         // The test driver's slow start (a cold disk, a virus scan): the window must keep answering.
         if std::env::var_os("CRUNDI_TEST_PORT").is_some() {
-            if let Some(ms) = std::env::var("CRUNDI_TEST_HOST_START_DELAY_MS").ok().and_then(|v| v.parse::<u64>().ok()) { std::thread::sleep(Duration::from_millis(ms)); }
+            let once = TEST_DELAY_ONCE.swap(0, std::sync::atomic::Ordering::Relaxed);
+            let ms = if once > 0 { Some(once) } else { std::env::var("CRUNDI_TEST_HOST_START_DELAY_MS").ok().and_then(|v| v.parse::<u64>().ok()) };
+            if let Some(ms) = ms { std::thread::sleep(Duration::from_millis(ms)); }
         }
         let push = |m: In| { INBOX.lock().unwrap().push(m); crate::wake(); };
         let sp = match crate::proc::spawn_host() { Ok(s) => s, Err(e) => return push(In::NotStarted(epoch, e.to_string())) };
@@ -205,7 +213,7 @@ fn spawn() -> bool {
         return false;
     }
     with(|c| {
-        c.state = State::Starting; c.child = None; c.pid = 0; c.out = Some(otx);
+        c.state = State::Starting; c.child = None; c.pid = 0; c.out = Some(otx); c.started_at = Some(Instant::now());
         c.starts += 1; c.idle_since = None; c.stop_at = None; c.stats = Value::Null;
     });
     send(Cmd::Hello { textures: crate::gpu::mode() == crate::gpu::Mode::Texture });
@@ -368,6 +376,8 @@ pub(crate) fn next_due() -> Option<Instant> {
     with(|c| match c.state {
         State::Stopping => c.stop_at.map(|t| t + Duration::from_secs(3) + Duration::from_millis(10)),
         State::Starting | State::Up if c.owners.is_empty() && !KEEP_ALIVE.with(|k| k.get())() => Some(c.idle_since.unwrap_or_else(Instant::now) + idle_grace()),
+        // The booting overlay's second line, due at 10 s.
+        State::Starting => c.started_at.map(|t| t + BOOT_SLOW).filter(|t| *t > Instant::now()),
         _ => None,
     })
 }
@@ -424,13 +434,38 @@ pub fn shutdown() {
     drop_pid();
 }
 
+/// After this long starting, the booting overlay adds its second line.
+pub const BOOT_SLOW: Duration = Duration::from_secs(10);
+
+/// What a surface waiting for the host shows over itself (the booting
+/// overlay): the host starting (slow: past BOOT_SLOW), or its start failed
+/// (the error). None: up, or not wanted.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Boot { Starting { slow: bool }, Failed(String) }
+
+pub fn boot() -> Option<Boot> {
+    with(|c| match c.state {
+        State::Starting => Some(Boot::Starting { slow: c.started_at.is_some_and(|t| t.elapsed() >= BOOT_SLOW) }),
+        State::Off if !c.available && !c.last_error.is_empty() => Some(Boot::Failed(c.last_error.clone())),
+        _ => None,
+    })
+}
+
+/// The booting overlay's Retry: the browser available again and started.
+pub fn retry() {
+    with(|c| { c.available = true; c.last_error.clear(); c.failures = 0; });
+    let _ = ensure();
+}
+
 /// The driver's view (props "browserHost").
 pub fn props() -> Value {
+    let b = boot();
     with(|c| json!({
         "state": match c.state { State::Off => "off", State::Starting => "starting", State::Up => "up", State::Stopping => "stopping" },
         "pid": if c.state == State::Off { Value::Null } else { json!(c.pid) },
         "views": c.owners.len(), "starts": c.starts, "crashes": c.crashes, "available": c.available,
         "reaped": c.reaped, "idleSecs": idle_grace().as_secs_f64(), "unloadSecs": unload_grace().as_secs_f64(), "error": c.last_error,
+        "boot": match &b { Some(Boot::Starting { slow }) => json!(if *slow { "slow" } else { "starting" }), Some(Boot::Failed(_)) => json!("failed"), None => Value::Null },
         // Frames: taken by the app (all hosts this run), and the running
         // host's counters (sent, not sent as unchanged or hidden, bytes
         // copied into segments, GPU frames); the GPU path's mode.

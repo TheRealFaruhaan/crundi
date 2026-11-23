@@ -560,6 +560,8 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         // The browser host: its state; stopped now (the idle stop's path).
         "browser-host" => Some(json!({ "ok": true, "host": web::host_props() })),
         "browser-host-stop" => { web::stop_host(); ok() }
+        // The next browser host start slowed (ms), once: the booting overlay's 10 s line.
+        "browser-host-delay" => { web::test_delay_next_start(a(0).parse().unwrap_or(0)); ok() }
         // A drawer tab's Reload (its page crashed).
         "reload" => match drawer::find(&a(0)).and_then(|(_, t)| t.panel) { Some(i) => { web::engine::reload(i); ok() } None => Some(json!({ "ok": false, "error": "no page" })) },
         "inbox" => { inbox::open_page(); ok() }

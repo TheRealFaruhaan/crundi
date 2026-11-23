@@ -35,7 +35,7 @@ pub use crundi_browser_link::{common, gpu, ipc, proc, shm};
 
 pub use engine::{Ann, Device, Hooks, DEVICES};
 pub use view::PageView;
-pub use client::{idle_grace, set_keep_alive, unload_grace};
+pub use client::{boot, idle_grace, retry as retry_host, set_keep_alive, test_delay_next_start, unload_grace, Boot};
 
 use std::{cell::RefCell, time::{Duration, Instant}};
 

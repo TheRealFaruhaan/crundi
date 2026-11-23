@@ -893,7 +893,7 @@ pub fn init() {
 pub fn props() -> Value {
     let act = active_tab();
     with(|d| json!({
-        "open": d.open, "width": d.width, "side": d.side, "project": d.project,
+        "open": d.open, "width": d.width, "side": d.side, "project": d.project, "boot": crate::ui::boot_drawn(),
         "annotating": d.annotating, "tool": d.tool, "pop": d.pop, "panel": d.panel,
         "chats": d.chats.iter().map(|(id, t)| json!({ "id": id, "title": t })).collect::<Vec<_>>(), "chat": d.chat,
         "note": d.note.map(|(i, n)| json!([i, n])),

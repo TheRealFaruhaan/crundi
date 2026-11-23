@@ -124,7 +124,8 @@ fn app_icon() -> Option<std::sync::Arc<image::RgbaImage>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::start_size;
+    use crundi_theme::T;
 
     /// Electron's createWindow: 1100x750, at least 800x500 (PARITY-ELECTRON.md, the main window).
     #[test]
