@@ -1038,7 +1038,9 @@ impl PlaceView {
             .child(w::head_button(sid(format!("nt-copy-{key}-{}", b.id)), C::Icon(IconName::Copy), L::Rest, T::SP_24, T::SP_20 + T::SP_2, "Copy code")
                 .on_click(move |_, _, cx| super::code_act(&k3, &b3, "copy", 0., 0., cx)));
         let hl_lang = code_lang(b);
-        let scroll = self.code_scroll.entry(b.id.clone()).or_insert_with(ScrollHandle::new).clone();
+        // (Wrapped, it has no sideways scroll: none is kept for it.)
+        if b.wrap { self.code_scroll.remove(&b.id); }
+        let scroll = if b.wrap { ScrollHandle::new() } else { self.code_scroll.entry(b.id.clone()).or_insert_with(ScrollHandle::new).clone() };
         let code = self.text_cell(key, &b.id, -1, -1, &b.text, "Code", T::TEXT_12 * k, T::W_REGULAR, T::text(), false, true, !b.wrap, Some(&hl_lang));
         div().relative().w_full().pt(T::SP_24 + T::SP_4).pb(T::SP_4)
             .child(div().id(sid(format!("nt-code-{key}-{}", b.id))).w_full().p(T::SP_12).rounded(T::R_FIELD).bg(T::bg_secondary()).border_1()
