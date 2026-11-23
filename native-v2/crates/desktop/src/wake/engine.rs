@@ -252,6 +252,28 @@ impl Owner {
 // ─── The wake (worker.js createWake) ───
 
 /// A wake: how it was heard, its score, and the clip the owner's voice is checked on.
+/// The microphone's mono samples at its own rate to 16 kHz (mic): the mean
+/// of each step's samples.
+pub struct To16 { pos: f64, step: f64, carry: Vec<f32> }
+
+impl To16 {
+    pub fn new(rate: usize) -> To16 { To16 { pos: 0.0, step: rate as f64 / RATE as f64, carry: vec![] } }
+    pub fn push(&mut self, b: &[f32]) -> Vec<f32> {
+        self.carry.extend_from_slice(b);
+        let mut o = vec![];
+        while self.pos + self.step <= self.carry.len() as f64 {
+            let a = self.pos as usize;
+            let z = ((self.pos + self.step) as usize).min(self.carry.len()).max(a + 1);
+            o.push(self.carry[a..z].iter().sum::<f32>() / (z - a) as f32);
+            self.pos += self.step;
+        }
+        let used = (self.pos as usize).min(self.carry.len());
+        self.carry.drain(..used);
+        self.pos -= used as f64;
+        o
+    }
+}
+
 pub struct Heard { pub ok: bool, pub keyword: String, pub score: f64, pub via: &'static str, pub clip: Vec<f32> }
 
 pub struct Wake {
@@ -373,5 +395,44 @@ mod tests {
         };
         assert!(heard("draco-pos-heycru"), "the owner's Hey Cru wakes");
         for n in ["draco-neg-heyyou", "draco-neg-heywho", "draco-neg-heythere"] { assert!(!heard(n), "{n} must not wake"); }
+    }
+
+    /// T16: the same recordings through the microphone's path (mic): as
+    /// PipeWire's ALSA "default" gives them (44.1 kHz stereo F32, in 10 ms
+    /// blocks), to mono, to 16 kHz by To16. The training finds the phrase
+    /// (modelHeard) and the owner's Hey Cru wakes; other speech and silence do not.
+    #[test]
+    fn wakes_through_the_microphone_path() {
+        let eval = std::env::var("VW_EVAL_DIR").unwrap_or_else(|_| "/tmp/cru-eval".into());
+        let models = std::env::var("VW_INSTALL_DIR").unwrap_or_else(|_| "/tmp/vw-install".into());
+        let mic = |s: Vec<f32>| -> Vec<f32> {
+            let (rate, ch) = (44100usize, 2usize);
+            let n = s.len() * rate / RATE;
+            let mut st = Vec::with_capacity(n * ch);
+            for i in 0..n {
+                let x = i as f64 * RATE as f64 / rate as f64;
+                let (a, f) = (x as usize, (x - x.floor()) as f32);
+                let v = s.get(a).copied().unwrap_or(0.0) * (1.0 - f) + s.get(a + 1).copied().unwrap_or(0.0) * f;
+                for _ in 0..ch { st.push(v); }
+            }
+            let mut d = To16::new(rate);
+            st.chunks(441 * ch).flat_map(|b| d.push(&crundi_core::voice::mono(b, ch))).collect()
+        };
+        let wav = |n: &str| std::fs::read(format!("{eval}/{n}.wav")).ok().and_then(|b| read_wav(&b)).map(mic);
+        let recs: Option<Vec<Vec<f32>>> = (1..=5).map(|i| wav(&format!("draco-train{i}"))).collect();
+        let Some(recs) = recs.filter(|_| Path::new(&models).join(MODEL_ID).exists()) else { eprintln!("skip: no recordings or models"); return };
+        unsafe { std::env::set_var("CRUNDI_WAKE_MODELS", &models); }
+        let (profile, _) = train_with_voice(&recs).unwrap_or_else(|(why, redo)| panic!("training: {why} {redo:?}"));
+        eprintln!("trained: threshold {} modelHeard {} phraseFrames {}", profile["keywordsThreshold"], profile["modelHeard"], profile["phraseFrames"]);
+        let heard = |s: Vec<f32>| -> bool {
+            let mut w = Wake::new(&profile).unwrap();
+            let mut padded = vec![0f32; RATE / 2];
+            padded.extend(s);
+            padded.extend(vec![0f32; RATE]);
+            padded.chunks(1600).any(|c| w.accept(c).is_some_and(|h| h.ok))
+        };
+        assert!(heard(wav("draco-pos-heycru").unwrap()), "the owner's Hey Cru wakes through the microphone path");
+        assert!(!heard(wav("draco-neg-heyyou").unwrap()), "other speech does not wake");
+        assert!(!heard(vec![0.0; RATE * 3]), "silence does not wake");
     }
 }

@@ -301,23 +301,10 @@ fn mic(out: mpsc::Sender<Vec<f32>>, stop: Arc<AtomicBool>) -> Result<(), String>
         };
         let (stream, rate, rx) = match setup() { Ok(x) => { let _ = ready_tx.send(Ok(())); x } Err(e) => { let _ = ready_tx.send(Err(e)); return; } };
         let _keep = stream;
-        let mut pos = 0.0f64;
-        let step = rate as f64 / enroll::RATE as f64;
-        let mut carry: Vec<f32> = vec![];
+        let mut down = engine::To16::new(rate);
         while !stop.load(Ordering::Relaxed) {
             while let Ok(b) = rx.try_recv() {
-                carry.extend(b);
-                // To 16 kHz: the mean of each step's samples.
-                let mut o = vec![];
-                while pos + step <= carry.len() as f64 {
-                    let a = pos as usize;
-                    let z = ((pos + step) as usize).min(carry.len()).max(a + 1);
-                    o.push(carry[a..z].iter().sum::<f32>() / (z - a) as f32);
-                    pos += step;
-                }
-                let used = (pos as usize).min(carry.len());
-                carry.drain(..used);
-                pos -= used as f64;
+                let o = down.push(&b);
                 if !o.is_empty() && out.send(o).is_err() { return; }
             }
             std::thread::sleep(Duration::from_millis(20));
