@@ -285,6 +285,16 @@ await T.until('let go, the move ends', (s) => !s.drag, 3000);
   }
   await t.sleep(300);
   s = await T.state();
+  // (A new column is scrolled into view (T7): the strip back at its start
+  // by the wheel over a pane's head, so the edge scroll has its whole range.)
+  for (let i = 0; i < 20 && s.grid.scroll > 0.5; i++) {
+    const hd = s.leaves.filter((l) => l.key && l.x >= s.grid.x && l.x + 40 < s.grid.x + s.grid.w).sort((p, q) => p.x - q.x)[0];
+    await T.mouse('wheel', hd.x + 30, hd.y + 12, { dx: 300 });
+    s = await T.state();
+  }
+  t.check('(the strip back at its start before the edge scroll)', s.grid.scroll < 0.5 && s.grid.max > 100, s.grid);
+  await t.sleep(300);
+  s = await T.state();
   const g2 = s.grid, other = s.leaves.filter((l) => l.key && !l.key.startsWith('live:') && l.x >= g2.x).sort((p, q) => p.x - q.x)[0];
   const px0 = Math.max(other.x + 60, g2.x + 80), py0 = other.y + 12, py = py0 + 200, prx = g2.x + g2.w - 15;
   await T.mouse('move', px0, py0); await T.mouse('down', px0, py0);
