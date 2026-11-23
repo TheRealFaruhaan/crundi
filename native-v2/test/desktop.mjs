@@ -37,8 +37,7 @@ if (/^unix:path=\/run\/user\/\d+\/bus$/.test(bus)) {
   process.exit(2);
 }
 // The autostart entry is never the person's: a config home of the run's own.
-const xdg = mkdtempSync(join(tmpdir(), 'crundi-v2-desktop-xdg-'));
-process.env.XDG_CONFIG_HOME = xdg;
+// (test/lib.mjs makes it: XDG_CONFIG_HOME, APPDATA.)
 
 // "Hey Cru"'s models: downloaded once into a folder kept between runs (else
 // the wake part checks the off state only, never downloading each run).
@@ -49,7 +48,7 @@ if (existsSync('/tmp/vw-install/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-0
 const cef = process.env.CRUNDI_CEF_CACHE ? null : mkdtempSync(join(tmpdir(), 'crundi-v2-desktop-cef-'));
 if (cef) process.env.CRUNDI_CEF_CACHE = cef;
 // The run's own folders go however it ends (T.end() exits the process, F71).
-const dropFolders = () => { try { rmSync(xdg, { recursive: true, force: true }); if (cef) rmSync(cef, { recursive: true, force: true }); } catch { /* gone */ } };
+const dropFolders = () => { try { if (cef) rmSync(cef, { recursive: true, force: true }); } catch { /* gone */ } };
 process.on('exit', dropFolders);
 process.env.CRUNDI_PW_TEST_KEY ||= Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
 const T = await t.begin('desktop');
