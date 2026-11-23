@@ -86,11 +86,12 @@ fn capture(out: mpsc::Sender<(u32, Vec<f32>)>, stop: Arc<AtomicBool>, on: impl F
     let Some(dev) = host.default_input_device() else { return on(Ev::NoMic) };
     let Ok(cfg) = dev.default_input_config() else { return on(Ev::NoMic) };
     let (rate, ch) = (cfg.sample_rate().0, cfg.channels() as usize);
+    // Cleaned as Chromium cleans it for the web (capture.rs): what the server's voice check knows.
     let err = |e| eprintln!("[native] microphone: {e}");
     let stream = match cfg.sample_format() {
-        cpal::SampleFormat::F32 => { let o = out.clone(); dev.build_input_stream(&cfg.into(), move |d: &[f32], _| { let _ = o.send((rate, voice::mono(d, ch))); }, err, None) }
-        cpal::SampleFormat::I16 => { let o = out.clone(); dev.build_input_stream(&cfg.into(), move |d: &[i16], _| { let f: Vec<f32> = d.iter().map(|x| *x as f32 / 32768.0).collect(); let _ = o.send((rate, voice::mono(&f, ch))); }, err, None) }
-        cpal::SampleFormat::U16 => { let o = out.clone(); dev.build_input_stream(&cfg.into(), move |d: &[u16], _| { let f: Vec<f32> = d.iter().map(|x| (*x as f32 - 32768.0) / 32768.0).collect(); let _ = o.send((rate, voice::mono(&f, ch))); }, err, None) }
+        cpal::SampleFormat::F32 => { let o = out.clone(); let mut c = crate::capture::Clean::new(rate); dev.build_input_stream(&cfg.into(), move |d: &[f32], _| { let b = c.push(&voice::mono(d, ch)); if !b.is_empty() { let _ = o.send((crate::capture::OUT_RATE, b)); } }, err, None) }
+        cpal::SampleFormat::I16 => { let o = out.clone(); let mut c = crate::capture::Clean::new(rate); dev.build_input_stream(&cfg.into(), move |d: &[i16], _| { let f: Vec<f32> = d.iter().map(|x| *x as f32 / 32768.0).collect(); let b = c.push(&voice::mono(&f, ch)); if !b.is_empty() { let _ = o.send((crate::capture::OUT_RATE, b)); } }, err, None) }
+        cpal::SampleFormat::U16 => { let o = out.clone(); let mut c = crate::capture::Clean::new(rate); dev.build_input_stream(&cfg.into(), move |d: &[u16], _| { let f: Vec<f32> = d.iter().map(|x| (*x as f32 - 32768.0) / 32768.0).collect(); let b = c.push(&voice::mono(&f, ch)); if !b.is_empty() { let _ = o.send((crate::capture::OUT_RATE, b)); } }, err, None) }
         _ => return on(Ev::NoMic),
     };
     let Ok(stream) = stream else { return on(Ev::NoMic) };

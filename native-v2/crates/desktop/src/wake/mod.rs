@@ -14,6 +14,7 @@ pub mod engine;
 pub mod enroll;
 
 use crate::ctx as kit;
+use crundi_core::capture::Clean;
 use crundi_theme::{IconName, T};
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
@@ -246,7 +247,10 @@ fn start_worker() {
             while let Ok(b) = mrx.try_recv() { blocks.push(b); }
             if blocks.is_empty() { std::thread::sleep(Duration::from_millis(30)); continue; }
             for b in blocks {
-                let Some(h) = wake.accept(&b) else { continue };
+                let h = wake.accept(&b);
+                // A phrase that was not quite it (T16): its match, to tell a miss from not hearing at all.
+                if let Some((score, limit)) = wake.near_miss.take() { kit::main_thread(move || log(format!("near miss: a phrase matched {score:.3} (wakes under {limit:.3})"))); }
+                let Some(h) = h else { continue };
                 // The owner's voice, when the profile has it (ownerChecked).
                 let mut verdict = if h.ok { "detected" } else { "rejected" };
                 let mut voice = Value::Null;
@@ -255,6 +259,7 @@ fn start_worker() {
                         let (ok, s) = o.check(&current["voice"], &h.clip);
                         voice = json!(s);
                         if ok == Some(false) { verdict = "rejected"; wake.refused(); }
+                        if ok.is_none() { let s2 = s; kit::main_thread(move || log(format!("the owner's voice check could not tell (score {s2:.3})"))); }
                     }
                 }
                 let (kw, score, via) = (h.keyword.clone(), h.score, h.via);
@@ -289,35 +294,35 @@ fn mic(out: mpsc::Sender<Vec<f32>>, stop: Arc<AtomicBool>) -> Result<(), String>
             let dev = host.default_input_device().ok_or("no microphone")?;
             let cfg = dev.default_input_config().map_err(|e| e.to_string())?;
             let (rate, ch) = (cfg.sample_rate().0 as usize, cfg.channels() as usize);
+            // What it hears from (T16): to tell a wrong device or format from a quiet microphone.
+            let what = format!("microphone: {} ({:?}, {} Hz, {} channel{}), denoised, to 16 kHz mono", dev.name().unwrap_or_else(|_| "?".into()), cfg.sample_format(), rate, ch, if ch == 1 { "" } else { "s" });
+            kit::main_thread(move || log(what));
             let (tx, rx) = mpsc::channel::<Vec<f32>>();
             let err = |e| eprintln!("[voice-wake] microphone: {e}");
             let stream = match cfg.sample_format() {
-                cpal::SampleFormat::F32 => { let o = tx.clone(); dev.build_input_stream(&cfg.into(), move |d: &[f32], _| { let _ = o.send(crundi_core::voice::mono(d, ch)); }, err, None) }
-                cpal::SampleFormat::I16 => { let o = tx.clone(); dev.build_input_stream(&cfg.into(), move |d: &[i16], _| { let f: Vec<f32> = d.iter().map(|x| *x as f32 / 32768.0).collect(); let _ = o.send(crundi_core::voice::mono(&f, ch)); }, err, None) }
+                cpal::SampleFormat::F32 => { let o = tx.clone(); let mut c = Clean::new(rate as u32); dev.build_input_stream(&cfg.into(), move |d: &[f32], _| { let b = c.push(&crundi_core::voice::mono(d, ch)); if !b.is_empty() { let _ = o.send(b); } }, err, None) }
+                cpal::SampleFormat::I16 => { let o = tx.clone(); let mut c = Clean::new(rate as u32); dev.build_input_stream(&cfg.into(), move |d: &[i16], _| { let f: Vec<f32> = d.iter().map(|x| *x as f32 / 32768.0).collect(); let b = c.push(&crundi_core::voice::mono(&f, ch)); if !b.is_empty() { let _ = o.send(b); } }, err, None) }
                 _ => return Err("this microphone's format is not supported".into()),
             }.map_err(|e| e.to_string())?;
             stream.play().map_err(|e| e.to_string())?;
-            Ok((stream, rate, rx))
+            // Cleaned (capture.rs, as Chromium cleans Electron's): out at 48 kHz.
+            Ok((stream, crundi_core::capture::OUT_RATE as usize, rx))
         };
         let (stream, rate, rx) = match setup() { Ok(x) => { let _ = ready_tx.send(Ok(())); x } Err(e) => { let _ = ready_tx.send(Err(e)); return; } };
         let _keep = stream;
-        let mut pos = 0.0f64;
-        let step = rate as f64 / enroll::RATE as f64;
-        let mut carry: Vec<f32> = vec![];
+        let mut down = engine::To16::new(rate);
+        // The input level, logged every 30 s: its loudest 100 ms and its median (dBFS).
+        let (mut lv, mut acc, mut n, mut since) = (Vec::<f64>::new(), 0f64, 0usize, Instant::now());
         while !stop.load(Ordering::Relaxed) {
             while let Ok(b) = rx.try_recv() {
-                carry.extend(b);
-                // To 16 kHz: the mean of each step's samples.
-                let mut o = vec![];
-                while pos + step <= carry.len() as f64 {
-                    let a = pos as usize;
-                    let z = ((pos + step) as usize).min(carry.len()).max(a + 1);
-                    o.push(carry[a..z].iter().sum::<f32>() / (z - a) as f32);
-                    pos += step;
+                let o = down.push(&b);
+                for x in &o { acc += (*x as f64).powi(2); n += 1; if n == enroll::RATE / 10 { lv.push(10.0 * (acc / n as f64 + 1e-12).log10()); acc = 0.0; n = 0; } }
+                if since.elapsed() >= Duration::from_secs(30) && !lv.is_empty() {
+                    lv.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                    let line = format!("input level: loudest {:.0} dBFS, median {:.0} dBFS", lv[lv.len() - 1], lv[lv.len() / 2]);
+                    kit::main_thread(move || log(line));
+                    lv.clear(); since = Instant::now();
                 }
-                let used = (pos as usize).min(carry.len());
-                carry.drain(..used);
-                pos -= used as f64;
                 if !o.is_empty() && out.send(o).is_err() { return; }
             }
             std::thread::sleep(Duration::from_millis(20));

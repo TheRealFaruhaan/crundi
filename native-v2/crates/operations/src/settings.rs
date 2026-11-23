@@ -11,6 +11,7 @@
 
 mod local;
 pub mod rules;
+mod speaker;
 
 use crate::skills::common::{self as c, Fields, HasFields};
 use crate::compat::AreaEvent;
@@ -1057,6 +1058,7 @@ fn pair_close(cx: &mut App) {
 // ─── Cru ───
 
 fn voice_load(cx: &mut App) {
+    speaker::load(cx);
     crundi_shell::call(cx, |api| api.get("/api/voice/settings"), |r, cx| {
         let s = match r { Ok(s) if s.get("ok") == Some(&Value::Bool(true)) => s, _ => { upd(cx, |s| s.voice.shown = false); return; } };
         upd(cx, |st| voice_show(st, &s));
@@ -1119,6 +1121,9 @@ fn voice_show(st: &mut St, s: &Value) {
     st.f.set("vs-dday", js_num(f("deepgramBillingDay").filter(|n| *n > 0.0).unwrap_or(1.0)));
     for k in ["vs-akey", "vs-dkey", "vs-xkey"] { st.f.set(k, ""); }
 }
+
+/// The status line under Cru's settings (vsNote('vs-status')).
+fn voice_status(cx: &mut App, text: String, bad: bool) { upd(cx, |s| { s.voice.status = text; s.voice.status_bad = bad; }); }
 
 /// Save a part of Cru's settings; the status line says how it went.
 fn voice_save(cx: &mut App, body: Value, note: String, then: impl FnOnce(bool, &mut App) + 'static) {
@@ -1689,6 +1694,8 @@ fn voice_body(want: Want, window: &mut Window, cx: &mut App) -> Parts {
         .when(v.has_volume, |d| d.part(|| vs_select("volume", "Volume", "How loud Cru talks, everywhere. Cru can change it too: say louder or quieter.", s)))
         .part(|| vs_select("pauseMs", "Pause before sending", "How long you may pause before what you said is sent.", s))
         .when(v.has_sclose, |d| d.part(|| vs_select("screenCloseSeconds", "Close the voice screen after", "On the phone, the web and the PC. Hey Cru opens it again.", s)))
+        // Whose voice Cru acts on (capability 'voice-speaker'; an older server: left out).
+        .when_some(speaker::part(), |d, p| d.part(move || p))
         .when(v.has_admin, |d| d.part(|| col(T::SP_4)
             .child(row().gap(T::SP_6).child(w::check("vs-admin", "", v.admin, |on, _, cx| voice_admin(cx, *on))).child(w::icon(IconName::ShieldAlert, T::ICON_SM))
                 .child(div().text_size(T::TEXT_13).text_color(T::text()).child("Admin mode")))
@@ -2103,7 +2110,7 @@ pub fn props(_window: &mut Window, cx: &mut App) -> Value {
         "terminal": { "newlineKey": s.newline_key, "autopark": f("autopark"), "min": s.autopark_min },
         "voice": { "shown": s.voice.shown, "model": s.voice.sel.get("model").map(|e| e.1).unwrap_or(-1), "models": s.voice.sel.get("model").map(|e| e.0.len()).unwrap_or(0),
             "status": s.voice.status, "admin": s.voice.admin, "spend": s.voice.spend, "spendNote": s.voice.spend_note, "keysNote": s.voice.keys_note,
-            "away": s.voice.away, "awayClasses": s.voice.away_classes.len() },
+            "away": s.voice.away, "awayClasses": s.voice.away_classes.len(), "speaker": speaker::state() },
         "desktop": { "launch": s.launch, "mini": s.mini, "autoUpdate": s.auto_update, "channel": s.upd_channel, "status": s.upd_status, "dot": s.upd_avail, "downloading": s.upd_downloading, "downloaded": s.upd_downloaded },
         "modal": s.pair_open,
         "opened": c::s(&s.data, "opened"),
