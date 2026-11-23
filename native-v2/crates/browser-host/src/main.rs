@@ -31,6 +31,14 @@ mod cef_app {
                 let gpu = crate::gpu::mode() != crate::gpu::Mode::Off;
                 let switches: &[&str] = if gpu { &["enable-begin-frame-scheduling"] } else { &["disable-gpu", "disable-gpu-compositing", "enable-begin-frame-scheduling"] };
                 for s in switches { cl.append_switch(Some(&CefString::from(*s))); }
+                // Under the test driver no keyring: cookies' key in the
+                // profile itself. A suite's private session bus has no
+                // secret service, and the first page that needs cookies
+                // waited 25 s and more on the portal's RetrieveSecret
+                // (FINDINGS-ELECTRON 2); nor is the person's keyring read.
+                if std::env::var_os("CRUNDI_TEST_PORT").is_some() {
+                    cl.append_switch_with_value(Some(&CefString::from("password-store")), Some(&CefString::from("basic")));
+                }
             }
         }
     }

@@ -225,6 +225,7 @@ const e = environ(pid);
 check('startBot\'s environment: DATA_DIR and DOTENV_PATH in Electron\'s folder', e.DATA_DIR === join(ELECTRON, 'data') && e.DOTENV_PATH === join(ELECTRON, '.env'), { DATA_DIR: e.DATA_DIR, DOTENV_PATH: e.DOTENV_PATH });
 check('CRUNDI_DEVICE_ID is Electron\'s device', e.CRUNDI_DEVICE_ID === DEVICE, e.CRUNDI_DEVICE_ID);
 check('CRUNDI_DEV kept, NODE_OPTIONS removed', e.CRUNDI_DEV === '1' && !('NODE_OPTIONS' in e));
+check('CRUNDI_NATIVE_RUN, not ELECTRON_RUN: the server\'s notify and browser calls go over the native-host socket, as a remote server\'s (src/browser.js hasParentIpc)', e.CRUNDI_NATIVE_RUN === '1' && !('ELECTRON_RUN' in e), { CRUNDI_NATIVE_RUN: e.CRUNDI_NATIVE_RUN, ELECTRON_RUN: e.ELECTRON_RUN });
 check('the IPC channel (Node\'s, at fd 3)', e.NODE_CHANNEL_FD === '3' && e.NODE_CHANNEL_SERIALIZATION_MODE === 'json');
 check('the PATH as serverPath builds it', e.PATH.includes(join(homedir(), '.local', 'bin')) && e.PATH.split(':').includes('/usr/local/bin'), e.PATH);
 check('the server\'s command: node --no-deprecation src/index.js', readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').slice(1, 3).join(' ') === `--no-deprecation ${join(REPO, 'src', 'index.js')}`);
