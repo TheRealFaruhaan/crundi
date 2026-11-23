@@ -46,11 +46,12 @@ WORKER="$OUT/worker-target/release/crundi-worker"
 ls -la "$WORKER"
 
 step "Server node_modules (built by the bundled Node, Ubuntu 24.04)"
-HASH=$(cat "$REPO/package-lock.json" "$NODE_TAR" | sha256sum | cut -c1-16)
+HASH=$(cat "$REPO/package-lock.json" "$REPO/.npmrc" "$NODE_TAR" | sha256sum | cut -c1-16)
 MOD="$OUT/modules"
 if [ "$(cat "$MOD/.built" 2>/dev/null)" != "$HASH" ]; then
   rm -rf "$MOD" && mkdir -p "$MOD" "$OUT/npm-cache"
-  cp "$REPO/package.json" "$REPO/package-lock.json" "$MOD/"
+  # .npmrc too: onnxruntime-node (now a regular dependency) skips its CUDA download there, which 404s
+  cp "$REPO/package.json" "$REPO/package-lock.json" "$REPO/.npmrc" "$MOD/"
   docker run "${DOCKER_AS_ME[@]}" -v "$MOD:/m" -v "$NODE_DIR:/node:ro" -v "$OUT/npm-cache:/tmp/home/.npm" -w /m \
     -e PATH=/node/bin:/usr/bin:/bin crundi-pack-build npm ci --omit=dev --no-audit --no-fund --loglevel=error
   echo "$HASH" > "$MOD/.built"

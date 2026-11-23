@@ -89,7 +89,7 @@ if (full) {
   cpSync(join(repo, 'app', 'vendor'), join(server, 'app', 'vendor'), { recursive: true });
   // The server imports the homepool frame format from app/ (src/homepool.js, homepool-service.js).
   copyFileSync(join(repo, 'app', 'homepool-node.js'), join(server, 'app', 'homepool-node.js'));
-  for (const f of ['package.json', 'package-lock.json', '.env.example']) copyFileSync(join(repo, f), join(server, f));
+  for (const f of ['package.json', 'package-lock.json', '.npmrc', '.env.example']) copyFileSync(join(repo, f), join(server, f));
 
   if (args.modules) {
     cpSync(resolve(args.modules), join(server, 'node_modules'), { recursive: true, verbatimSymlinks: true });
