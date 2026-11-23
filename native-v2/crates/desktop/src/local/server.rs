@@ -357,7 +357,7 @@ mod tests {
         assert_eq!(p, "/a:/b:/usr/bin:/home/x/.local/bin:/usr/local/bin:/opt/Crundi/node/bin");
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")] // the tree from /proc (macOS, out of scope, has none)
     #[test]
     fn a_tree_is_found_and_killed() {
         let mut c = Command::new("sh").args(["-c", "sleep 30 & sleep 30 & wait"]).spawn().unwrap();
