@@ -50,4 +50,41 @@ export async function run(T, t) {
     await click('Demo');
     await T.until('…back to Demo', (p) => p.project === 'demo', 5000);
   } else t.check('the Inbox button (the server has an Inbox)', false);
+
+  // ─── T17: Cru's popover follows new and streamed messages (the chat log's tail), with the jump ───
+  {
+    const C = (p) => D(p).cru || {};
+    const U = (p) => C(p).ui || {};
+    const J = (p) => U(p).jump || {};
+    if (C(await T.state()).open) { await T.key('Escape'); await T.until('Cru closed first', (p) => !C(p).open, 5000); }
+    await T.act('cru');
+    let p = await T.until('Cru\'s popover open, the chat view', (p) => C(p).open && U(p).view === 'chat' && U(p).w > 0, 10000);
+    const at = { x: U(p).viewportW - U(p).right - U(p).w / 2, y: U(p).top + U(p).h * 0.45 };
+    const long = (i) => `Answer ${i}: ` + Array.from({ length: 6 }, (_, k) => `line ${k + 1} of a longer reply`).join('. ');
+    const turns = Array.from({ length: 10 }, (_, i) => ({ at: Date.now() - (20 - i) * 60000, said: `question ${i}`, speak: long(i) }));
+    await T.act('cru-turns', JSON.stringify(turns));
+    await T.until('the conversation shown, at its end', (p) => U(p).bubbles === 20 && J(p).dist < 60 && J(p).shown === false, 8000);
+    // A reply streaming in: its words grow, the popover keeps the end in view.
+    let reply = 'Streaming';
+    for (let k = 0; k < 4; k++) {
+      reply += ' ' + Array.from({ length: 8 }, (_, j) => `word${k}-${j}`).join(' ') + '.';
+      await T.act('cru-turns', JSON.stringify([...turns, { at: Date.now(), said: 'and now?', speak: reply }]));
+      await T.until(`…streamed words ${k + 1}: still at the end`, (p) => U(p).bubbles === 22 && J(p).dist < 60, 5000);
+    }
+    // Up the list (a real wheel), a new message does not pull it down: the jump lights its dot.
+    for (let i = 0; i < 30; i++) { await T.mouse('wheel', at.x, at.y, { dy: 60 }); await t.sleep(12); }
+    p = await T.until('scrolled up: "Go to the newest message" shows', (p) => J(p).shown && !J(p).new, 5000);
+    const up = J(p).dist;
+    await T.act('cru-turns', JSON.stringify([...turns, { at: Date.now(), said: 'and now?', speak: reply }, { at: Date.now(), said: '', speak: 'One more thing.' }]));
+    p = await T.until('…a new message while up: the dot, the place kept', (p) => U(p).bubbles === 23 && J(p).new && J(p).dist >= up, 5000);
+    const b = await T.ui('find', 'Go to the newest message');
+    t.check('…the jump is on screen', b.ok, b);
+    if (b.ok) {
+      await T.mouse('click', b.x + b.w / 2, b.y + b.h / 2);
+      await T.until('…clicked: at the newest, the button gone', (p) => J(p).dist < 60 && !J(p).shown && !J(p).new, 5000);
+    }
+    await T.act('cru-turns', '[]');
+    await T.key('Escape');
+    await T.until('Cru closed', (p) => !C(p).open, 5000);
+  }
 }
