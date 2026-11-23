@@ -11,7 +11,10 @@ param(
   [Parameter(Mandatory)] [string] $New,
   [Parameter(Mandatory)] [string] $Version,
   [string] $Edition = 'full',
-  [int] $Port = 4861
+  [int] $Port = 4861,
+  # The staged install the installers were built from (the workflow's): the
+  # next version's installer is built from it for the native -> native update.
+  [string] $Stage = $(if ($env:RUNNER_TEMP) { Join-Path $env:RUNNER_TEMP "stage\$(if ($Edition -eq 'client') { 'client' } else { 'full' })" } else { '' })
 )
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -187,6 +190,106 @@ if ($full) {
 StopTree $c.Id
 Start-Sleep 2
 UnderInstall | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
+# The native -> native update (PARITY-ELECTRON.md line 54), the path every
+# Windows update takes from now on: the installed app's own updater, offered
+# the next version by a GitHub of the test's own, downloads its Setup .exe
+# (sha512 checked); Restart & Install quits the app and its server and runs
+# the Setup with --updated /S --force-run (updater.rs installer_command),
+# which installs in place and starts the app again.
+Write-Host "== Native update: $Version -> next, through the app's updater"
+$core = [regex]::Match($Version, '^(\d+)\.(\d+)\.(\d+)')
+$next = "$($core.Groups[1].Value).$($core.Groups[2].Value).$([int]$core.Groups[3].Value + 1)"
+$feed = if ($full) { 'latest.yml' } else { 'client.yml' }
+$nextDir = Join-Path $env:TEMP "crundi-next-$Edition"
+Remove-Item $nextDir -Recurse -Force -ErrorAction SilentlyContinue
+if (-not $Stage -or -not (Test-Path "$Stage\version")) {
+  Check $false "the staged install to build $next from ($Stage)"
+} else {
+  # The same files, the version file saying $next (lifecycle::version reads it).
+  $staged = Get-Content "$Stage\version" -Raw
+  Set-Content "$Stage\version" "$next`n" -NoNewline
+  try { node (Join-Path $here '..\windows\build.mjs') --stage $Stage --edition $Edition --out $nextDir --version $next | Write-Host }
+  finally { Set-Content "$Stage\version" $staged -NoNewline }
+  $nextSetup = Join-Path $nextDir "$(if ($full) { 'Crundi-Setup' } else { 'Crundi-Client-Setup' })-$next.exe"
+  Check ((Test-Path $nextSetup) -and (Test-Path "$nextDir\$feed")) "built $nextSetup and $feed"
+
+  $portFile = Join-Path $env:TEMP "crundi-fake-gh-$Edition.port"
+  Remove-Item $portFile -Force -ErrorAction SilentlyContinue
+  $gh = Start-Process node -ArgumentList "`"$(Join-Path $here 'self-update.mjs')`"", 'serve', "`"$nextDir`"", $next, $feed, "`"$portFile`"" -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\crundi-fake-gh-$Edition.log" -RedirectStandardError "$env:TEMP\crundi-fake-gh-$Edition.err"
+  for ($i = 0; $i -lt 30 -and -not (Test-Path $portFile); $i++) { Start-Sleep 1 }
+  $ghPort = Get-Content $portFile -ErrorAction SilentlyContinue
+
+  $runName = $runAfter
+  $lnks = @("$desk\$product.lnk", "$menu\$product.lnk")
+  $markerHash = (Get-FileHash "$userData\data\projects\upgrade-marker.json").Hash
+  Remove-Item $nlog, $clog, "$clog.out" -Force -ErrorAction SilentlyContinue
+  $drv = $Port + 10
+  $env:CRUNDI_TEST_PORT = "$drv"; $env:CRUNDI_UPDATE_API = "http://127.0.0.1:$ghPort"
+  $c = Start-Process "$inst\$newExe" -PassThru -RedirectStandardError $clog -RedirectStandardOutput "$clog.out"
+  Remove-Item Env:CRUNDI_TEST_PORT, Env:CRUNDI_UPDATE_API
+  Write-Host "native $Version running (pid $($c.Id)), fake GitHub on :$ghPort offering $next"
+  # Its server up first (all-in-one), so the update stops a running one.
+  if ($full) {
+    for ($i = 0; $i -lt 120 -and -not (UnderInstall | Where-Object { $_.CommandLine -like '*server\src\index.js*' }); $i++) { Start-Sleep 1 }
+  }
+  Start-Sleep 3
+  # Everything of the old version: the app, its browser host, its server.
+  $oldPids = @($c.Id) + @(UnderInstall | ForEach-Object { $_.ProcessId })
+  Write-Host "old version's processes: $((UnderInstall | ForEach-Object { "$($_.ProcessId) $($_.Name)" }) -join '; ')"
+  node (Join-Path $here 'self-update.mjs') drive $drv $next | Write-Host
+  $driven = $LASTEXITCODE -eq 0
+  Check $driven "the app offered $next, downloaded it and quit on Restart & Install"
+  Get-Content "$env:TEMP\crundi-fake-gh-$Edition.log" -ErrorAction SilentlyContinue | Write-Host
+  if ($driven) {
+    for ($i = 0; $i -lt 60 -and -not $c.HasExited; $i++) { Start-Sleep 1 }
+    Check $c.HasExited "the old app ($($c.Id)) is gone"
+    # The Setup runs, then starts the app again: a new $newExe under $inst.
+    $again = $null
+    for ($i = 0; $i -lt 300 -and -not $again; $i++) {
+      Start-Sleep 1
+      $again = Get-CimInstance Win32_Process | Where-Object { $_.Name -ieq $newExe -and $_.ExecutablePath -and $_.ExecutablePath -ieq "$inst\$newExe" -and $oldPids -notcontains $_.ProcessId } | Select-Object -First 1
+    }
+    WaitInstallers
+    Check ([bool]$again) "the app started again by itself after $i s (pid $($again.ProcessId))"
+    Check (((Get-Content "$inst\version" -Raw).Trim()) -eq $next) "installed in place: $inst\version is $next"
+    $seen = $false
+    for ($i = 0; $i -lt 30 -and -not $seen; $i++) { Start-Sleep 1; $seen = (Test-Path $nlog) -and (Select-String -Path $nlog -SimpleMatch "[lifecycle] version=$next " -Quiet) }
+    Check $seen "the started app reports version $next"
+    Check ((Test-Path $nlog) -and (Select-String -Path $nlog -SimpleMatch '[update] Running ' -Quiet)) "the old app ran the downloaded Setup: $((Select-String -Path $nlog -SimpleMatch '[update] Running ' | Select-Object -Last 1).Line)"
+    $setupRun = Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'Crundi*Setup*' }
+    Check (-not $setupRun) "the Setup has finished"
+    $left = @(Get-Process -Id $oldPids -ErrorAction SilentlyContinue)
+    Check ($left.Count -eq 0) "no process of the old version is left ($($left.Id -join ', '))"
+    $apps = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -ieq $newExe -and $_.ExecutablePath -ieq "$inst\$newExe" })
+    Check ($apps.Count -eq 1) "one app running ($($apps.Count))"
+
+    $e2 = @(Entries)
+    Check ($e2.Count -eq 1 -and $e2[0].Key -eq $electronKey) "still one uninstall entry, the same key ($($e2.Key -join ', '))"
+    Check ($e2.Count -eq 1 -and $e2[0].Props.DisplayVersion -eq $next) "DisplayVersion $($e2[0].Props.DisplayVersion)"
+    $run2 = @((Get-Item $runKey).Property | Where-Object { (Get-ItemPropertyValue $runKey $_) -like "*$inst\*" })
+    Check ($run2.Count -eq 1 -and $run2[0] -eq $runName -and (Get-ItemPropertyValue $runKey $runName) -like "*$inst\$newExe*") "launch at login: still one Run value, the same ($run2)"
+    foreach ($l in $lnks) { Check ((Test-Path $l) -and ((LnkTarget $l) -ieq "$inst\$newExe")) "shortcut kept: $l" }
+    Check ((Test-Path "$userData\data\projects\upgrade-marker.json") -and (Get-FileHash "$userData\data\projects\upgrade-marker.json").Hash -eq $markerHash) "data kept"
+    Check ((Get-Content "$userData\.env" -Raw) -match '# upgrade-test') "the server's .env kept"
+    Check ((Get-Content "$userData\client.json" -Raw | ConvertFrom-Json).mode -eq 'local') "client.json kept"
+    $uc = Get-Content "$userData\update-config.json" -Raw | ConvertFrom-Json
+    Check ($uc.channel -eq 'dev') "update settings kept (channel $($uc.channel))"
+    if ($full) {
+      $srv = $null
+      for ($i = 0; $i -lt 120 -and -not $srv; $i++) { $srv = UnderInstall | Where-Object { $_.CommandLine -like '*server\src\index.js*' }; if (-not $srv) { Start-Sleep 1 } }
+      Check ([bool]$srv) "the started app runs the bundled server again"
+    }
+    if ($again) { StopTree $again.ProcessId }
+  } else {
+    Write-Host '-- crundi.log:'; Get-Content $nlog -Tail 40 -ErrorAction SilentlyContinue | Write-Host
+    Write-Host '-- client stderr:'; Get-Content $clog -Tail 40 -ErrorAction SilentlyContinue | Write-Host
+    StopTree $c.Id
+  }
+  Start-Sleep 2
+  UnderInstall | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  if ($gh) { Stop-Process -Id $gh.Id -Force -ErrorAction SilentlyContinue }
+}
 
 Write-Host "== Uninstall"
 $p = Start-Process "$inst\Uninstall $product.exe" -ArgumentList '/currentuser', '/S' -Wait -PassThru

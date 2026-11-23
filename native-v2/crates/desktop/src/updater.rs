@@ -658,9 +658,17 @@ pub fn after_quit() {
         AfterQuit::RunInstaller(f) => {
             // electron-updater's quitAndInstall(true, true): silent, run after.
             lc::log_line(&format!("[update] Running {}", f.display()));
-            let _ = detached(std::process::Command::new(&f).args(["--updated", "/S", "--force-run"]));
+            let _ = detached(&mut installer_command(&f));
         }
     }
+}
+
+/// The new Setup .exe as quitAndInstall(true, true) runs it: an update
+/// (--updated), silent (/S), and the app started again when done (--force-run).
+fn installer_command(f: &Path) -> std::process::Command {
+    let mut c = std::process::Command::new(f);
+    c.args(["--updated", "/S", "--force-run"]);
+    c
 }
 
 /// The driver's view.
@@ -684,6 +692,15 @@ pub fn test_due_now() { with(|i| i.next_check = Some(Instant::now())); crundi_we
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_installer_is_silent_update_and_starts_again() {
+        let f = std::path::PathBuf::from("C:/Users/u/AppData/Roaming/Crundi Native/updates/Crundi-Setup-9.0.0.exe");
+        let c = installer_command(&f);
+        assert_eq!(c.get_program(), f.as_os_str());
+        let args: Vec<_> = c.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+        assert_eq!(args, ["--updated", "/S", "--force-run"]);
+    }
 
     #[test]
     fn versions_order_as_electrons() {
