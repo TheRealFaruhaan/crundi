@@ -75,7 +75,10 @@ impl LocalScreen {
 
     /// setupNext.
     pub fn next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(m) = self.invalid(self.step, cx) { Self::alert(m, window, cx); return; }
+        // The alert has the keys: a step box's focus still waiting for the
+        // next render (Next pressed right after the step showed) must not take
+        // them from it; the alert gives them back to the box when it closes.
+        if let Some(m) = self.invalid(self.step, cx) { self.focus_step = None; Self::alert(m, window, cx); return; }
         if self.step == SETUP_TOTAL { return self.save(false, window, cx); }
         self.show_step(self.step + 1, cx);
     }

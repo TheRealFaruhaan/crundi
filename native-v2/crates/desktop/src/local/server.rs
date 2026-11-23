@@ -62,6 +62,8 @@ pub fn waiting() -> bool { !INBOX.lock().unwrap().is_empty() }
 /// appendLog (also to stderr, the client's own log).
 pub fn log(line: &str) {
     eprintln!("[server] {line}");
+    // Electron's appendLog: every line into crundi.log as well.
+    crundi_shell::lifecycle::log_line(line);
     with(|s| { s.logs.push_back(line.to_string()); while s.logs.len() > MAX_LOGS { s.logs.pop_front(); } });
 }
 

@@ -12,8 +12,11 @@ export async function run(T, t) {
   const tr = (p) => D(p).tray;
   const p = await T.until('the tray says the connection', (p) => tr(p).tooltip === 'Crundi — Running');
   const labels = tr(p).menu.map((m) => m.label);
-  const want = ['Crundi', '', 'Running', '', 'Open', 'Lock (visible)', 'Lock (full)', 'Kid mode', 'Server…', '', WAKE];
-  t.check('its menu', JSON.stringify(labels.slice(0, 11)) === JSON.stringify(want) && labels[labels.length - 1] === 'Quit' && labels[labels.length - 2] === '', labels);
+  // Electron's updateTrayMenu: Start and Stop after Server…, then "Hey Cru".
+  const want = ['Crundi', '', 'Running', '', 'Open', 'Lock (visible)', 'Lock (full)', 'Kid mode', 'Server…', '', 'Start', 'Stop', '', WAKE];
+  t.check('its menu', JSON.stringify(labels.slice(0, 14)) === JSON.stringify(want) && labels[labels.length - 1] === 'Quit' && labels[labels.length - 2] === '', labels);
+  const st = (id) => tr(p).menu.find((m) => m.id === id) || {};
+  t.check('…Running: Start off, Stop on (botStatus running)', st('start').enabled === false && st('stop').enabled === true, [st('start'), st('stop')]);
   const wake = tr(p).menu.find((m) => m.id === 'wake');
   const trained = !!D(p).wake?.trained;
   t.check('…"Hey Cru" a check item, off until trained', wake && wake.checked === !!D(p).wake?.enabled && wake.enabled === trained

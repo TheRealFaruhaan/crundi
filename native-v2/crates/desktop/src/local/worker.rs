@@ -112,7 +112,7 @@ pub fn start() {
     let Some(bin) = binary() else { set_state(json!({ "state": "missing", "online": false, "detail": "This build of the app has no worker program in it." })); return };
     let dir = c["workDir"].as_str().filter(|s| !s.is_empty()).map(str::to_string).unwrap_or_else(default_dir);
     let mut cmd = Command::new(bin);
-    cmd.args(["--embedded", "--server", &server, "--key", &key, "--work-dir", &dir, "--name", &host_name()])
+    cmd.args(["--embedded", "--server", &server, "--key", &key, "--work-dir", &dir, "--name", &host_name(), "--kind", "native"])
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)] { use std::os::windows::process::CommandExt; cmd.creation_flags(0x0800_0000); }
     let mut child = match cmd.spawn() { Ok(c) => c, Err(e) => { set_state(json!({ "state": "error", "detail": e.to_string() })); return; } };
