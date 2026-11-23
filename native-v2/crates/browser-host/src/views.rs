@@ -142,7 +142,12 @@ pub fn handle(c: Cmd) -> bool {
         },
         Cmd::Js { id, code } => if let Some(f) = browser_of(id).and_then(|b| b.main_frame()) { f.execute_java_script(Some(&CefString::from(code.as_str())), None, 0); },
         Cmd::DevTools { id } => if let Some(hh) = host_of(id) {
-            if hh.has_dev_tools() != 0 { hh.close_dev_tools(); } else { hh.show_dev_tools(Some(&WindowInfo::default()), None, Some(&BrowserSettings::default()), None); }
+            if hh.has_dev_tools() != 0 { hh.close_dev_tools(); } else { {
+                // A window of its own, in the pages' (windowless) runtime style: a Chrome-style
+                // DevTools for an Alloy page is refused, and no window opened.
+                let wi = WindowInfo { runtime_style: RuntimeStyle::ALLOY, bounds: Rect { x: 80, y: 80, width: 1000, height: 700 }, ..WindowInfo::default() };
+                hh.show_dev_tools(Some(&wi), None, Some(&BrowserSettings::default()), None);
+            } }
         },
         Cmd::Ack { id } => {
             let redraw = with(|v| v.get_mut(&id).map(|x| { x.busy = false; std::mem::take(&mut x.dirty) }).unwrap_or(false));

@@ -57,7 +57,7 @@ fn set_copy<C: PartialEq, V: 'static>(slot: &mut C, new: C, cx: &mut Context<V>)
 
 /// What the layout shows (which leaves, where).
 #[derive(Clone, PartialEq, Default)]
-struct Lay { has_tab: bool, panel: bool, pw: bool, ann: bool, note_at: Option<(f32, f32)>, suggest: bool, left: bool }
+struct Lay { has_tab: bool, panel: bool, pw: bool, ann: bool, note_at: Option<(f32, f32)>, suggest: bool, left: bool, boot: Option<crundi_webview::Boot> }
 
 pub struct BrowserDrawer {
     page: Entity<PageView>,
@@ -126,6 +126,9 @@ impl BrowserDrawer {
             p.pump(window, cx);
         });
         let changed = !browser::take_changed().is_empty();
+        // The browser itself starting (or failed to start): the booting overlay over the whole drawer.
+        let boot = crundi_webview::boot().filter(|_| open && act.is_some());
+        if boot != self.lay.boot && !(dirty || changed) { let mut l = self.lay.clone(); l.boot = boot.clone(); set_copy(&mut self.lay, l, cx); }
         if !(dirty || changed) { return; }
 
         let has = act.is_some();
@@ -164,7 +167,7 @@ impl BrowserDrawer {
         let any = !suggest.is_empty();
         self.suggest.update(cx, |v, cx| set_copy(&mut v.rows, suggest, cx));
 
-        let lay = Lay { has_tab: has, panel: !panel_name.is_empty(), pw: has_bar, ann: ann.is_some(), note_at, suggest: any, left: drawer::with(|d| d.side == "left") };
+        let lay = Lay { has_tab: has, panel: !panel_name.is_empty(), pw: has_bar, ann: ann.is_some(), note_at, suggest: any, left: drawer::with(|d| d.side == "left"), boot };
         if lay.left != self.lay.left {
             if let Some(s) = self.shell.as_ref().and_then(|s| s.upgrade()) {
                 let view: AnyView = cx.entity().into();
@@ -199,8 +202,29 @@ impl Render for BrowserDrawer {
             .child(body)
             // The address field's suggestions, under it.
             .when(focused && l.suggest, |d| d.child(self.suggest.clone().cached(sr().absolute().top(T::TABBAR_H + addr_h).left(T::DRAWER_NAV_W).right(T::DRAWER_TOOLS_W).h(sug_h))))
+            // The browser starting: over everything (tabs, address bar, page) until it is up.
+            .when_some(boot_shown(l.boot.clone()), |d, b| {
+                let (slow, err) = match b { crundi_webview::Boot::Starting { slow } => (slow, None), crundi_webview::Boot::Failed(e) => (false, Some(SharedString::from(e))) };
+                d.child(w::browser_booting(T::bg_secondary(), slow, err, |_, _, _| browser::defer(|| {
+                    crundi_webview::retry_host();
+                    if let Some(i) = drawer::active_tab().and_then(|t| t.panel) { browser::reload(i); }
+                    drawer::render();
+                })))
+            })
     }
 }
+
+thread_local! {
+    /// What the drawer drew of the booting overlay last ("starting", "slow", "failed"; "" none): the driver's look.
+    static BOOT_SHOWN: std::cell::RefCell<&'static str> = const { std::cell::RefCell::new("") };
+}
+fn boot_shown(b: Option<crundi_webview::Boot>) -> Option<crundi_webview::Boot> {
+    let n = match &b { Some(crundi_webview::Boot::Starting { slow: false }) => "starting", Some(crundi_webview::Boot::Starting { slow: true }) => "slow", Some(crundi_webview::Boot::Failed(_)) => "failed", None => "" };
+    BOOT_SHOWN.with(|s| *s.borrow_mut() = n);
+    b
+}
+/// The booting overlay as last drawn (drawer props "boot").
+pub fn boot_drawn() -> &'static str { BOOT_SHOWN.with(|s| *s.borrow()) }
 
 // ─── The tabs row ───
 
@@ -766,11 +790,13 @@ fn row(id: impl Into<ElementId>, multi: bool, on: bool, label: impl Into<SharedS
 #[allow(clippy::too_many_arguments)]
 fn chk_row(id: impl Into<ElementId>, multi: bool, on: bool, off: bool, label: impl Into<SharedString>, sub: impl Into<SharedString>, sub_tone: Hsla, f: impl Fn(bool) + 'static) -> Stateful<Div> {
     let sub: SharedString = sub.into();
-    div().id(id).flex().items_start().gap(T::SP_10).py(T::SP_8).px(T::SP_2)
+    let label: SharedString = label.into();
+    // (Its mark: found by its words, as the shared controls are.)
+    div().id(id).relative().flex().items_start().gap(T::SP_10).py(T::SP_8).px(T::SP_2).child(w::find::mark(label.clone()))
         .when(!off, |d| d.cursor_pointer().on_click(move |_, _, _| f(if multi { !on } else { true })))
         .when(off, |d| d.opacity(0.5))
         .child(w::choice_mark(multi, on, false))
-        .child(div().flex().flex_col().min_w_0().text_size(T::TEXT_13).text_color(T::text()).child(label.into())
+        .child(div().flex().flex_col().min_w_0().text_size(T::TEXT_13).text_color(T::text()).child(label)
             .when(!sub.is_empty(), |d| d.child(div().pt(T::SP_2).text_size(T::TEXT_12).text_color(sub_tone).child(sub))))
 }
 

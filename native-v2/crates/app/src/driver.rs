@@ -95,6 +95,11 @@ fn ui(r: &Request, stores: &Stores, window: &mut Window, cx: &mut App) -> Value 
         "toasts-clear" => crundi_widgets::clear_toasts(window, cx),
         // The window's × (or the system's close), as a click on it.
         "window-close" => crundi_shell::close_window(window, cx),
+        // Where a control is on screen, by its words or tip (a real click's target).
+        "find" => return match crundi_widgets::find::find(&a(0), window) {
+            Some(b) => json!({ "ok": true, "x": f32::from(b.origin.x), "y": f32::from(b.origin.y), "w": f32::from(b.size.width), "h": f32::from(b.size.height) }),
+            None => json!({ "ok": false, "error": "not on screen" }),
+        },
         // The top bar's minute tick held ("off") or let go ("on"), F122.
         "usage-clock" => stores.usage.update(cx, |u, cx| u.hold(a(0) == "off", cx)),
         "toast" => { let k = match a(0).as_str() { "error" => crundi_widgets::Toast::Error, "success" => crundi_widgets::Toast::Success, _ => crundi_widgets::Toast::Info }; crundi_widgets::toast(window, cx, a(1), k); }

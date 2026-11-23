@@ -141,10 +141,14 @@ impl T {
     pub const TRACK_WIDE: f32 = 0.05;
 
     // ─── Named sizes, only for structure ───
+    /// The test harness's window (every screen in screens/ is taken at it).
     pub const WINDOW_W: Pixels = px(1400.);
     pub const WINDOW_H: Pixels = px(860.);
-    pub const WINDOW_MIN_W: Pixels = px(900.);
-    pub const WINDOW_MIN_H: Pixels = px(520.);
+    /// The app's window at launch and its least size: Electron's (app/main.js createWindow).
+    pub const APP_W: Pixels = px(1100.);
+    pub const APP_H: Pixels = px(750.);
+    pub const WINDOW_MIN_W: Pixels = px(800.);
+    pub const WINDOW_MIN_H: Pixels = px(500.);
     pub const TOPBAR_H: Pixels = px(48.);
     pub const TABBAR_H: Pixels = px(36.);
     pub const SIDEBAR_W: Pixels = px(240.);

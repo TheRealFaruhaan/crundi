@@ -2,7 +2,10 @@
 // The browser host (CEF) starts lazily, on the first page, off the main
 // thread: while it starts (slowed here to 3 s, as a cold disk or a virus
 // scan would) the window answers real keys within 200 ms, and the drawer
-// tab shows its page loading (the Reload arrow turns, .brd-loading).
+// tab shows its page loading (the Reload arrow turns, .brd-loading). The
+// whole drawer shows the "browser booting" overlay meanwhile ("Starting the
+// browser…", after 10 s "This can take a moment the first time."), gone the
+// moment the host is up.
 // A frame made before the host is up (What's new's step page, FINDINGS 2)
 // waits in the link and loads once the host connects; so does one made
 // while the host is still stopping (it is started afresh).
@@ -17,6 +20,8 @@ export async function run(T, t) {
   const mcp = mcpOf(T);
   const host = async () => (await T.state()).areas?.desktop?.browserHost || {};
   t.check('no browser host yet', (await host()).state === 'off', await host());
+  // This first start slowed past 10 s (the overlay's second line).
+  await T.act('browser-host-delay', '12500');
   // The drawer first: the run's own fresh CEF profile (electron.mjs), so this
   // is the host's cold first start, pictured while it starts and once shown.
   const opened = mcp('browser_drawer_open', { url: T.SERVER });
@@ -36,8 +41,18 @@ export async function run(T, t) {
   t.check('…the drawer tab shows its page loading meanwhile', !!tab && tab.loading === true, tab);
   await T.act('drawer', 'true');
   await T.until('…the drawer shown while the host starts', (p) => D(p).drawer?.open && D(p).browserHost?.state === 'starting', 3000);
+  await T.until('…the "browser booting" overlay over the whole drawer', (p) => D(p).drawer?.boot === 'starting', 3000);
+  t.check('…not yet its second line', D(await T.state()).browserHost?.boot === 'starting');
   await T.snap('electron', 'browser-first-start-loading');
+  {
+    const a = Date.now();
+    await T.key('Tab');
+    t.check('…the window still answers a key under the overlay', Date.now() - a < 200, Date.now() - a);
+  }
+  await T.until('…after 10 s: "This can take a moment the first time."', (p) => D(p).drawer?.boot === 'slow' && D(p).browserHost?.state === 'starting', 12000);
+  await T.snap('electron', 'browser-first-start-slow');
   await T.until('the host comes up', (p) => D(p).browserHost?.state === 'up' && D(p).browserHost?.pid > 0, 20000);
+  await T.until('…the overlay gone the moment it is up', (p) => D(p).drawer?.boot === '' && D(p).browserHost?.boot === null, 2000);
   const r = await opened;
   t.check('…and the tab opens', r.ok && /^drawer:/.test(r.key || ''), r);
   await T.until('…its page loaded: no longer loading', (p) => (D(p).drawer?.tabs || []).at(-1)?.loading === false, 10000);
