@@ -94,7 +94,7 @@ pub struct St {
     // Cru.
     voice: Voice,
     // The Desktop App.
-    launch: bool, launch_hint: String, auto_update: bool, upd_channel: i32, upd_avail: bool, upd_status: String,
+    launch: bool, launch_hint: String, auto_update: bool, mini: bool, upd_channel: i32, upd_avail: bool, upd_status: String,
     /// The updater's download: under way, finished (the action button's words).
     upd_downloading: bool, upd_downloaded: bool,
     f: Fields,
@@ -143,7 +143,7 @@ impl Default for St {
             pair_focus: None, pair_scroll: ScrollHandle::new(),
             sess_open: false, sess_state: "loading".into(), sess_error: String::new(), sessions: vec![], sess_others: 0,
             voice: Voice::default(),
-            launch: local::launch(), launch_hint: local::launch_hint(), auto_update: local::auto_update(),
+            launch: local::launch(), launch_hint: local::launch_hint(), auto_update: local::auto_update(), mini: crundi_shell::local::mini_on(),
             upd_channel: if local::channel() == "dev" { 1 } else { 0 }, upd_avail: false,
             upd_status: format!("Up to date \u{2014} v{}", crundi_shell::lifecycle::version()),
             upd_downloading: false, upd_downloaded: false,
@@ -1232,6 +1232,7 @@ fn desktop_show(cx: &mut App) {
         s.launch = local::launch();
         s.launch_hint = local::launch_hint();
         s.auto_update = local::auto_update();
+        s.mini = crundi_shell::local::mini_on();
         s.upd_channel = if local::channel() == "dev" { 1 } else { 0 };
     });
 }
@@ -1241,6 +1242,11 @@ fn launch_toggle(cx: &mut App, on: bool) {
         Ok(()) => upd(cx, |s| s.launch = local::launch()),
         Err(e) => c::toast_error(cx, &e),
     }
+}
+
+fn mini_toggle(cx: &mut App, on: bool) {
+    crundi_shell::local::set_mini(on);
+    upd(cx, |s| s.mini = on);
 }
 
 fn update_toggle(cx: &mut App, on: bool) {
@@ -1949,6 +1955,7 @@ fn desktop_body(want: Want, cx: &mut App) -> Parts {
     let s = st(cx);
     parts(T::SP_12).wanting(want)
         .part(|| info_row("Launch at startup", &s.launch_hint, vec![w::switch("launch", s.launch, |v, _, cx| launch_toggle(cx, *v)).into_any_element()]))
+        .part(|| info_row("Show Mini", "The little robot that keeps you company while you wait.", vec![w::switch("mini", s.mini, |v, _, cx| mini_toggle(cx, *v)).into_any_element()]))
         .part(|| info_row("Automatic updates", "Check on launch and once a day. Always asks before installing.", vec![w::switch("auto-update", s.auto_update, |v, _, cx| update_toggle(cx, *v)).into_any_element()]))
         .part(|| info_row("Release channel", "Dev gets preview builds early. A newer production release is offered either way.",
             vec![w::segmented("upd-channel", &["Production", "Dev"], s.upd_channel.max(0) as usize, |i, _, cx| desktop_channel(cx, *i as i32)).into_any_element()]))
@@ -2055,6 +2062,7 @@ pub fn test_ui(name: &str, args: &[String], _window: &mut Window, cx: &mut App) 
             "vs-set-away" => voice_away(cx, Some(a(1) == "true"), None),
             "vs-reset" => voice_reset(cx),
             "launch-toggle" => launch_toggle(cx, a(1) == "true"),
+            "mini-toggle" => mini_toggle(cx, a(1) == "true"),
             "update-toggle" => update_toggle(cx, a(1) == "true"),
             "upd-set-channel" => desktop_channel(cx, a(1).parse().unwrap_or(0)),
             "update-check" => update_check(cx),
@@ -2096,7 +2104,7 @@ pub fn props(_window: &mut Window, cx: &mut App) -> Value {
         "voice": { "shown": s.voice.shown, "model": s.voice.sel.get("model").map(|e| e.1).unwrap_or(-1), "models": s.voice.sel.get("model").map(|e| e.0.len()).unwrap_or(0),
             "status": s.voice.status, "admin": s.voice.admin, "spend": s.voice.spend, "spendNote": s.voice.spend_note, "keysNote": s.voice.keys_note,
             "away": s.voice.away, "awayClasses": s.voice.away_classes.len() },
-        "desktop": { "launch": s.launch, "autoUpdate": s.auto_update, "channel": s.upd_channel, "status": s.upd_status, "dot": s.upd_avail, "downloading": s.upd_downloading, "downloaded": s.upd_downloaded },
+        "desktop": { "launch": s.launch, "mini": s.mini, "autoUpdate": s.auto_update, "channel": s.upd_channel, "status": s.upd_status, "dot": s.upd_avail, "downloading": s.upd_downloading, "downloaded": s.upd_downloaded },
         "modal": s.pair_open,
         "opened": c::s(&s.data, "opened"),
         "ptt": crate::ptt::label(&crate::ptt::get()), "pttCapturing": s.ptt_capturing,
