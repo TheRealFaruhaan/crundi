@@ -25,6 +25,7 @@ Every stream builds to this. A change is a question for the Manager.
   - `homepool-node.json`, including the deviceId.
   - `drawer-history.json`.
   - `worker.json`.
+  - `voice-wake/`: Hey Cru's training (`profile.json` with the owner's voice prints, `speaker/`, the keyword model), when its profile is in the format the client reads and the client has none of its own. It is taken once with its own marker (`voice-wake/electron-import.json`), so an install that already imported the rest still takes it (T16).
 - Electron's saved drawer passwords cannot be decrypted, so they are not imported.
 
 ## Identity (so the new installer replaces Electron's)
