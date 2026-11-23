@@ -14,6 +14,9 @@
 //   lifecycle  launch at startup (Electron's names), crundi.log, a second
 //              launch showing the first, the system-wide lock keys (real
 //              key presses through XTEST, another window holding the focus)
+//   window     the main window (least size, frameless, icon), the top
+//              bar's buttons clicked (a spy on the root window), × to the
+//              tray, the tray icon's click and tooltip
 //   gaps       the remaining parity lines: the native host's registration
 //              and focus, browser_touch's listeners, drawer downloads,
 //              notification clicks and the raise, the homepool public IP,
@@ -39,7 +42,7 @@ import { fileURLToPath } from 'node:url';
 
 // The order they run in: the updater first (its prompt comes 8 s after
 // launch), its install last (it quits the app and starts it again).
-const PARTS = ['local', 'updates', 'lifecycle', 'browserstart', 'gaps', 'install'];
+const PARTS = ['local', 'updates', 'lifecycle', 'browserstart', 'window', 'gaps', 'install'];
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
 const parts = PARTS.filter((p) => !ONLY.length || ONLY.includes(p) || (p === 'install' && ONLY.includes('updates')));
 

@@ -97,6 +97,56 @@ export async function run(T, t) {
   t.check('…the file\'s bytes', existsSync(dest) && readFileSync(dest, 'utf8') === 'downloaded by the drawer\n', row);
   rmSync(dir, { recursive: true, force: true });
 
+  // ─── The drawer's DevTools and Clear browsing data for one site, with real clicks ───
+  const at = async (words) => { const b = await T.ui('find', words); return b.ok ? { x: b.x + b.w / 2, y: b.y + b.h / 2 } : null; };
+  const click = async (words) => { const c = await at(words); t.check(`(${words} on screen)`, !!c, words); if (c) await T.mouse('click', c.x, c.y); };
+  const LOCAL = PAGE.replace('127.0.0.1', 'localhost');
+  r = await mcp('browser_drawer_open', { url: `${LOCAL}/blank?b` });
+  const bkey = r.key || 'drawer:none';
+  await t.sleep(1200);
+  r = await mcp('browser_eval', { key: bkey, code: 'document.cookie = "k=b; max-age=3600"; document.cookie' });
+  r = await mcp('browser_drawer_open', { url: `${PAGE}/blank?a` });
+  const akey = r.key || 'drawer:none';
+  await t.sleep(1200);
+  r = await mcp('browser_eval', { key: akey, code: 'document.cookie = "k=a; max-age=3600"; document.cookie' });
+  t.check('a cookie on each site (127.0.0.1 and localhost)', r.result === 'k=a' && (await mcp('browser_eval', { key: bkey, code: 'document.cookie' })).result === 'k=b', r);
+  const DR = (p) => D(p).drawer || {};
+  if (!DR(await T.state()).open) await T.act('browser');
+  {
+    const ta = (DR(await T.state()).tabs || []).find((x) => x.url.includes('127.0.0.1') && x.url.includes('blank?a'));
+    if (ta) await T.act('activate', ta.id);
+  }
+  await T.until('the drawer shown, on the 127.0.0.1 tab', (p) => DR(p).open && (DR(p).tabs || []).find((x) => x.id === DR(p).active)?.url?.includes('127.0.0.1'), 8000);
+  await t.sleep(600);
+  const wins = () => execFileSync('xwininfo', ['-root', '-tree']).toString();
+  const dt0 = (wins().match(/DevTools/g) || []).length;
+  await click('DevTools');
+  if (process.env.GAPS_DEBUG) { await t.sleep(1500); await T.snap('electron', 'dbg-devtools'); console.log('dbg find', JSON.stringify(await T.ui('find', 'DevTools'))); }
+  {
+    let n = dt0;
+    for (let i = 0; i < 40 && n <= dt0; i++) { await t.sleep(250); n = (wins().match(/DevTools/g) || []).length; }
+    t.check('a click on DevTools opens the page\'s DevTools window', n > dt0, { before: dt0, after: n, tree: n > dt0 ? '' : wins().split('\n').filter((l) => /"/.test(l)).slice(0, 30).join('\n') });
+  }
+  await T.act('panel', 'clear');
+  await T.until('the Clear browsing data panel, for this tab\'s site', (p) => DR(p).panel === 'clear', 5000);
+  await t.sleep(400);
+  await click('Only this site');
+  await click('Cookies and site data');
+  await t.sleep(300);
+  await click('Clear');
+  await T.until('Clear: "Cleared for 127.0.0.1: history, cookies and site data, cached files"', (p) => /Cleared for 127\.0\.0\.1: history, cookies and site data, cached files/.test(p.toast || ''), 8000);
+  await t.sleep(1500);
+  r = await mcp('browser_eval', { key: akey, code: 'document.cookie' });
+  t.check('…127.0.0.1\'s cookie gone', r.ok !== false && r.result === '', r);
+  r = await mcp('browser_eval', { key: bkey, code: 'document.cookie' });
+  t.check('…localhost\'s kept', r.result === 'k=b', r);
+  {
+    let hist = [];
+    for (let i = 0; i < 20; i++) { try { hist = JSON.parse(readFileSync(join(T.configDir, 'drawer-history.json'), 'utf8')); } catch { hist = []; } if (!hist.some((h) => h.url.includes('127.0.0.1'))) break; await t.sleep(300); }
+    t.check('…its history gone, localhost\'s kept (drawer-history.json)', !hist.some((h) => h.url.includes('127.0.0.1')) && hist.some((h) => h.url.includes('localhost')), hist.map((h) => h.url));
+  }
+  if (DR(await T.state()).open) await T.act('browser');
+
   // ─── A notification's click: raised, held on top for 300 ms (GNOME), its chat ───
   const raises0 = D(await T.state()).win.raises;
   await T.act('notify-click', '');

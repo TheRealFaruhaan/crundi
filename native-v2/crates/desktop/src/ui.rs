@@ -766,11 +766,13 @@ fn row(id: impl Into<ElementId>, multi: bool, on: bool, label: impl Into<SharedS
 #[allow(clippy::too_many_arguments)]
 fn chk_row(id: impl Into<ElementId>, multi: bool, on: bool, off: bool, label: impl Into<SharedString>, sub: impl Into<SharedString>, sub_tone: Hsla, f: impl Fn(bool) + 'static) -> Stateful<Div> {
     let sub: SharedString = sub.into();
-    div().id(id).flex().items_start().gap(T::SP_10).py(T::SP_8).px(T::SP_2)
+    let label: SharedString = label.into();
+    // (Its mark: found by its words, as the shared controls are.)
+    div().id(id).relative().flex().items_start().gap(T::SP_10).py(T::SP_8).px(T::SP_2).child(w::find::mark(label.clone()))
         .when(!off, |d| d.cursor_pointer().on_click(move |_, _, _| f(if multi { !on } else { true })))
         .when(off, |d| d.opacity(0.5))
         .child(w::choice_mark(multi, on, false))
-        .child(div().flex().flex_col().min_w_0().text_size(T::TEXT_13).text_color(T::text()).child(label.into())
+        .child(div().flex().flex_col().min_w_0().text_size(T::TEXT_13).text_color(T::text()).child(label)
             .when(!sub.is_empty(), |d| d.child(div().pt(T::SP_2).text_size(T::TEXT_12).text_color(sub_tone).child(sub))))
 }
 

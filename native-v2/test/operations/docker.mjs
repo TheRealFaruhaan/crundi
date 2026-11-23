@@ -107,6 +107,18 @@ export async function run(T, t) {
     await T.act('docker-tab', 'shell');
     // Its prompt first: a shell's line editor drops what is typed before it starts reading.
     await T.until('docker: a shell opens, with its prompt', (p) => dk(p).detail.shellLive && dk(p).detail.shellBtn === 'New shell' && /[#$] ?$/.test(dk(p).detail.shellText.trim()), 15000);
+    // The prompt can show before the line editor reads (F2: the start of a line sent at
+    // once was lost): a short echo, sent again until its answer comes, then the command.
+    // (The answer, hs-<n+100>, is never in the typed line itself.)
+    {
+      let settled = false;
+      for (let i = 1; i <= 6 && !settled; i++) {
+        await T.act('docker-shell-send', `echo hs-$((${i}+100))-${tag}`);
+        const end = Date.now() + 2500;
+        while (Date.now() < end && !settled) { settled = dk(await T.state()).detail.shellText.includes(`hs-${i + 100}-${tag}`); if (!settled) await t.sleep(150); }
+      }
+      t.check('docker: the shell reads what is typed (an echo answered)', settled);
+    }
     await T.act('docker-shell-send', `echo shell-$((6*7))-${tag}`);
     if (!await T.until('docker: the shell runs a command', (p) => dk(p).detail.shellText.includes(`shell-42-${tag}`), 15000)) { const d = (await T.mine()).docker.detail; console.log('     shell:', JSON.stringify({ live: d.shellLive, bar: d.shellBar, btn: d.shellBtn, text: d.shellText.slice(-400) })); }
     await T.snap('docker-shell');

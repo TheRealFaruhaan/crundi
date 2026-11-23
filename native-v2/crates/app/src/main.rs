@@ -51,7 +51,7 @@ fn main() {
 
         // Centred on the display when there is one; Xvfb reports none, so a
         // window centred on "nothing" would come out 10x10: place it instead.
-        let wsize = size(T::WINDOW_W, T::WINDOW_H);
+        let wsize = start_size(crundi_core::driver::port().is_some());
         let bounds = if cx.primary_display().is_some() { Bounds::centered(None, wsize, cx) } else { Bounds { origin: point(px(0.), px(0.)), size: wsize } };
         let handle = open_main(&stores, bounds, cx);
         // In front with the keys, as Electron's mainWindow.show() and focus().
@@ -87,6 +87,12 @@ fn main() {
     crundi_shell::lifecycle::log_line("[lifecycle] Quit");
 }
 
+/// The window's size at launch: Electron's 1100x750; under the test driver
+/// the harness's 1400x860 (the size every screen in screens/ is taken at).
+fn start_size(driven: bool) -> Size<Pixels> {
+    if driven { size(T::WINDOW_W, T::WINDOW_H) } else { size(T::APP_W, T::APP_H) }
+}
+
 /// Open the window (at start, and again after Wayland's hide closed it):
 /// the Shell over the shared stores, the desktop area's views.
 fn open_main(stores: &crundi_shell::Stores, bounds: Bounds<Pixels>, cx: &mut App) -> WindowHandle<Root> {
@@ -114,4 +120,19 @@ fn open_main(stores: &crundi_shell::Stores, bounds: Bounds<Pixels>, cx: &mut App
 fn app_icon() -> Option<std::sync::Arc<image::RgbaImage>> {
     let png = include_bytes!("../assets/icon-256.png");
     image::load_from_memory_with_format(png, image::ImageFormat::Png).ok().map(|i| std::sync::Arc::new(i.to_rgba8()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Electron's createWindow: 1100x750, at least 800x500 (PARITY-ELECTRON.md, the main window).
+    #[test]
+    fn electron_window_size() {
+        let s = start_size(false);
+        assert_eq!((f32::from(s.width), f32::from(s.height)), (1100., 750.));
+        assert_eq!((f32::from(T::WINDOW_MIN_W), f32::from(T::WINDOW_MIN_H)), (800., 500.));
+        let d = start_size(true);
+        assert_eq!((f32::from(d.width), f32::from(d.height)), (1400., 860.));
+    }
 }
