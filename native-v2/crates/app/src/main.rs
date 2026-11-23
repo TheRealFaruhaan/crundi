@@ -97,12 +97,16 @@ fn start_size(driven: bool) -> Size<Pixels> {
 /// the Shell over the shared stores, the desktop area's views.
 fn open_main(stores: &crundi_shell::Stores, bounds: Bounds<Pixels>, cx: &mut App) -> WindowHandle<Root> {
     // Frameless, as the PC client: the top bar draws the window's buttons and moves it.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    let wayland = gpui::guess_compositor() == "Wayland";
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    let wayland = false;
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(T::WINDOW_MIN_W, T::WINDOW_MIN_H)),
         titlebar: None,
         window_decorations: Some(WindowDecorations::Client),
-        app_id: Some(crundi_shell::lifecycle::window_class(gpui::guess_compositor() == "Wayland").into()),
+        app_id: Some(crundi_shell::lifecycle::window_class(wayland).into()),
         icon: app_icon(),
         ..Default::default()
     };
