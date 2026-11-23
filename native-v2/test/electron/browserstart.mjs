@@ -17,8 +17,9 @@ export async function run(T, t) {
   const mcp = mcpOf(T);
   const host = async () => (await T.state()).areas?.desktop?.browserHost || {};
   t.check('no browser host yet', (await host()).state === 'off', await host());
-  await whatsNew(T, t, host);
-  const opened = mcp('browser_drawer_open', { url: 'about:blank' });
+  // The drawer first: the run's own fresh CEF profile (electron.mjs), so this
+  // is the host's cold first start, pictured while it starts and once shown.
+  const opened = mcp('browser_drawer_open', { url: T.SERVER });
   await T.until('the first page: the browser host is starting', (p) => D(p).browserHost?.state === 'starting', 5000);
   // Real key presses while it starts: each answered by the window in time.
   const lat = [];
@@ -33,10 +34,19 @@ export async function run(T, t) {
   t.check('…and the window answered every key within 200 ms', lat.every((l) => l < 200), lat);
   const tab = (mid.drawer?.tabs || []).at(-1);
   t.check('…the drawer tab shows its page loading meanwhile', !!tab && tab.loading === true, tab);
+  await T.act('drawer', 'true');
+  await T.until('…the drawer shown while the host starts', (p) => D(p).drawer?.open && D(p).browserHost?.state === 'starting', 3000);
+  await T.snap('electron', 'browser-first-start-loading');
   await T.until('the host comes up', (p) => D(p).browserHost?.state === 'up' && D(p).browserHost?.pid > 0, 20000);
   const r = await opened;
   t.check('…and the tab opens', r.ok && /^drawer:/.test(r.key || ''), r);
   await T.until('…its page loaded: no longer loading', (p) => (D(p).drawer?.tabs || []).at(-1)?.loading === false, 10000);
+  await t.sleep(1000);
+  await T.snap('electron', 'browser-first-start-loaded');
+  await T.act('drawer', 'false');
+  await T.act('browser-host-stop');
+  await T.until('the host stopped (What\'s new below starts it)', (p) => D(p).browserHost?.state === 'off', 10000);
+  await whatsNew(T, t, host);
 }
 
 /** What's new opened with the host off, then with it stopping: its step's

@@ -1,3 +1,48 @@
+# Tester: fix round 4 verified on 7fd41030 (farhan-RP-15, Xvfb, fresh test servers on 4830)
+
+## The full pass
+
+| Check | Result |
+|---|---|
+| cargo test --workspace (tools/build.sh test) | 394 passed, 0 failed |
+| check.sh both (release build, both .debs, Docker upgrade from Electron v1.21.7, both editions) | passed, 477 s, 60 ok (package/check-pc.log) |
+| slice / toast / shell / workbench / workspace | 41/0, 6/0, 34/0, 73/0, 192/0 |
+| chat-composer / chat-log / chat-mini / chat-tail (stub server) | 83/0, 66/0, 58/0, 21/0 |
+| operations / desktop / planning (full order) / log-element | 429/2 (N4: flaky, ONLY=docker 62/0 twice), 395/0, 521/0, 18/0 |
+| electron.mjs (all parts) | 102/0 (local 77/0); after this pass's additions: local 84/0 (debug), browserstart 21/0 |
+| Local mode from the package layout (PACKAGE_DIR=~/.cache/crundi-pack/stage-full, electron/local.mjs) | 91/0: the release client starts the bundled server with node/bin/node, the wizard, the setup page, sign-in, a chat streams (stub Claude), the worker (packaged crundi-worker) joins as kind native, Stop/Start, a killed server restarted, Restart, restart-server, Quit leaves no process (client and server trees by PID) |
+| Package workflow, run 45138039085 on 7fd41030 | success, both jobs; Windows: "the client started the bundled server … node\\node.exe … server\\src\\index.js", "…and it answers on :60135 within 120 s", version 1.21.8-dev.8, Up to date |
+
+## Round 4 items, each against its test
+
+| # | Verified | How |
+|---|---|---|
+| F1 | yes | check.sh: `/opt/Crundi/version is 1.21.8-dev.8`, "the client reports version 1.21.8-dev.8", "Up to date", both editions; CI the same on Windows |
+| F2 | yes | operations.mjs extras in the full run (What's new loads); electron browserstart "…and the page loads once the host connects", "…a fresh host, and the page loads" |
+| F3 | yes | desktop.mjs tray 0 failed; tray-menu-{stopped,running,error}.json from local.mjs (Start/Stop/status as app/main.js) |
+| F4 | yes | planning.mjs in full order 521/0 |
+| F5 | yes | test/lib.mjs sets XDG_CONFIG_HOME/APPDATA per suite; shell.mjs 34/0 on this PC, which has a real Electron profile |
+| F6 | partly | section 1 and lines 40, 89, 112 are marked done with tests. 23 other lines are still marked only PRESENT: see F9 |
+| F7 | yes | CI 45138039085 windows: the check is in place and passes |
+| F8 | yes | local.mjs "normal/narrow: the options' words and the address box end inside the card's padding", "…wrap (two lines)", "the card inside the window"; screens/electron/server-screen-{local,remote}{,-narrow}.png |
+| N1 | yes | local.mjs "the next start: … the setup page, not the app"; screens/electron/settings-before-signin-setup.png |
+| N2 | yes | local.mjs Next twice, Escape, keys back in the box, again: passed in 4 runs |
+| N3 | yes | local.mjs with the packaged crundi-worker: kind "native", `--kind native` |
+
+## New
+
+| # | Finding | Where | Blocking |
+|---|---|---|---|
+| F9 | 23 PARITY lines are marked only "PRESENT" with a manual "How to test", not done and tested naming a test (the change request's first Done-when): lines 36, 37, 39, 43, 66, 67, 68, 69, 78, 79, 80, 81, 87, 90, 92, 94, 96, 97, 98, 99, 100, 102, 111. Most are covered by suites that pass (desktop.mjs tray, lock, kid, wake, drawer, passwords, browsers, unload, hostproc; electron.mjs gaps): name them. The Windows-only ones (66, 68) need a CI check or n/a with the reason | native-v2/PARITY-ELECTRON.md | yes |
+| N4 | Flaky: the Docker shell lost the start of a command sent right after its prompt showed ("/ # -$((6*7))-…", "echo shell" missing), once in the full run; ONLY=docker passed twice | test/operations/docker.mjs:110 (crates/operations docker shell) | no |
+| N5 | While a reply streams, a blank row shows before the item still being written ("twenty-six", blank, "twenty-s") | screens/electron/local-chat-streaming.png (crates/chat log, streamed markdown list) | no (UI reviewer to judge against the web) |
+
+Tests added in this pass: electron/local.mjs takes the screens/electron pictures and tray JSON, runs the packaged layout with PACKAGE_DIR (bundled Node and server, stub Claude, a chat that streams, the packaged worker), and its Quit check covers the client's tree as well as the server's; electron/browserstart.mjs opens the drawer first on the run's fresh CEF profile (a cold start) and pictures it loading and loaded.
+
+The PC has no xwd or ImageMagick (the driver's snapshots and lib.mjs `diff` need them): this pass used x11-apps and GraphicsMagick unpacked into /tmp/qa-tools (apt-get download + dpkg-deb -x, nothing installed) and a PIL stand-in for `compare -metric AE`.
+
+---
+
 # Tester findings on 9401e817 (fix round 4)
 
 Each stream fixes its own items, adds or updates the test that shows it, marks it in PLAN-ELECTRON.md, and hands over with its check green. The tester verifies every item afterwards.
