@@ -794,7 +794,17 @@ impl Render for Workbench {
             let id = l.id;
             // The leaf is the pane's panel itself (one element less per pane).
             let leaf = match &l.key {
-                Some(k) => { let f = self.head_state(id, l.pinned, l.w, false); self.frame(k, f, window, cx) }
+                Some(k) => {
+                    let f = self.head_state(id, l.pinned, l.w, false);
+                    // V5, the web's .leaf-ctrls: Split right / Split down,
+                    // centred over the pane's head while the pointer is on the pane.
+                    let group: SharedString = format!("leaf-{id}").into();
+                    let ctrls = div().absolute().top(px(3.)).left(px((l.w / 2.0 - 23.5).max(0.0))).flex().gap(px(3.)).opacity(0.)
+                        .group_hover(group.clone(), |s| s.opacity(1.))
+                        .child(w::leaf_split(("lc-right", id), IconName::Columns2, "Split right").on_click(cx.listener(move |this, _, _, cx| { cx.stop_propagation(); this.split(id, false, cx); })))
+                        .child(w::leaf_split(("lc-down", id), IconName::Rows2, "Split down").on_click(cx.listener(move |this, _, _, cx| { cx.stop_propagation(); this.split(id, true, cx); })));
+                    self.frame(k, f, window, cx).group(group).child(ctrls)
+                }
                 None => self.empty_leaf(id, &open, cx),
             };
             grid = grid.child(leaf.id(("leaf", id)).absolute().left(px(l.x)).top(px(l.y)).w(px(l.w)).h(px(l.h))

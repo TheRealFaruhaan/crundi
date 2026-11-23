@@ -83,7 +83,7 @@ pub mod round_button; pub use round_button::{round_button, round_pill_button, ro
 pub mod pin_pad; pub use pin_pad::{pin_pad, PinLook};
 pub mod liquid_mic; pub use liquid_mic::{liquid_mic, radial_glow, Liquid, MicLook};
 pub mod label_icon_button; pub use label_icon_button::{label_icon_button, Look};
-pub mod leaf_chip; pub use leaf_chip::{leaf_act, leaf_chip};
+pub mod leaf_chip; pub use leaf_chip::{leaf_act, leaf_chip, leaf_split};
 pub mod launch_button; pub use launch_button::{launch_button, LaunchLook};
 pub mod pill_button; pub use pill_button::{pill_button, quiet_pill, scrim_button, tone_outline, tone_pill};
 pub mod status_pill; pub use status_pill::{status_pill, PillTone};
