@@ -621,7 +621,8 @@ pub fn open_path(project: &str, raw: &str, cx: &mut App) {
         let owner = crundi_shell::stores(cx).projects.read(cx).paths().into_iter()
             .filter(|(_, r)| { let r = r.trim_end_matches('/'); !r.is_empty() && (p == r || p.starts_with(&format!("{r}/"))) })
             .max_by_key(|(_, r)| r.len());
-        if let Some((alias, _)) = owner { return wins::open_file(&alias, &p, cx); }
+        // As the web's openPathFromChat: the file by its path in the project.
+        if let Some((alias, r)) = owner { let r = r.trim_end_matches('/'); let rel = p.get(r.len() + 1..).unwrap_or_default().to_string(); return wins::open_file(&alias, &rel, cx); }
     }
     let proj = if project.is_empty() { crundi_shell::project(cx) } else { project.to_string() };
     let path = format!("/api/files/resolve?project={}&path={}", crate::enc(&proj), crate::enc(&p));

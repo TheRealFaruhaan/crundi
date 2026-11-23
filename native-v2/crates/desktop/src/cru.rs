@@ -97,6 +97,8 @@ pub struct Cru {
     pub no_cancel: bool,
     /// What the screen drew last (for the test driver): its place and size, its parts.
     pub ui: Value,
+    /// The chat view's jump to the newest (T17): shown, its dot, how far from the end.
+    pub jump: Value,
 }
 
 thread_local! { static C: RefCell<Cru> = RefCell::new(Cru { chat_view: true, phase: "ended".into(), voice_usable: true, ..Default::default() }); }
