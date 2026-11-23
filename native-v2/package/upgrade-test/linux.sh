@@ -10,6 +10,7 @@
 set -uo pipefail
 OLD=$1 NEW=$2 EDITION=$3 VERSION=$4
 HERE=$(cd "$(dirname "$0")" && pwd)
+DEBVER=${VERSION/-/\~}   # build-deb.sh's Debian version (1.21.8-dev.8 -> 1.21.8~dev.8)
 PORT=4861
 if [ "$EDITION" = client ]; then PKG=crundi-client NAME="Crundi Client" EXE=crundi-client UD="Crundi Client"
 else PKG=crundi NAME=Crundi EXE=crundi UD=crundi-desktop; fi
@@ -22,6 +23,7 @@ as_tester() { runuser -u tester -- env HOME=$H DISPLAY=:99 DBUS_SESSION_BUS_ADDR
 
 echo "== apt"
 apt-get update -qq >/dev/null
+apt-get install -y -qq --no-install-recommends x11-utils xdotool >/dev/null 2>&1
 echo "== Electron: $(basename "$OLD")"
 apt-get install -y -qq --no-install-recommends "$OLD" >/dev/null 2>&1
 check "Electron $PKG installed ($(dpkg-query -W -f='${Version}' $PKG))" "[ -f '/opt/$NAME/resources/app.asar' ]"
@@ -59,13 +61,15 @@ as_tester bash -c "printf 'TELEGRAM_BOT_TOKEN=\nALLOWED_USERNAME=\nPROJECTS_DIR=
   echo '{\"carried\":true}' > '$USERDATA/data/projects/upgrade-marker.json'"
 SUMS=$(cd "$USERDATA" && find . -type f \( -name '.env' -o -name '*.json' \) -not -path './Partitions/*' | sort | xargs -d '\n' sha256sum)
 ASUM=$(sha256sum "$AUTOSTART" 2>/dev/null)
+OLDVER=$(dpkg-query -W -f='${Version}' $PKG)
 echo "user data: $(echo "$SUMS" | wc -l) files"
 
 echo "== Native: $(basename "$NEW")"
 T=$(date +%s)
 check "apt installs the new .deb over Electron's" "apt-get install -y -qq --no-install-recommends '$NEW' >/tmp/apt.log 2>&1 || { tail -20 /tmp/apt.log; false; }"
 echo "  took $(( $(date +%s) - T )) s"
-check "one $PKG package, version $VERSION" "[ \"\$(dpkg-query -W -f='\${Version}' $PKG)\" = '$VERSION' ] && [ \$(dpkg -l | grep -c \"^ii  $PKG \") -eq 1 ]"
+check "one $PKG package, version $DEBVER" "[ \"\$(dpkg-query -W -f='\${Version}' $PKG)\" = '$DEBVER' ] && [ \$(dpkg -l | grep -c \"^ii  $PKG \") -eq 1 ]"
+check "dpkg sorts it above Electron's ($OLDVER) and below its release (${VERSION%%-*})" "dpkg --compare-versions '$DEBVER' gt '$OLDVER' && { [ '$DEBVER' = '$VERSION' ] || dpkg --compare-versions '${VERSION%%-*}' gt '$DEBVER'; }"
 check "Electron's files are gone (app.asar, libffmpeg)" "[ ! -e '/opt/$NAME/resources/app.asar' ] && [ ! -e '/opt/$NAME/libffmpeg.so' ]"
 check "/opt/$NAME/$EXE is the native client" "[ -x '/opt/$NAME/$EXE' ] && ! grep -q 'Electron Framework' '/opt/$NAME/$EXE' && grep -q 'crundi-browser-host' '/opt/$NAME/$EXE'"
 for f in crundi-browser-host crundi-worker libcef.so icudtl.dat; do check "$f installed" "[ -e '/opt/$NAME/$f' ]"; done
@@ -111,6 +115,17 @@ check "the client reports version $VERSION" "grep -q '\[lifecycle\] version=$VER
 UPD=$(grep -oE '\[update\] (Up to date|Available: .*|check failed.*)' "$CLOG" | tail -1); echo "  updater: $UPD"
 OFFER=$(echo "$UPD" | sed -n 's/^\[update\] Available: //p')
 check "it offers no update to its own version or older ($UPD)" "[ \"\$UPD\" = '[update] Up to date' ] || [[ '$OFFER' != *-* && -n '$OFFER' && '$VERSION' == '$OFFER'-* ]] || { [ -n '$OFFER' ] && [ '$OFFER' != '$VERSION' ] && [ \"\$(printf '%s\n%s\n' '$VERSION' '$OFFER' | sort -V | tail -1)\" = '$OFFER' ]; }"
+# T2: the bundled fonts load (gpui's SVG renderer asks the asset source for them).
+check "no asset missing in the client's log" "! grep -h 'could not find asset\|Bundled font not found' '$CLOG' /tmp/client.log"
+# T6: the window's X11 class is the installed desktop entry's StartupWMClass
+# (so the dock groups it under the entry and its icon).
+WMC=$(grep -m1 '^StartupWMClass=' /usr/share/applications/$PKG.desktop | cut -d= -f2-)
+CLS=; for i in $(seq 20); do
+  CLS=$(as_tester xwininfo -root -children 2>/dev/null | grep -o '^ *0x[0-9a-f]*' | while read w; do as_tester xprop -id "$w" WM_CLASS 2>/dev/null; done | grep '^WM_CLASS' | sort -u)
+  [ -n "$CLS" ] && break; sleep 1
+done
+echo "  window classes: ${CLS:-none}"
+check "the window's WM_CLASS is the desktop entry's StartupWMClass ($WMC)" "echo \"\$CLS\" | grep -qF ', \"$WMC\"'"
 if [ "$EDITION" != client ]; then
   # The server the client starts (startBot): its port from the line the client reads, then it answers.
   CPORT=; CUP=

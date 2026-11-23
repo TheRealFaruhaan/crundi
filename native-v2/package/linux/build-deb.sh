@@ -9,6 +9,10 @@
 # Crundi-Client-<v>-linux-x64.deb + client-linux.yml.
 set -euo pipefail
 EDITION=$1 STAGE=$(realpath "$2") OUT=$(realpath -m "$3") VERSION=$4
+# The Debian version, as electron-builder made it: a prerelease's "-" becomes
+# "~" (1.21.8-dev.8 -> 1.21.8~dev.8), so dpkg sorts it below the release 1.21.8
+# and the release upgrades over it. File names and the feed keep the semver.
+DEBVER=${VERSION/-/\~}
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
 if [ "$EDITION" = client ]; then
   PKG=crundi-client NAME="Crundi Client" EXE=crundi-client FILE="Crundi-Client-$VERSION-linux-x64.deb" FEED=client-linux.yml
@@ -34,14 +38,14 @@ StartupWMClass=$NAME
 Comment=$DESC
 Categories=Development;
 DESK
-printf '%s (%s) stable; urgency=low\n\n  * The native client replaces the Electron app.\n\n -- Obitech <TheRealFaruhaan@users.noreply.github.com>\n' "$PKG" "$VERSION" | gzip -9n > "$ROOT/usr/share/doc/$PKG/changelog.gz"
+printf '%s (%s) stable; urgency=low\n\n  * The native client replaces the Electron app.\n\n -- Obitech <TheRealFaruhaan@users.noreply.github.com>\n' "$PKG" "$DEBVER" | gzip -9n > "$ROOT/usr/share/doc/$PKG/changelog.gz"
 
 # The glibc the binaries were built against (a CI build on 24.04 asks 2.39).
 GLIBC=$(find "$STAGE" -maxdepth 1 -type f -perm -u+x -exec objdump -T {} \; 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
 SIZE=$(du -sk --exclude=DEBIAN "$ROOT" | cut -f1)
 cat > "$ROOT/DEBIAN/control" <<CTL
 Package: $PKG
-Version: $VERSION
+Version: $DEBVER
 License: MIT
 Vendor: Obitech <TheRealFaruhaan@users.noreply.github.com>
 Architecture: amd64

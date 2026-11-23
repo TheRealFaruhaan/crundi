@@ -168,6 +168,9 @@ $offer = if ($u -match '^\[update\] Available: (.+)$') { $Matches[1].Trim() } el
 $newer = [bool]($offer -and $offer -notmatch '-' -and $Version.StartsWith("$offer-"))
 if (-not $newer -and $offer -and $offer -ne $Version) { $newer = ((@($Version, $offer) | Sort-Object { [regex]::Replace($_, '\d+', { $args[0].Value.PadLeft(8, '0') }) })[-1] -eq $offer) }
 Check ($u -eq '[update] Up to date' -or $newer) "it offers no update to its own version or older ($u)"
+# T2: the bundled fonts load (gpui's SVG renderer asks the asset source for them).
+$missing = @($nlog, $clog, "$clog.out") | Where-Object { Test-Path $_ } | ForEach-Object { Select-String -Path $_ -Pattern 'could not find asset|Bundled font not found' }
+Check (-not $missing) "no asset missing in the client's log $(@($missing)[0])"
 if ($full) {
   # The server the client starts (startBot): its port from the line the client
   # reads ("HTTP server on <host>:<port>"), then it must answer.
