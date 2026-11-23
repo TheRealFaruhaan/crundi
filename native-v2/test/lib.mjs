@@ -157,6 +157,9 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
   if (process.env.DBUS_SESSION_BUS_ADDRESS === `unix:path=/run/user/${process.getuid?.()}/bus`) delete process.env.DBUS_SESSION_BUS_ADDRESS;
   const env = { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_OPEN_URL_FILE: join(configDir, 'open-url.txt'), ZED_MEASUREMENTS: '1' };
   delete env.WAYLAND_DISPLAY;
+  // A CEF profile of the suite's own (gone with the config folder): never
+  // the person's, nor one another suite's host holds at the same time.
+  if (!env.CRUNDI_CEF_CACHE) env.CRUNDI_CEF_CACHE = join(configDir, 'cef');
   if (!env.DISPLAY || env.DISPLAY === ':0') { console.error('Run under xvfb-run (DISPLAY is not a virtual display).'); process.exit(2); }
   const app = spawn(BIN, [], {
     env,
