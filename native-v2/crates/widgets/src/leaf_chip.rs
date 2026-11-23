@@ -12,7 +12,7 @@ pub fn leaf_chip(id: impl Into<ElementId>, icon: IconName, label: impl Into<Shar
     let tip: SharedString = tip.into();
     div().id(id).flex().flex_none().items_center().gap(T::LEAF_CHIP_GAP).py(T::LEAF_CHIP_PY).px(T::SP_10).rounded(T::R_PILL).cursor_pointer()
         .border_1().border_color(T::border()).bg(T::bg()).text_color(T::text_secondary()).text_size(T::LEAF_CHIP_TEXT)
-        .hover(|s| s.border_color(T::accent()).text_color(T::text()).bg(T::accent_dim()))
+        .hover(|s| s.border_color(T::accent()).text_color(T::text()).bg(T::accent_dim_on_bg()))
         .child(div().flex_none().text_size(T::LEAF_ICON).text_color(T::accent_hover()).child(icon))
         .child(label.into())
         .tooltip(crate::tooltip(tip))

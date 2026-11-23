@@ -742,6 +742,9 @@ impl Render for Sidebar {
                     // The click that trails a drag is not a pick.
                     if this.drag_end.is_some_and(|t| t.elapsed().as_millis() < 300) { return; }
                     projects.update(cx, |p, cx| p.pick(&alias, cx));
+                    // T12: choosing a project (the open one too) leaves the Inbox for its
+                    // workbench, as the web's selectProject leaves the inbox view.
+                    this.stores.nav.update(cx, |n, cx| if n.tab == "inbox" { n.show_tab("workbench", cx); });
                 })));
         }
         if dragging.as_ref().is_some_and(|(_, t)| *t == Some(k)) { list = list.child(w::drop_line()); }

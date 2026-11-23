@@ -45,6 +45,121 @@ pub fn pump(window: &mut Window, cx: &mut App) {
     for p in pages { p.update(cx, |p, cx| p.pump(window, cx)); }
     let live: Vec<_> = FRAMES.with(|f| f.borrow().values().map(|(e, _)| e.clone()).collect());
     for f in live { f.update(cx, |f, cx| f.pump(cx)); }
+    close_left(cx);
+    unload_far();
+}
+
+/// T10: a chat's embed pages go with the chat. Its pane closed, or another
+/// project shown (the workbench's panes are the project's), and the page
+/// drawn nowhere: the page is closed in the host (its sound with it). A
+/// chat still open keeps its pages, drawn or not (scrolled away, its row
+/// dropped by the list): the same page comes back with the row, playing on.
+fn close_left(cx: &mut App) {
+    let chats: Vec<String> = FRAMES.with(|f| f.borrow().keys().filter(|k| k.starts_with("chat:")).cloned().collect());
+    if chats.is_empty() { return; }
+    let Some(wb) = crundi_workbench::workbench(cx) else { return };
+    let panes = wb.update(cx, |w, _| w.keys());
+    for k in chats {
+        let chat = k["chat:".len()..].split('|').next().unwrap_or_default();
+        if panes.iter().any(|p| p.strip_prefix("live:") == Some(chat)) || drawn(&k) { continue; }
+        FRAMES.with(|f| f.borrow_mut().remove(&k));
+        SEEN.with(|s| s.borrow_mut().remove(&k));
+        FAR.with(|f| f.borrow_mut().remove(&k));
+        frames::close(&k);
+    }
+}
+
+thread_local! {
+    /// Whether each live frame was in the window's last frame: the `Seen`
+    /// element's token lives in the frame's element state, dropped with it
+    /// when the frame is no longer drawn (a cached view reused keeps it).
+    static SEEN: RefCell<HashMap<String, (std::rc::Weak<()>, bool)>> = RefCell::new(HashMap::new());
+    /// Since when each loaded chat embed has been far off (T10).
+    static FAR: RefCell<HashMap<String, (Instant, Instant)>> = RefCell::new(HashMap::new());
+}
+
+fn drawn(key: &str) -> bool { SEEN.with(|s| s.borrow().get(key).is_some_and(|w| w.0.strong_count() > 0)) }
+/// Drawn, and within two viewport heights of the view (T10).
+fn near_now(key: &str) -> bool { SEEN.with(|s| s.borrow().get(key).is_some_and(|w| w.0.strong_count() > 0 && w.1)) }
+
+/// How far off an embed may be and stay loaded: this many heights of the
+/// list's visible area above or below it.
+const NEAR_VIEWPORTS: f32 = 2.0;
+/// A far-off embed that is playing keeps running this long (T10, the owner's rule).
+const PLAYING_GRACE: Duration = Duration::from_secs(5 * 60);
+fn playing_grace() -> Duration {
+    // The test driver's override (CRUNDI_TEST_PORT runs only).
+    if std::env::var_os("CRUNDI_TEST_PORT").is_some() { if let Some(s) = std::env::var("CRUNDI_TEST_EMBED_GRACE_SECS").ok().and_then(|v| v.parse::<f64>().ok()) { return Duration::from_secs_f64(s); } }
+    PLAYING_GRACE
+}
+
+/// Within NEAR_VIEWPORTS of the clip it is drawn in.
+fn near(bounds: Bounds<Pixels>, window: &Window) -> bool {
+    let m = window.content_mask().bounds;
+    let reach = m.size.height * NEAR_VIEWPORTS;
+    bounds.bottom() >= m.top() - reach && bounds.top() <= m.bottom() + reach
+}
+
+/// T10: a loaded chat embed far off (out of the near zone, or its row
+/// dropped) is unloaded when it plays nothing, or after PLAYING_GRACE when
+/// it plays; back near before then, it runs on. Unloaded, its box keeps its
+/// size and the page loads again when it comes near.
+fn unload_far() {
+    let keys: Vec<String> = FRAMES.with(|f| f.borrow().keys().filter(|k| k.starts_with("chat:")).cloned().collect());
+    let now = Instant::now();
+    let mut waiting = false;
+    for k in keys {
+        if near_now(&k) || !frames::exists(&k) { FAR.with(|f| f.borrow_mut().remove(&k)); continue; }
+        let (since, asked) = FAR.with(|f| *f.borrow_mut().entry(k.clone()).or_insert((now, now - Duration::from_secs(10))));
+        let playing = frames::playing(&k);
+        let unload = match playing { Some(false) => asked > since, Some(true) => now.duration_since(since) >= playing_grace(), None => false };
+        if unload {
+            FAR.with(|f| f.borrow_mut().remove(&k));
+            frames::close(&k);
+            continue;
+        }
+        if now.duration_since(asked) >= Duration::from_millis(900) {
+            frames::ask_media(&k);
+            FAR.with(|f| if let Some(e) = f.borrow_mut().get_mut(&k) { e.1 = now; });
+        }
+        waiting = true;
+    }
+    if waiting && !CHECK.with(|c| c.replace(true)) {
+        crundi_webview::later(Duration::from_secs(1), || CHECK.with(|c| c.set(false)));
+    }
+}
+
+thread_local! { static CHECK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+/// No space, nothing painted: it keeps the frame's token while drawn.
+struct Seen(String);
+impl IntoElement for Seen { type Element = Self; fn into_element(self) -> Self { self } }
+impl Element for Seen {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+    fn id(&self) -> Option<ElementId> { None }
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> { None }
+    fn request_layout(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, window: &mut Window, cx: &mut App) -> (LayoutId, ()) {
+        let mut st = Style::default();
+        st.position = Position::Absolute;
+        st.inset.top = px(0.).into();
+        st.inset.left = px(0.).into();
+        st.size.width = relative(1.).into();
+        st.size.height = relative(1.).into();
+        (window.request_layout(st, None, cx), ())
+    }
+    fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), window: &mut Window, _: &mut App) {
+        let key = self.0.clone();
+        let nb = near(bounds, window);
+        window.with_global_id(ElementId::Name("frame-seen".into()), |gid, window| {
+            window.with_element_state::<Rc<()>, _>(gid, |st, _| {
+                let t = st.unwrap_or_else(|| Rc::new(()));
+                SEEN.with(|s| s.borrow_mut().insert(key, (Rc::downgrade(&t), nb)));
+                ((), t)
+            })
+        });
+    }
+    fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, _: &mut (), _: &mut (), _: &mut Window, _: &mut App) {}
 }
 
 // ─── Operations: Panels and What's new ───
@@ -112,7 +227,7 @@ fn live_frame(key: String, url: &str, cx: &mut App) -> AnyElement {
                     if f.len() < MAX_LIVE { return None; }
                     f.iter().min_by_key(|(_, (_, at))| *at).map(|(k, _)| k.clone())
                 });
-                if let Some(k) = old { FRAMES.with(|f| f.borrow_mut().remove(&k)); frames::close(&k); }
+                if let Some(k) = old { FRAMES.with(|f| f.borrow_mut().remove(&k)); SEEN.with(|s| s.borrow_mut().remove(&k)); frames::close(&k); }
                 let e = cx.new(|cx| LiveFrame::new(key.clone(), cx));
                 FRAMES.with(|f| f.borrow_mut().insert(key.clone(), (e.clone(), Instant::now())));
                 e
@@ -169,9 +284,12 @@ impl Render for LiveFrame {
             .child(canvas(move |bounds, window, cx| {
                 let scale = window.scale_factor();
                 let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+                let nb = near(bounds, window);
                 me.update(cx, |this, _| {
                     this.origin = bounds.origin;
                     if url.is_empty() || w < 1. || h < 1. { return; }
+                    // A chat embed far off is not loaded (T10): it loads as it comes near.
+                    if this.key.starts_with("chat:") && !frames::exists(&this.key) && !nb { return; }
                     if !frames::exists(&this.key) || (this.size.0 - w).abs() > 0.5 || (this.size.1 - h).abs() > 0.5 {
                         this.size = (w, h);
                         frames::open(&this.key, &url, w, h, scale);
@@ -180,6 +298,7 @@ impl Render for LiveFrame {
                 });
             }, |_, _, _, _| {}).absolute().top_0().left_0().size_full())
             .children(over)
+            .child(Seen(key.clone()))
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, window, cx| { window.focus(&this.focus, cx); let (x, y) = this.at(e.position); frames::pointer(&this.key, 1, x, y, e.button, e.click_count); cx.stop_propagation(); }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, e: &MouseUpEvent, _, _| { let (x, y) = this.at(e.position); frames::pointer(&this.key, 2, x, y, e.button, e.click_count); }))
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, _| { let (x, y) = this.at(e.position); frames::pointer(&this.key, 0, x, y, e.pressed_button.unwrap_or(MouseButton::Left), 1); }))
@@ -195,5 +314,5 @@ impl Render for LiveFrame {
 
 /// The chat frames live now (the driver's).
 pub fn props() -> serde_json::Value {
-    FRAMES.with(|f| serde_json::Value::Array(f.borrow().keys().map(|k| serde_json::json!({ "key": k, "frames": frames::frame_count(k), "hidden": frames::is_hidden(k) })).collect()))
+    FRAMES.with(|f| serde_json::Value::Array(f.borrow().keys().map(|k| serde_json::json!({ "key": k, "frames": frames::frame_count(k), "hidden": frames::is_hidden(k), "page": frames::page_id(k), "drawn": drawn(k), "near": near_now(k), "playing": frames::playing(k) })).collect()))
 }

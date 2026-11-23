@@ -502,6 +502,7 @@ pub fn sidebar_item(name: impl Into<SharedString>, state: &str, on: bool, icon: 
     // highlight stayed on a row the pointer had left (the owner, 19 Nov).
     let d = div().id(SharedString::from(format!("sidebar-item:{name}"))).relative().flex().items_center().gap(T::SP_10).h(T::SP_32).pl(T::SP_10).pr(T::SP_8).rounded(T::R_CONTROL)
         .child(dot)
+        .child(find::mark(name.clone()))
         .children(icon.map(project_icon))
         .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_14).child(name));
     if on {
@@ -544,9 +545,10 @@ pub fn dashed_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -
 
 /// A full-width outlined button with an icon (Inbox).
 pub fn outline_button(id: impl Into<ElementId>, icon: IconName, label: impl Into<SharedString>) -> Stateful<Div> {
+    let label: SharedString = label.into();
     div().id(id).flex().items_center().justify_center().gap(T::SP_8).h(T::CONTROL).rounded(T::R_CONTROL).border_1()
         .border_color(T::border_subtle()).text_color(T::text_muted()).cursor_pointer().hover(|d| d.bg(T::bg_hover()))
-        .child(icon).child(label.into())
+        .child(icon).child(find::mark(label.clone())).child(label)
 }
 
 // ─── States ───

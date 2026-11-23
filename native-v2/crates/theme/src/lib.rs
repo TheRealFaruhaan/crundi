@@ -33,6 +33,10 @@ impl T {
     pub fn accent_hover() -> Hsla { rgb(0x818cf8).into() }
     pub fn accent_deep() -> Hsla { rgb(0x4f46e5).into() }
     pub fn accent_dim() -> Hsla { rgba(0x6366f126).into() }
+    /// accent_dim laid on bg_secondary, opaque: the hover of a control over other content (T4).
+    pub fn accent_dim_on_secondary() -> Hsla { rgb(0x1e1f3a).into() }
+    /// accent_dim laid on bg, opaque.
+    pub fn accent_dim_on_bg() -> Hsla { rgb(0x171831).into() }
     pub fn accent_edge() -> Hsla { rgba(0x6366f159).into() }
     pub fn amber() -> Hsla { rgb(0xfbbf24).into() }
     pub fn green() -> Hsla { rgb(0x10b981).into() }
@@ -206,6 +210,8 @@ impl T {
     pub const TOAST_MAX_W: Pixels = px(420.);
     pub const TOAST_TEXT: Pixels = Self::TEXT_14;
     pub const CONTROL_SM: Pixels = px(28.);
+    /// The kid screen's grown-ups' lock (.cv-lock: 30px).
+    pub const KID_LOCK: Pixels = px(30.);
     pub const CONTROL: Pixels = px(34.);
     pub const CONTROL_LG: Pixels = px(36.);
     /// The Schedule dialog's weekday button (the web's .sm-day, 34x32).

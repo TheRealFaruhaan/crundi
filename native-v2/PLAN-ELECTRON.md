@@ -54,3 +54,8 @@ Rules: `package/CONTRACT.md`. Gap list: `PARITY-ELECTRON.md` (mark each line don
 | Crundi Client .deb | 136 MB (430 MB installed) | 86 MB |
 | Crundi Setup .exe (Windows) | 262.1 MB | 209.4 MB |
 | Crundi Client Setup .exe (Windows) | 150.1 MB | 105.2 MB |
+
+## Owner's trial, added items
+| Item | Stream | Done when |
+|---|---|---|
+| T12 (blocking) | local | With the Inbox open, a click on a project in the sidebar (the open one too) leaves the Inbox for that project's workbench, as the web's selectProject. Tested with real clicks in test/electron/trial.mjs |
