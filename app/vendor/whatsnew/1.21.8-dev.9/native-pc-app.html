@@ -1,0 +1,41 @@
+<div class="wna a-npa">
+  <div class="win">
+    <div class="bar"><span class="logo"><svg viewBox="0 0 16 16" width="14" height="14"><rect x="2" y="2" width="12" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5.5 8h5M8 5.5v5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span><b>Crundi</b><span class="eng e1">Electron</span><span class="eng e2">Native</span><span class="ctl"><i></i><i></i><i></i></span></div>
+    <div class="side"><div class="p p1"></div><div class="p p2"></div><div class="p p3"></div><div class="p p4"></div></div>
+    <div class="pane pa"><div class="ph"></div><div class="l l1"></div><div class="l l2"></div><div class="l l3"></div></div>
+    <div class="pane pb"><div class="ph"></div><div class="l l1"></div><div class="l l2"></div></div>
+  </div>
+  <div class="meter"><div class="mh">Memory</div><div class="track"><div class="fill"></div></div></div>
+  <div class="os"><span><svg viewBox="0 0 16 16" width="12" height="12"><path d="M2 3.5l5-.7v4.7H2zM8 2.7L14 2v5.5H8zM2 8.5h5v4.7l-5-.7zM8 8.5h6V14l-6-.8z" fill="currentColor"/></svg>Windows</span><span><svg viewBox="0 0 16 16" width="12" height="12"><path d="M2 13l4-10 4 10M3.6 9h4.8M11 3v10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Linux</span></div>
+  <style>
+    .a-npa{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:13px}
+    .a-npa .win{position:absolute;left:60px;top:50px;width:380px;height:280px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary);overflow:hidden}
+    .a-npa .bar{height:34px;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--bg-secondary);border-bottom:1px solid var(--border)}
+    .a-npa .logo{color:var(--accent);display:flex}
+    .a-npa .eng{font-size:11px;padding:1px 8px;border-radius:999px}
+    .a-npa .e1{background:var(--bg-card);color:var(--text-muted);animation:anpaE1 10s infinite}
+    .a-npa .e2{background:var(--accent-dim);color:var(--accent);display:none;animation:anpaE2 10s infinite}
+    .a-npa .ctl{margin-left:auto;display:flex;gap:6px}
+    .a-npa .ctl i{width:10px;height:10px;border-radius:50%;background:var(--border)}
+    .a-npa .side{position:absolute;left:0;top:35px;bottom:0;width:70px;background:var(--bg-secondary);border-right:1px solid var(--border);padding:10px 8px}
+    .a-npa .p{height:10px;border-radius:4px;background:var(--bg-card);margin-bottom:10px}
+    .a-npa .p1{background:var(--accent-dim)}
+    .a-npa .pane{position:absolute;top:47px;bottom:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card);padding:8px;opacity:0}
+    .a-npa .pa{left:82px;width:160px;animation:anpaP 10s infinite}
+    .a-npa .pb{left:254px;right:12px;animation:anpaQ 10s infinite}
+    .a-npa .ph{height:10px;width:60%;border-radius:4px;background:var(--bg-secondary);margin-bottom:12px}
+    .a-npa .l{height:8px;border-radius:4px;background:var(--border);margin-bottom:9px}
+    .a-npa .l2{width:80%}.a-npa .l3{width:55%}
+    .a-npa .meter{position:absolute;left:470px;top:110px;width:130px}
+    .a-npa .mh{font-size:11px;color:var(--text-muted);margin-bottom:6px}
+    .a-npa .track{height:10px;border-radius:5px;background:var(--bg-secondary);border:1px solid var(--border);overflow:hidden}
+    .a-npa .fill{height:100%;width:90%;background:var(--yellow);animation:anpaM 10s infinite}
+    .a-npa .os{position:absolute;left:470px;top:170px;display:flex;flex-direction:column;gap:8px}
+    .a-npa .os span{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);border:1px solid var(--border);background:var(--bg-card);border-radius:999px;padding:4px 10px;width:max-content}
+    @keyframes anpaE1{0%,40%{display:inline}44%,100%{display:none}}
+    @keyframes anpaE2{0%,40%{display:none}44%,100%{display:inline}}
+    @keyframes anpaP{0%,8%{opacity:0}20%,40%{opacity:1}43%,47%{opacity:0}49%,96%{opacity:1}100%{opacity:0}}
+    @keyframes anpaQ{0%,14%{opacity:0}28%,40%{opacity:1}43%,48%{opacity:0}51%,96%{opacity:1}100%{opacity:0}}
+    @keyframes anpaM{0%,42%{width:90%;background:var(--yellow)}54%,96%{width:38%;background:var(--green)}100%{width:90%;background:var(--yellow)}}
+  </style>
+</div>

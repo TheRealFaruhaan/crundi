@@ -1,0 +1,68 @@
+{
+  "steps": [
+    {
+      "id": "native-pc-app",
+      "tag": "PC app",
+      "title": "A native PC app",
+      "body": "The PC app on Windows and Linux is now a native app instead of Electron, in both editions (Crundi and Crundi Client). Same layout and controls as before, much faster and lighter. It still runs the local server, the setup wizard, the tray, the PC worker, kid lock, Hey Cru, homepool and the browser drawer.",
+      "art": "native-pc-app.html",
+      "artTitle": "Crundi"
+    },
+    {
+      "id": "native-pc-app-carry-over",
+      "tag": "PC app",
+      "title": "Your install moves over by itself",
+      "body": "An installed Electron app updates itself into the native one. Your settings, sign-in, start at login and shortcuts come with it, so there is nothing to set up again.",
+      "art": "native-carry-over.html",
+      "artTitle": "Update"
+    },
+    {
+      "id": "files-new-file",
+      "tag": "Files",
+      "title": "New files from the Files bar",
+      "body": "A + in the Files bar makes a new, empty file in the folder you are looking at: give it a name and it opens in the editor. A name that is already taken is refused, so nothing is overwritten.",
+      "keys": [
+        {
+          "keys": [
+            "Files",
+            "+"
+          ],
+          "text": "a new file here"
+        },
+        {
+          "keys": [
+            "Right-click",
+            "a folder"
+          ],
+          "text": "a new file inside it"
+        }
+      ],
+      "art": "new-file.html",
+      "artTitle": "Files"
+    },
+    {
+      "id": "factory-run-limits",
+      "tag": "Factories",
+      "title": "Raise a running run's limits",
+      "body": "A running run's Details have a Run limits section: each loop with the rounds it has used and its limit, and the run's time and handoff limits. Raising one applies to that run only, at once, with no restart, and a run stopped at a limit carries on; the factory keeps its own. You can also ask the Manager to do it. On Android too.",
+      "keys": [
+        {
+          "keys": [
+            "Run",
+            "Details",
+            "Run limits"
+          ],
+          "text": "raise a loop, the time or handoffs"
+        },
+        {
+          "keys": [
+            "Apply to this run"
+          ],
+          "text": "this run only; the Manager is told"
+        }
+      ],
+      "art": "run-limits.html",
+      "artTitle": "Factory"
+    }
+  ]
+}

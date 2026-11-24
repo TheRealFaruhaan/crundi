@@ -1,0 +1,33 @@
+<div class="wna a-nco">
+  <div class="card">
+    <div class="hd"><svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 2v8M4.5 6.5L8 10l3.5-3.5M3 13h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><b>Updating Crundi</b></div>
+    <div class="track"><div class="fill"></div></div>
+    <div class="it i1"><span class="ck"><svg viewBox="0 0 12 12" width="10" height="10"><path d="M2.5 6.2l2.3 2.3 4.7-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Settings</div>
+    <div class="it i2"><span class="ck"><svg viewBox="0 0 12 12" width="10" height="10"><path d="M2.5 6.2l2.3 2.3 4.7-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Sign-in</div>
+    <div class="it i3"><span class="ck"><svg viewBox="0 0 12 12" width="10" height="10"><path d="M2.5 6.2l2.3 2.3 4.7-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Start at login</div>
+    <div class="it i4"><span class="ck"><svg viewBox="0 0 12 12" width="10" height="10"><path d="M2.5 6.2l2.3 2.3 4.7-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Shortcuts</div>
+  </div>
+  <style>
+    .a-nco{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:13px}
+    .a-nco .card{position:absolute;left:170px;top:70px;width:300px;border:1px solid var(--border);border-radius:12px;background:var(--bg-card);padding:16px 18px}
+    .a-nco .hd{display:flex;align-items:center;gap:8px;color:var(--text-primary);margin-bottom:12px}
+    .a-nco .hd svg{color:var(--accent)}
+    .a-nco .track{height:6px;border-radius:3px;background:var(--bg-secondary);overflow:hidden;margin-bottom:16px}
+    .a-nco .fill{height:100%;width:0;background:var(--accent);animation:ancoF 10s infinite}
+    .a-nco .it{display:flex;align-items:center;gap:10px;padding:7px 0;color:var(--text-secondary);opacity:.35}
+    .a-nco .ck{width:18px;height:18px;border-radius:50%;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:transparent}
+    .a-nco .i1{animation:ancoI1 10s infinite}.a-nco .i1 .ck{animation:ancoC1 10s infinite}
+    .a-nco .i2{animation:ancoI2 10s infinite}.a-nco .i2 .ck{animation:ancoC2 10s infinite}
+    .a-nco .i3{animation:ancoI3 10s infinite}.a-nco .i3 .ck{animation:ancoC3 10s infinite}
+    .a-nco .i4{animation:ancoI4 10s infinite}.a-nco .i4 .ck{animation:ancoC4 10s infinite}
+    @keyframes ancoF{0%,5%{width:0}40%,94%{width:100%}100%{width:0}}
+    @keyframes ancoI1{0%,44%{opacity:.35}48%,94%{opacity:1}100%{opacity:.35}}
+    @keyframes ancoI2{0%,54%{opacity:.35}58%,94%{opacity:1}100%{opacity:.35}}
+    @keyframes ancoI3{0%,64%{opacity:.35}68%,94%{opacity:1}100%{opacity:.35}}
+    @keyframes ancoI4{0%,74%{opacity:.35}78%,94%{opacity:1}100%{opacity:.35}}
+    @keyframes ancoC1{0%,44%{background:transparent;color:transparent;border-color:var(--border)}48%,94%{background:var(--green);color:#fff;border-color:var(--green)}100%{background:transparent;color:transparent}}
+    @keyframes ancoC2{0%,54%{background:transparent;color:transparent;border-color:var(--border)}58%,94%{background:var(--green);color:#fff;border-color:var(--green)}100%{background:transparent;color:transparent}}
+    @keyframes ancoC3{0%,64%{background:transparent;color:transparent;border-color:var(--border)}68%,94%{background:var(--green);color:#fff;border-color:var(--green)}100%{background:transparent;color:transparent}}
+    @keyframes ancoC4{0%,74%{background:transparent;color:transparent;border-color:var(--border)}78%,94%{background:var(--green);color:#fff;border-color:var(--green)}100%{background:transparent;color:transparent}}
+  </style>
+</div>
