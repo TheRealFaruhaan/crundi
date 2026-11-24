@@ -304,9 +304,10 @@ pub fn consonance(clip: &[f32]) -> f64 {
     frames.windows(2).filter(|w| w[0].0 >= peak * 0.01 && w[1].0 >= peak * 0.01).map(|w| w[0].1.min(w[1].1)).fold(0.0, f64::max)
 }
 
-/// The least consonant a wake may be: its takes' least, with room, never
-/// under the hum floor.
-const HUM_FLOOR: f64 = 0.12;
+/// The least consonant a wake may be: its takes' least (measured, like the
+/// wake, on the audio not denoised: RNNoise takes the h's breath and the k's
+/// burst for noise), with room, never under the hum floor (a hum: 0.03-0.05).
+const HUM_FLOOR: f64 = 0.08;
 pub fn consonance_needed(p: &Value) -> f64 { (pf(p, "consonance") * 0.6).max(HUM_FLOOR) }
 
 pub fn voiced_share(clip: &[f32]) -> f64 {
@@ -453,7 +454,7 @@ pub fn train_raw(recordings: &[Vec<f32>], raw: Option<&[Vec<f32>]>, make: &mut d
         "modelHeard": most,
         "decoys": decoys.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
         "windowLimit": window_limit_of(&templates),
-        "consonance": r3(clips.iter().map(|c| consonance(c)).fold(f64::INFINITY, f64::min)),
+        "consonance": r3(heard.iter().map(|c| consonance(c)).fold(f64::INFINITY, f64::min)),
         "templates": tpl,
         "trainedAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
     }))
@@ -523,7 +524,7 @@ pub fn match_phrase_raw(p: &Value, tpl: &[Feats], segment: &[f32], raw: Option<&
             let names = c(&levelled(heard));
             if !names.iter().any(|k| k == WAKE) { return (false, score, if names.is_empty() { "no word" } else { "decoy" }); }
         }
-    } else if consonance(clip) < consonance_needed(p) {
+    } else if consonance(heard) < consonance_needed(p) {
         return (false, score, "hum");
     }
     (true, score, "")

@@ -252,6 +252,8 @@ fn start_worker() {
                 // (its gate, and the burst kept in voice-wake/misses/ to replay a miss.)
                 if let Some((score, limit, why, clip)) = wake.near_miss.take() {
                     let file = keep_miss(&format!("phrase-{why}-{score:.3}"), &clip);
+                    // (and its undenoised twin, what the model and the hum guard heard)
+                    if let Some(r) = wake.last_raw.take() { let _ = keep_miss(&format!("phrase-{why}-{score:.3}-raw"), &r); }
                     kit::main_thread(move || log(format!("near miss: a phrase matched {score:.3} (strict limit {:.3} of {limit:.3}), refused by the {why} check{file}", enroll::strict_limit_of(limit))));
                 }
                 let Some(h) = h else { continue };
