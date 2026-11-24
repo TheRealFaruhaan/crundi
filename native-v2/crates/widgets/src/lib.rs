@@ -52,7 +52,7 @@ pub mod choice; pub use choice::{choice_card, choice_mark};
 pub mod choice_row; pub use choice_row::choice_row;
 pub mod suggest_row; pub use suggest_row::suggest_row;
 pub mod overlay; pub use overlay::{dialog, hold_keys, keys_held, modal_foot, modal_head, overlay_dialog, overlay_modal, Modal};
-mod ask; pub use ask::{ask, ask_confirm, ask_answer, ask_refocus, ask_release_focus, ask_props, ask_layer, menu_at, menu_pick, menu_props, Ask, MenuEntry};
+mod ask; pub use ask::{ask, ask_buttons, ask_pick, ask_confirm, ask_answer, ask_refocus, ask_release_focus, ask_props, ask_layer, menu_at, menu_pick, menu_props, Ask, MenuEntry};
 pub mod queue_drawer; pub use queue_drawer::{queue_drawer, Drawer};
 pub mod send_button; pub use send_button::send_button;
 pub mod disclosure; pub use disclosure::disclosure;
@@ -83,7 +83,7 @@ pub mod round_button; pub use round_button::{round_button, round_pill_button, ro
 pub mod pin_pad; pub use pin_pad::{pin_pad, PinLook};
 pub mod liquid_mic; pub use liquid_mic::{liquid_mic, radial_glow, Liquid, MicLook};
 pub mod label_icon_button; pub use label_icon_button::{label_icon_button, Look};
-pub mod leaf_chip; pub use leaf_chip::{leaf_act, leaf_chip};
+pub mod leaf_chip; pub use leaf_chip::{leaf_act, leaf_chip, leaf_split};
 pub mod launch_button; pub use launch_button::{launch_button, LaunchLook};
 pub mod pill_button; pub use pill_button::{pill_button, quiet_pill, scrim_button, tone_outline, tone_pill};
 pub mod status_pill; pub use status_pill::{status_pill, PillTone};
@@ -502,6 +502,7 @@ pub fn sidebar_item(name: impl Into<SharedString>, state: &str, on: bool, icon: 
     // highlight stayed on a row the pointer had left (the owner, 19 Nov).
     let d = div().id(SharedString::from(format!("sidebar-item:{name}"))).relative().flex().items_center().gap(T::SP_10).h(T::SP_32).pl(T::SP_10).pr(T::SP_8).rounded(T::R_CONTROL)
         .child(dot)
+        .child(find::mark(name.clone()))
         .children(icon.map(project_icon))
         .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_14).child(name));
     if on {
@@ -544,9 +545,10 @@ pub fn dashed_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -
 
 /// A full-width outlined button with an icon (Inbox).
 pub fn outline_button(id: impl Into<ElementId>, icon: IconName, label: impl Into<SharedString>) -> Stateful<Div> {
+    let label: SharedString = label.into();
     div().id(id).flex().items_center().justify_center().gap(T::SP_8).h(T::CONTROL).rounded(T::R_CONTROL).border_1()
         .border_color(T::border_subtle()).text_color(T::text_muted()).cursor_pointer().hover(|d| d.bg(T::bg_hover()))
-        .child(icon).child(label.into())
+        .child(icon).child(find::mark(label.clone())).child(label)
 }
 
 // ─── States ───
@@ -585,6 +587,23 @@ pub fn loading(text: impl Into<SharedString>) -> Div {
     div().flex().items_center().justify_center().gap(T::SP_8).p(T::SP_24)
         .child(spinner::spinner(T::SPINNER))
         .child(div().text_size(T::TEXT_13).text_color(T::text_muted()).child(text.into()))
+}
+
+/// The browser itself starting (the browser host, before any page can
+/// load), over every surface that waits for it: opaque on the surface's own
+/// ground, a centred spinner and "Starting the browser…"; after about 10 s
+/// (`slow`) a second line. Its start failed (`error`): the error state, with
+/// Retry.
+pub fn browser_booting(ground: Hsla, slow: bool, error: Option<SharedString>, retry: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Stateful<Div> {
+    // Opaque, and taking the pointer: nothing under it is pressed while it shows.
+    let d = div().id("browser-booting").absolute().inset_0().flex().flex_col().bg(ground).occlude();
+    match error {
+        Some(e) => d.child(error_state("browser-boot-retry", e, retry)),
+        None => d.items_center().justify_center().gap(T::SP_12).p(T::SP_24)
+            .child(spinner::spinner(T::SPINNER))
+            .child(div().text_size(T::TEXT_13).text_color(T::text_muted()).child("Starting the browser\u{2026}"))
+            .when(slow, |d| d.child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child("This can take a moment the first time."))),
+    }
 }
 
 /// A web page whose browser stopped (its page process, or the whole

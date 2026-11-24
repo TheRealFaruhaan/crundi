@@ -12174,6 +12174,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         actions += '<button class="files-act files-paste" data-action="files-paste" title="Paste ' + (n === 1 ? escHtml(filesBaseName(filesClip.paths[0])) : n + ' items') + ' into this folder (' + (filesClip.op === 'cut' ? 'move' : 'copy') + ')">' + ic('clipboard') + '</button>';
       }
       if (filesState.parent) actions += '<button class="files-act" data-action="files-nav" data-dir="' + escHtml(filesState.parent) + '" title="Up to parent folder">' + ic('arrow-up') + '</button>';
+      if (filesState.inside) actions += '<button class="files-act" data-action="files-new" title="New file" aria-label="New file">' + ic('plus') + '</button>';
       if (filesState.inside) actions += '<button class="files-act" data-action="files-upload" title="Upload to this folder">' + ic('upload') + '</button>';
       return '<div class="files-bc"><div class="files-crumbs">' + (crumbs || '<span>—</span>') + '</div><div class="files-bc-actions">' + actions + '</div></div>';
     }
@@ -12506,6 +12507,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
       row.classList.add('sel');
       const items = [{ label: 'Open', icon: isDir ? 'folder' : 'file', run: () => fileRowOpen(row) }];
       if (!isDir && feIsSourcePreview(name)) items.push({ label: 'Edit the source', icon: 'pencil', run: () => feOpen(currentProject, p, { asSource: true }) });
+      // On a folder: inside it. On a file: beside it (a search lists files
+      // from other folders, so its own folder is taken from its path).
+      items.push('-');
+      items.push({ label: 'New file', icon: 'plus', run: () => filesNewFile(isDir ? p : (filesSearchResults ? filesParentOf(p) : filesState.path)) });
       // Only where this page is on the machine Crundi runs on (server decides).
       const sh = filesState.localShell;
       if (sh) {
@@ -12556,11 +12561,21 @@ export function getWebappHtml(botUsername, appVersion = '') {
     });
     document.addEventListener('contextmenu', (e) => {
       const row = e.target.closest && e.target.closest('.file-item[data-fpath]');
-      if (!row || row.dataset.fup) return;
+      if (!row) { if (e.target.closest && e.target.closest('#files-results')) openFilesSpaceMenu(e); return; }
+      if (row.dataset.fup) return;
       e.preventDefault();
       if (ctxMenuEl) return;   // a press-and-hold already opened it
       openFileMenu(row, e.clientX, e.clientY);
     });
+    /** Right-click on the list but not on a row: the folder being looked at. */
+    function openFilesSpaceMenu(e) {
+      if (!filesState.inside) return;
+      e.preventDefault();
+      if (ctxMenuEl) return;
+      const items = [{ label: 'New file', icon: 'plus', run: () => filesNewFile(filesState.path) }];
+      if (filesClipHere()) items.push('-', { label: 'Paste' + (filesClip.paths.length === 1 ? '' : ' ' + filesClip.paths.length + ' items') + ' here', icon: 'clipboard', run: () => filesPaste(filesState.path) });
+      openCtxMenu(e.clientX, e.clientY, items);
+    }
 
     // Links anywhere in the app: a chat reply, a note, a kanban card.
     //   Mouse: right-click gives Open / Copy link (the desktop app had no menu
@@ -12677,6 +12692,43 @@ export function getWebappHtml(botUsername, appVersion = '') {
         toast('Deleted ' + name, 'success');
         loadFiles();
       } catch (err) { toast('Delete failed: ' + err.message, 'error'); }
+    }
+
+    // ─── New file ───
+    // One name in a folder, not a path. Mirrored on the server, which also
+    // refuses a name that is already taken (it never overwrites).
+    function filesNewFileNameError(name) {
+      const bs = String.fromCharCode(92);
+      if (!name) return 'Enter a name';
+      if (name.indexOf('/') >= 0 || name.indexOf(bs) >= 0) return 'A name cannot contain / or ' + bs;
+      if (name === '.' || name === '..') return 'That name is not allowed';
+      return '';
+    }
+    function filesParentOf(p) {
+      const s = String(p || ''), i = Math.max(s.lastIndexOf('/'), s.lastIndexOf(String.fromCharCode(92)));
+      return i > 0 ? s.slice(0, i) : (i === 0 ? s.slice(0, 1) : filesState.path);
+    }
+    async function filesNewFile(dir) {
+      const raw = await askText({ title: 'New file', label: 'File name', okLabel: 'Create' });
+      if (raw === null || raw === undefined) return;
+      const name = String(raw).trim();
+      const bad = filesNewFileNameError(name);
+      if (bad) { toast('New file failed: ' + bad, 'error'); return; }
+      if (dir === filesState.path && (filesState.entries || []).some(en => en.name === name)) { toast('New file failed: \u201c' + name + '\u201d already exists', 'error'); return; }
+      try {
+        const res = await apiFetch('/api/files/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: currentProject, dir, name }),
+        });
+        let d = {};
+        try { d = await res.json(); } catch { /* not JSON */ }
+        if (res.status === 404 && d.error === 'Not found') { toast('New file is not supported by this server', 'error'); return; }
+        if (!d.ok) { toast('New file failed: ' + (d.error || 'unknown'), 'error'); return; }
+        toast('Created ' + name, 'success');
+        loadFiles();
+        feOpen(currentProject, d.path);
+      } catch (err) { toast('New file failed: ' + err.message, 'error'); }
     }
 
     function formatFileSize(bytes) {
@@ -15925,6 +15977,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '<button data-action="voice-ptt-reset" style="' + btnStyle + '">Reset</button>'
           + '<span id="voice-ptt-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
           + '</div>'
+          // Mini, the chat mascot, on or off on this device (crundi-mini.js reads it).
+          + '<div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">'
+          + '<label style="' + labelStyle + ';margin:0;display:flex;gap:8px;align-items:center;cursor:pointer;"><input type="checkbox" id="mini-on" data-action="mini-toggle"' + ((() => { try { return localStorage.getItem('crundi_mini_off') === '1'; } catch (e) { return false; } })() ? '' : ' checked') + '> Show Mini</label>'
+          + '<span style="font-size:0.78rem;color:var(--text-muted);">The little robot that keeps you company while you wait.</span></div>'
           // The PC client only (D40): its wake word, while the PC is on charge.
           // A client that can train it (vwCan) listens for "Hey Cru" only once
           // trained from the owner's voice; an older one still listens for
@@ -16563,6 +16619,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         case 'files-open': feOpen(currentProject, d.file); break;
         case 'files-edit': feOpen(currentProject, d.file, { asSource: true }); break;
         case 'files-upload': filesUpload(); break;
+        case 'files-new': filesNewFile(filesState.path); break;
         case 'files-paste': filesPaste(filesState.path); break;
         case 'files-download': filesDownload(d.file); break;
         case 'files-copy-path': filesCopyPath(d.file); break;
@@ -16648,6 +16705,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
         case 'voice-wake-rec': if (vwt.rec) vwFinish(); else vwRecord(); break;
         case 'voice-wake-cancel': vwt.msg = ''; vwStop(); break;
         case 'voice-wake-forget': vwForget(); break;
+        case 'mini-toggle': {
+          const on = !!(document.getElementById('mini-on') || {}).checked;
+          try { if (on) localStorage.removeItem('crundi_mini_off'); else localStorage.setItem('crundi_mini_off', '1'); } catch (err) { /* private mode */ }
+          break;
+        }
         case 'voice-ptt-reset': {
           const lbl = window.CrundiVoice && window.CrundiVoice.resetShortcut();
           const k = document.getElementById('voice-ptt-key'); if (k && lbl) k.textContent = lbl;

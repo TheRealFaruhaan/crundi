@@ -54,6 +54,12 @@ class FilesApi internal constructor(private val rpc: Rpc) {
     /** Move or copy [items] into [to]. Never overwrites: a clash is renamed. */
     suspend fun transfer(project: String, items: List<String>, to: String, copy: Boolean = false): TransferResult =
         rpc.read(rpc.post("/api/files/transfer", mapOf("project" to project, "op" to if (copy) "copy" else "move", "items" to items, "to" to to)), null)
+    /**
+     * An empty file [name] in [dir], never over one that is there (409, "... already exists").
+     * Its absolute path. An older server has no such route (404 "Not found": routeMissing).
+     */
+    suspend fun create(project: String, dir: String, name: String): String =
+        rpc.post("/api/files/create", mapOf("project" to project, "dir" to dir, "name" to name)).str("path") ?: ""
     /** Delete a file or a whole folder. */
     suspend fun delete(project: String, file: String) { rpc.post("/api/files/delete", mapOf("project" to project, "file" to file)) }
 }

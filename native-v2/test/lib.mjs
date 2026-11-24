@@ -35,13 +35,42 @@ const SCREENS = process.env.SCREENS_DIR || fileURLToPath(new URL('../screens/', 
 // This worktree's own client (tools/build.sh links it into .bin/debug),
 // unless NATIVE_BIN says otherwise: never another worktree's build left in
 // the shared target folder (F118). Set on import, for every suite.
+// FINDINGS T19: never the desktop's own session bus. A client on it puts a
+// tray icon in the person's top bar, can take their global shortcuts and post
+// real notifications. Unset is no better: D-Bus then falls back to
+// $XDG_RUNTIME_DIR/bus, the same bus. Every suite runs under dbus-run-session.
+{
+  const bus = process.env.DBUS_SESSION_BUS_ADDRESS || '';
+  if (process.platform === 'linux' && (!bus || /^unix:path=\/run\/user\/\d+\/bus$/.test(bus))) {
+    console.error('Run under dbus-run-session: this is the desktop\'s own session bus (the tray and notifications would reach it).');
+    process.exit(2);
+  }
+}
+
 const OWN_BIN = fileURLToPath(new URL('../.bin/debug/crundi-v2', import.meta.url));
 if (!process.env.NATIVE_BIN && existsSync(OWN_BIN)) process.env.NATIVE_BIN = OWN_BIN;
+
+// A config home of the run's own for every suite (FINDINGS-ELECTRON 5):
+// XDG_CONFIG_HOME (Linux) and APPDATA (Windows), so the client's one-time
+// Electron import, the autostart entry and every other per-user file never
+// reach the person's real profile. A run started by another suite keeps the
+// one it was given (CRUNDI_TEST_XDG); it goes when the run ends.
+if (!process.env.CRUNDI_TEST_XDG) {
+  const xdg = mkdtempSync(join(tmpdir(), 'crundi-v2-xdg-'));
+  process.env.CRUNDI_TEST_XDG = xdg;
+  process.env.XDG_CONFIG_HOME = xdg;
+  if (process.platform === 'win32') process.env.APPDATA = xdg;
+  process.on('exit', () => { try { rmSync(xdg, { recursive: true, force: true }); } catch { /* gone */ } });
+}
+/** The run's own config home (XDG_CONFIG_HOME / APPDATA). */
+export const configHome = process.env.CRUNDI_TEST_XDG;
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
 let passed = 0;
+/** The counts so far (for a suite that runs without begin()). */
+export const counts = () => ({ passed, failed });
 /** One check: prints ok / FAIL and counts. Returns ok. */
 export function check(name, ok, extra = '') {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : '  ' + JSON.stringify(extra).slice(0, 600)}`);
@@ -152,9 +181,11 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
   // behind it (the window is on Xvfb). Without it, as on the Crundi server
   // (test/desktop/tray.mjs then skips its bus check); under
   // dbus-run-session the private bus stays.
-  if (process.env.DBUS_SESSION_BUS_ADDRESS === `unix:path=/run/user/${process.getuid?.()}/bus`) delete process.env.DBUS_SESSION_BUS_ADDRESS;
   const env = { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_OPEN_URL_FILE: join(configDir, 'open-url.txt'), ZED_MEASUREMENTS: '1' };
   delete env.WAYLAND_DISPLAY;
+  // A CEF profile of the suite's own (gone with the config folder): never
+  // the person's, nor one another suite's host holds at the same time.
+  if (!env.CRUNDI_CEF_CACHE) env.CRUNDI_CEF_CACHE = join(configDir, 'cef');
   if (!env.DISPLAY || env.DISPLAY === ':0') { console.error('Run under xvfb-run (DISPLAY is not a virtual display).'); process.exit(2); }
   const app = spawn(BIN, [], {
     env,

@@ -161,7 +161,11 @@ pub struct CruScreen {
     focus: FocusHandle,
     shown: bool,
     scroll: ScrollHandle,
+    /// What the chat view last drew (its turns, the last one's length, what is live): a change scrolls to the end while following.
     turns: usize,
+    /// How many turns it last drew, and the jump button's dot (a new one came while up the list).
+    count: usize,
+    jump_new: bool,
     field: cru_field::FieldState,
     liquid: w::Liquid,
     start: Instant,
@@ -194,7 +198,7 @@ impl CruScreen {
             this.usage = share;
             if this.copy.open { this.retake(cx); }
         });
-        CruScreen { input: None, pin_in: None, frame, focus: cx.focus_handle(), shown: false, scroll: ScrollHandle::new(), turns: 0, field: Default::default(), liquid: Default::default(), start: Instant::now(), prev: None,
+        CruScreen { input: None, pin_in: None, frame, focus: cx.focus_handle(), shown: false, scroll: ScrollHandle::new(), turns: 0, count: 0, jump_new: false, field: Default::default(), liquid: Default::default(), start: Instant::now(), prev: None,
             copy: Copy::default(), usage, level: 0., anchor: None, frame_due: false, win: None, _subs: vec![sub] }
     }
 
@@ -315,7 +319,11 @@ impl CruScreen {
         let top = div().flex().items_center().px(T::SP_24).pt(T::SP_16)
             .child(div().id("kid-wordmark").child(w::cru_mark_kid()))
             .child(div().flex_1())
-            .child(w::icon_button("kid-lock", IconName::Lock, "Grown-ups").on_click(|_, _, _| cru_kid::pin_open()));
+            // The grown-ups' lock (.cv-ov.kid .cv-lock): 30px round, indigo, calm (.45) until hovered (.9).
+            .child(div().id("kid-lock").flex().flex_none().items_center().justify_center().size(T::KID_LOCK).rounded_full().cursor_pointer()
+                .text_color(T::accent()).text_size(T::ICON_LG).opacity(0.45).hover(|s| s.opacity(0.9))
+                .child(IconName::Lock).child(w::find::label_mark("Grown-ups")).tooltip(w::tooltip("Grown-ups"))
+                .on_click(|_, _, cx| { cx.stop_propagation(); cru_kid::pin_open() }));
         let mut words = div().flex().flex_col().items_center().gap(T::SP_8).px(T::SP_24).w_full();
         if !heard.is_empty() {
             words = words.child(div().flex().w_full().max_w(T::KID_BUBBLE_W).justify_end()
@@ -462,8 +470,27 @@ impl CruScreen {
     fn chat(&mut self, phase: &str, interim: &str, more: bool, saying: &str, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let host = cx.entity().entity_id();
         let turns = self.copy.turns.clone();
-        let count = turns.len() + usize::from(phase == "think") + usize::from(!interim.is_empty()) + self.copy.pending_len;
-        if count != self.turns { self.turns = count; self.scroll.scroll_to_bottom(); }
+        // T17: the chat log's tail rule (crates/chat log/prose.rs): following the
+        // end (within 60 px of it), what comes (a turn, a reply's streamed words)
+        // keeps it in view; up the list, a new turn lights the jump's dot.
+        let sig = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            turns.len().hash(&mut h);
+            if let Some(t) = turns.last() { t.text.len().hash(&mut h); t.show.len().hash(&mut h); t.media.len().hash(&mut h); }
+            (phase == "think", interim.len(), self.copy.pending_len, self.copy.queued.len(), self.copy.hearing.len()).hash(&mut h);
+            (h.finish() as usize).max(1).min(usize::MAX - 1)
+        };
+        let dist = (f32::from(self.scroll.max_offset().y) + f32::from(self.scroll.offset().y)).max(0.);
+        if sig != self.turns {
+            let first = self.turns == usize::MAX;
+            let more = turns.len() > self.count;
+            let mine = more && turns.last().is_some_and(|t| t.mine);
+            self.turns = sig;
+            self.count = turns.len();
+            if first || mine || dist <= 60. { self.scroll.scroll_to_bottom(); self.jump_new = false; } else if more { self.jump_new = true; }
+        }
+        if dist < 60. { self.jump_new = false; }
         let mut list = div().flex().flex_col().justify_end().gap(T::SP_8).min_h_full().w_full();
         if more {
             list = list.child(div().flex().justify_center().mb(T::SP_6).child(w::quiet_pill("cru-older", "Earlier messages").on_click(|_, _, _| cru::older())));
@@ -519,7 +546,19 @@ impl CruScreen {
                 .child(me(("cru-hearing-m", 0), hearing, None, true).flex_1().min_w_0()));
         }
         if !any { list = list.child(div().id("cru-empty").w_full().text_center().text_size(T::TEXT_13).text_color(T::text_muted()).child("No messages yet.")); }
-        div().id("cru-chat").flex_1().min_h_0().w_full().overflow_y_scroll().track_scroll(&self.scroll).px(T::SP_12).py(T::SP_10).child(list)
+        // "Go to the newest message" (the chat log's own button and rule: beyond max(240, a third of the height)).
+        let view_h = f32::from(self.scroll.bounds().size.height);
+        let jump = crundi_chat::log::prose::shown(dist, view_h).then(|| div().absolute().bottom(T::SP_10).left_0().right_0().flex().justify_center()
+            .child(w::log_jump("cru-jump", self.jump_new).child(w::find::label_mark("Go to the newest message")).tooltip(w::tooltip("Go to the newest message"))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(|this, _, _, cx| { this.jump_new = false; this.scroll.scroll_to_bottom(); cx.notify(); }))));
+        cru::with(|c| c.jump = serde_json::json!({ "shown": jump.is_some(), "new": self.jump_new, "dist": dist }));
+        div().id("cru-chat-box").relative().flex().flex_col().flex_1().min_h_0().w_full()
+            .child(div().id("cru-chat").flex_1().min_h_0().w_full().overflow_y_scroll().track_scroll(&self.scroll).px(T::SP_12).py(T::SP_10)
+                // The jump comes and goes with the scroll.
+                .on_scroll(cx.listener(|_, _, _, cx| cx.notify()))
+                .child(list))
+            .children(jump)
     }
 
     /// The voice view's words (.cv-words): heard, the reply, the detail, Yes / No, the note.
@@ -691,10 +730,11 @@ impl CruScreen {
             "hint": if keyboard { String::new() } else { hint },
             "cancelX": !chat_view && c.can_cancel, "queuedLine": if chat_view { String::new() } else { queued_line(&c) },
             "queuedBubble": chat_view && !c.queued.is_empty(), "hearingBubble": chat_view && !c.hearing.is_empty(),
+            "jump": if chat_view { cru::with(|c| c.jump.clone()) } else { serde_json::Value::Null },
             "typingBox": keyboard, "mic": !keyboard, "micBox": f32::from(if chat_view { T::CRU_MIC_CHAT } else { T::CRU_MIC }), "word": word, "tone": tone, "animating": animate,
         });
         cru::with(|c| c.ui = ui);
-        let root = div().id("cru-panel").absolute().top(top).right(right).w(pw).h(ph).rounded(T::CRU_BUBBLE_R).border_1().border_color(T::border()).shadow_lg();
+        let root = div().id("cru-panel").occlude().absolute().top(top).right(right).w(pw).h(ph).rounded(T::CRU_BUBBLE_R).border_1().border_color(T::border()).shadow_lg();
         root
             .track_focus(&self.focus)
             .on_key_down(|e: &KeyDownEvent, _, _| if e.keystroke.key == "escape" { cru::close(); })

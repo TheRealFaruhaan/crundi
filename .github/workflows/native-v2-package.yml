@@ -1,0 +1,191 @@
+# The installers that replace Electron's (native-v2/package/, CONTRACT.md):
+# build the native client, its browser host and the worker, lay out the
+# install (stage.mjs), wrap it (Windows: NSIS one-click per-user installer;
+# Linux: the .deb), and run the upgrade test from the latest Electron release.
+# Builds only: nothing here publishes or uploads an installer. Releases are
+# tags built by release.yml, and only the owner makes them.
+name: native-v2-package
+
+on:
+  push:
+    branches: ['factory/replace-electron-with-the-native-client-*']
+    paths: ['native-v2/**', 'worker/**', 'src/**', 'package.json', 'package-lock.json', '.github/workflows/native-v2-package.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Cache CEF
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cef
+          key: cef-156.0.26-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-v2/target
+            worker/target
+          key: v2-pkg-cargo-${{ runner.os }}-${{ hashFiles('native-v2/Cargo.lock', 'worker/Cargo.lock') }}
+          restore-keys: v2-pkg-cargo-${{ runner.os }}-
+
+      - name: Fetch CEF
+        run: |
+          CEF=$(node native-gpui/scripts/fetch-cef.mjs "$RUNNER_TEMP/cef")
+          echo "CEF_PATH=$CEF" >> "$GITHUB_ENV"
+
+      - name: Build the client and its browser host
+        working-directory: native-v2
+        run: cargo build --release -p crundi-app -p crundi-browser-host --bin crundi-v2 --bin crundi-browser-host
+
+      # Kid mode's Windows side, headless (PARITY-ELECTRON.md §4): the keyboard
+      # filter's process runs, is started again when it ends and goes with the
+      # lock; the touchpad's gestures go off in HKCU and come back as they were.
+      - name: Kid lock (keyboard filter, touchpad)
+        working-directory: native-v2
+        run: cargo test --release -p crundi-desktop --lib kidlock -- --test-threads=1
+
+      - name: Build the worker
+        run: |
+          export CRUNDI_WORKER_VERSION=$(node -p "require('./package.json').version")
+          cargo build --release --manifest-path worker/Cargo.toml
+
+      - name: Node 22 for the server
+        run: |
+          V=$(node -p "process.versions.node")
+          curl -fsSL -o "$RUNNER_TEMP/node.zip" "https://nodejs.org/dist/v$V/node-v$V-win-x64.zip"
+          7z x -y -o"$RUNNER_TEMP" "$RUNNER_TEMP/node.zip" > /dev/null
+          echo "NODE_DIST=$RUNNER_TEMP/node-v$V-win-x64" >> "$GITHUB_ENV"
+
+      - name: NSIS
+        run: |
+          if ! [ -x "/c/Program Files (x86)/NSIS/makensis.exe" ]; then choco install nsis -y --no-progress; fi
+          "/c/Program Files (x86)/NSIS/makensis.exe" -VERSION
+
+      - name: Stage and build the installers
+        run: |
+          W="$RUNNER_TEMP/stage"
+          node native-v2/package/stage.mjs --out "$W/full" --edition full --bin native-v2/target/release --cef "$CEF_PATH" --worker worker/target/release/crundi-worker.exe --node "$NODE_DIST"
+          node native-v2/package/stage.mjs --out "$W/client" --edition client --bin native-v2/target/release --cef "$CEF_PATH" --worker worker/target/release/crundi-worker.exe
+          node native-v2/package/windows/build.mjs --stage "$W/full" --edition full --out "$RUNNER_TEMP/dist"
+          node native-v2/package/windows/build.mjs --stage "$W/client" --edition client --out "$RUNNER_TEMP/dist"
+          ls -la "$RUNNER_TEMP/dist"
+
+      - name: The latest Electron release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/electron" --pattern 'Crundi-Setup-*.exe' --pattern 'Crundi-Client-Setup-*.exe'
+          ls -la "$RUNNER_TEMP/electron"
+
+      - name: Upgrade test (all-in-one)
+        shell: pwsh
+        run: |
+          $v = node -p "require('./package.json').version"
+          $old = (Get-ChildItem "$env:RUNNER_TEMP\electron\Crundi-Setup-*.exe")[0].FullName
+          ./native-v2/package/upgrade-test/windows.ps1 -Old $old -New "$env:RUNNER_TEMP\dist\Crundi-Setup-$v.exe" -Version $v -Edition full
+
+      - name: Upgrade test (client)
+        if: always()
+        shell: pwsh
+        run: |
+          $v = node -p "require('./package.json').version"
+          $old = (Get-ChildItem "$env:RUNNER_TEMP\electron\Crundi-Client-Setup-*.exe")[0].FullName
+          ./native-v2/package/upgrade-test/windows.ps1 -Old $old -New "$env:RUNNER_TEMP\dist\Crundi-Client-Setup-$v.exe" -Version $v -Edition client
+
+      - name: Sizes
+        if: always()
+        run: |
+          ls -l "$RUNNER_TEMP"/dist/*.exe "$RUNNER_TEMP"/electron/*.exe 2>/dev/null | awk '{printf "%-40s %8.1f MB\n", $NF, $5/1048576}' | sed "s|$RUNNER_TEMP/||" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # The same check the owner's PC runs (native-v2/package/check.sh): the
+  # .debs, and the Docker upgrade test from the latest Electron .debs.
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Linux packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libfontconfig1-dev libfreetype-dev libasound2-dev libnss3 libgbm1
+
+      - name: Cache CEF
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cef
+          key: cef-156.0.26-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-v2/target
+          key: v2-pkg-cargo-${{ runner.os }}-${{ hashFiles('native-v2/Cargo.lock') }}
+          restore-keys: v2-pkg-cargo-${{ runner.os }}-
+
+      - name: Fetch CEF
+        run: |
+          CEF=$(node native-gpui/scripts/fetch-cef.mjs "$RUNNER_TEMP/cef")
+          echo "CEF_PATH=$CEF" >> "$GITHUB_ENV"
+
+      - name: Build the client and its browser host
+        working-directory: native-v2
+        run: cargo build --release -p crundi-app -p crundi-browser-host --bin crundi-v2 --bin crundi-browser-host
+
+      - name: The latest Electron release and Node 22
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          R="$RUNNER_TEMP/electron"
+          gh release download --repo "$GITHUB_REPOSITORY" --dir "$R" --pattern 'Crundi-*-linux-x64.deb'
+          V=$(node -p "process.versions.node")
+          curl -fsSL -o "$R/node-v$V-linux-x64.tar.xz" "https://nodejs.org/dist/v$V/node-v$V-linux-x64.tar.xz"
+          ls -la "$R"
+
+      - name: Images
+        run: |
+          docker build -q -t crundi-upgrade-test native-v2/package/upgrade-test
+          docker build -q -t crundi-pack-build -f native-v2/package/linux/Dockerfile.build native-v2/package/linux
+
+      - name: Package check (.debs and the Docker upgrade test)
+        run: |
+          mkdir -p ~/.cache
+          CRUNDI_NATIVE_BIN=$PWD/native-v2/target/release ELECTRON_REF=$RUNNER_TEMP/electron PACK_OUT=$RUNNER_TEMP/pack \
+            native-v2/package/check.sh both | tee "$RUNNER_TEMP/check.log"
+          sed -n '/== Sizes/,$p' "$RUNNER_TEMP/check.log" >> "$GITHUB_STEP_SUMMARY"

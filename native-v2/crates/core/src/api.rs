@@ -435,7 +435,10 @@ impl Api {
         use std::io::BufRead;
         let token = self.fresh_access()?;
         let url = format!("{}/api/events?token={}", self.0.base, token);
-        let a = agent(None);
+        // No global timeout (the stream stays open), but the connect and the
+        // response's head are bounded: a restarting server never holds it (T14).
+        let a: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).user_agent(USER_AGENT)
+            .timeout_connect(Some(Duration::from_secs(10))).timeout_recv_response(Some(Duration::from_secs(30))).build().into();
         let resp = a.get(&url).header("Accept", "text/event-stream").call().map_err(|e| ApiError::Net(e.to_string()))?;
         let status = resp.status().as_u16();
         if status == 401 {

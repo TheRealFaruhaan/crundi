@@ -492,6 +492,47 @@ pub struct NullPlatformGestures;
 
 impl PlatformGestures for NullPlatformGestures {}
 
+/// crundi patch (f), PATCH.md (T1): whether a touchpad's precise scroll that
+/// went quiet ended in a flick, and if so its velocity (px/s, the way the
+/// content moved). `steps`: each step's age before the last one (ms) and its
+/// delta (x, y), oldest first. A flick, as Chromium and libinput's kinetic
+/// scrolling read one: the velocity of the last ~80 ms only (not the
+/// gesture's peak), the last step a real motion (a rest at the end zeroes
+/// it), no pause over 40 ms in that window, at least three steps that agree
+/// in direction (jitter and wobble cancel), at least 12 px travelled at 150
+/// px/s or more, and not slowing down into a hold (the last two steps still
+/// at half the window's pace). A lift's 1-3 px slip, a slow drag, a scroll
+/// held still then lifted: no glide.
+pub fn crundi_flick(steps: &[(f32, f32, f32)]) -> Option<(f32, f32)> {
+    let &(last_t, lx, ly) = steps.last()?;
+    if lx.hypot(ly) < 0.5 { return None; }
+    let mut tail: Vec<(f32, f32, f32)> = Vec::new();
+    let mut prev = last_t;
+    for &(t, x, y) in steps.iter().rev() {
+        if t - last_t > 80. || t - prev > 40. { break; }
+        prev = t;
+        tail.push((t, x, y));
+    }
+    let n = tail.len();
+    if n < 3 { return None; }
+    let span = tail[n - 1].0 - last_t;
+    if span <= 0. { return None; }
+    let (nx, ny) = tail.iter().fold((0., 0.), |(a, b), &(_, x, y)| (a + x, b + y));
+    let net = f32::hypot(nx, ny);
+    let path: f32 = tail.iter().map(|&(_, x, y)| x.hypot(y)).sum();
+    if net < 12. || net < 0.8 * path { return None; }
+    let (ux, uy) = (nx / net, ny / net);
+    if tail.iter().any(|&(_, x, y)| x * ux + y * uy < 0.) { return None; }
+    // Each delta covers the interval before it: n deltas, n-1 intervals seen.
+    let dt = span * n as f32 / (n - 1) as f32;
+    let speed = net * 1000. / dt;
+    if speed < 150. { return None; }
+    let mean = net / n as f32;
+    let late = (tail[0].1 * ux + tail[0].2 * uy + tail[1].1 * ux + tail[1].2 * uy) / 2.;
+    if late < 0.5 * mean { return None; }
+    Some((ux * speed, uy * speed))
+}
+
 /// Ceiling on recognized fling velocity, in pixels per second (matches
 /// Flutter's `kMaxFlingVelocity`).
 const MAX_FLING_VELOCITY: f32 = 8000.;
@@ -531,6 +572,14 @@ pub(crate) struct TouchGestureRecognizer {
     state: TouchGestureState,
     momentum: Option<Momentum>,
     last_tap: Option<CompletedTap>,
+    /// crundi patch (f), PATCH.md: a touchpad's precise scroll (pixel
+    /// deltas) under way: its accumulated travel sampled for the release
+    /// velocity, where it points, and whether the momentum running is its
+    /// (so its steps go out as the pointer's, not a touchscreen's).
+    precise: Option<(VelocityTracker, Point<Pixels>, Point<Pixels>)>,
+    /// (T1) its steps, timed: what `crundi_flick` decides a glide from.
+    precise_steps: Vec<(Instant, Point<Pixels>)>,
+    momentum_pointer: bool,
 }
 
 /// A semantic event recognized from raw touches, ready to dispatch through
@@ -620,8 +669,57 @@ impl TouchGestureRecognizer {
             state: TouchGestureState::Idle,
             momentum: None,
             last_tap: None,
+            precise: None,
+            precise_steps: Vec::new(),
+            momentum_pointer: false,
         }
     }
+
+    /// crundi patch (f): one step of a touchpad's precise scroll. A glide
+    /// running stops (new input catches it); the step is sampled.
+    pub(crate) fn precise_scroll(&mut self, position: Point<Pixels>, delta: Point<Pixels>, age: Duration) {
+        self.momentum = None;
+        let now = Instant::now() - age;
+        let (tracker, travel, at) = self.precise.get_or_insert_with(|| (VelocityTracker::default(), Point::default(), position));
+        *travel = *travel + delta;
+        *at = position;
+        tracker.push(now, *travel);
+        self.precise_steps.push((now, delta));
+        if self.precise_steps.len() > 64 { self.precise_steps.drain(..32); }
+    }
+
+    /// crundi patch (f): the precise scroll went quiet (the fingers lifted):
+    /// it glides on at the speed of its last ~100 ms, decaying as a touch
+    /// pan's fling does. True when a glide starts.
+    pub(crate) fn precise_scroll_ended(&mut self) -> bool {
+        let steps = std::mem::take(&mut self.precise_steps);
+        let Some((_, _, position)) = self.precise.take() else { return false };
+        // (T1: only a real flick glides: see `crundi_flick`.)
+        let Some(&(last, _)) = steps.last() else { return false };
+        let timed: Vec<(f32, f32, f32)> = steps.iter()
+            .map(|(t, d)| (last.duration_since(*t).as_secs_f32() * 1000., f32::from(d.x), f32::from(d.y))).collect();
+        let Some((vx, vy)) = crundi_flick(&timed) else { return false };
+        let speed = (vx.powi(2) + vy.powi(2)).sqrt();
+        if speed < self.tuning.min_fling_velocity { return false; }
+        let direction = point(vx / speed, vy / speed);
+        let speed = speed.min(MAX_FLING_VELOCITY);
+        let duration = self.tuning.scroll_physics.fling_duration(speed);
+        if duration.is_zero() { return false; }
+        self.momentum = Some(Momentum { position, direction, speed, started_at: Instant::now(), duration, emitted_distance: 0. });
+        self.momentum_pointer = true;
+        true
+    }
+
+    /// crundi patch (f): a wheel's line scroll, a press or a key: the
+    /// touchpad's glide (and its sampling) stops where it is.
+    pub(crate) fn stop_pointer_momentum(&mut self) {
+        self.precise = None;
+        self.precise_steps.clear();
+        if self.momentum_pointer { self.momentum = None; self.momentum_pointer = false; }
+    }
+
+    /// crundi patch (f): the touchpad's glide is running.
+    pub(crate) fn pointer_momentum(&self) -> bool { self.momentum_pointer && self.momentum.is_some() }
 
     pub(crate) fn handle_event(
         &mut self,
@@ -638,6 +736,7 @@ impl TouchGestureRecognizer {
         let mut recognized = SmallVec::new();
         match event.phase {
             TouchPhase::Started => {
+                self.momentum_pointer = false;
                 let caught_fling = if let Some(momentum) = self.momentum.take() {
                     recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
                         momentum.position,
@@ -1050,19 +1149,15 @@ impl TouchGestureRecognizer {
             px(momentum.direction.y * step),
         );
         let position = momentum.position;
+        // (crundi patch (f): a touchpad's glide goes out as the pointer's.)
+        let pointer = self.momentum_pointer;
+        let event = |phase| { let mut e = scroll_event(position, delta, phase); if pointer { e.source = ScrollSource::Pointer; } RecognizedTouchGesture::Scroll(e) };
         if elapsed >= momentum.duration {
             self.momentum = None;
-            Some(RecognizedTouchGesture::Scroll(scroll_event(
-                position,
-                delta,
-                TouchPhase::Ended,
-            )))
+            self.momentum_pointer = false;
+            Some(event(TouchPhase::Ended))
         } else {
-            Some(RecognizedTouchGesture::Scroll(scroll_event(
-                position,
-                delta,
-                TouchPhase::Moved,
-            )))
+            Some(event(TouchPhase::Moved))
         }
     }
 }

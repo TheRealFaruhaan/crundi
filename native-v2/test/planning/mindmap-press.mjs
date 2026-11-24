@@ -6,6 +6,8 @@
 // miss, the idea's box is logged against the map's own hit test there, the
 // press the map took, its canvas and view.
 
+import { saveView, restoreView } from './map-view.mjs';
+
 const PA = (p) => p.areas?.planning ?? p.planningArea ?? {};
 const M = (p) => PA(p).mindmap;
 const W = (p) => p.workspace;
@@ -43,6 +45,13 @@ export async function run(T, t) {
   s = await T.until('a Mindmap pane beside the terminal, with the ideas added while it was closed', (p) => leaf(p, 'panel:mindmap') && leaf(p, key) && M(p)?.state === 'ok' && M(p).nodes?.filter((n) => n.kind === 'node').length >= 50);
   if (!s) { const z = await T.props(); console.log('   panes', z.panes, 'leaves', JSON.stringify(z.leaves), 'map', M(z)?.state, M(z)?.nodes?.length, 'term', key); return; }
   await T.settle(400, 4000);
+  // The map as a fresh one opens in this pane (zoomed out to 0.25, at its
+  // start), whatever the screens before left it zoomed or scrolled to; given
+  // back as it was found at the end.
+  const view0 = await saveView(T);
+  const START = { zoom: 0.25, scroll: [0, 0] };
+  await restoreView(T, t, START, 'mindmap-press starts from a fresh map\'s view');
+  await T.settle(200, 2000);
 
   // An idea whole on show, well inside the map's view and its pane.
   const pick = (p, i) => {
@@ -53,6 +62,11 @@ export async function run(T, t) {
       && n.box.x > l.x && n.box.x + n.box.w < l.x + l.w && n.box.y > l.y + 40 && n.box.y + n.box.h < l.y + l.h);
     return ok.length ? ok[i % ok.length] : null;
   };
+  if (process.env.PRESS_DEBUG) {
+    const z = await T.props(), m = M(z), l = leaf(z, 'panel:mindmap');
+    const ns = m.nodes.filter((n) => n.kind === 'node');
+    console.log('   DEBUG map', JSON.stringify({ nodes: ns.length, boxed: ns.filter((n) => n.box).length, drawn: m.drawn.length, canvas: m.canvas, view: m.view, scroll: m.scroll, zoom: m.zoom, leaf: l, sel: m.sel, hover: m.hover, edit: m.edit, collapsed: m.collapsed, sample: ns.filter((n) => n.box).slice(0, 5).map((n) => [n.text, n.box, m.drawn.includes(n.id)]) }));
+  }
   const delays = [0, 50, 150, 300];
   const sizes = [30, 90, 160, 260, 420];
   let hits = 0, tries = 0;
@@ -104,6 +118,8 @@ export async function run(T, t) {
   // clone follows the pointer), and the release over the terminal is no
   // click on the idea (it opens no box to edit it).
   {
+    await restoreView(T, t, START, 'the flicks start from a fresh map\'s view');
+    await T.settle(200, 2000);
     let ok = 0, n = 0;
     const out = [];
     for (let i = 0; i < 10; i++) {
@@ -123,6 +139,7 @@ export async function run(T, t) {
     }
     t.check('a press on an idea and a flick off the map at once start its drag, 10 of 10, and open no edit (F260)', n === 10 && ok === 10, { n, ok, out });
   }
+  await restoreView(T, t, view0, 'mindmap-press');
   await T.ui('workbench:pane-close', 'panel:mindmap');
   await T.until('the Mindmap pane closes', (p) => !p.panes?.includes('panel:mindmap'));
 }

@@ -55,6 +55,30 @@ the lines marked `crundi patch (a)` to `crundi patch (e)` (and the
   `Interactivity::wide_clip`, `InteractiveElement::wide_clip` and
   `with_clip`; `Window::rec_spoiled`, `spoil_recorded` and `rekey_hitboxes`, and
   `note_recorded` and the rekeyed reuse in `src/view.rs`
+- (f) kinetic scrolling for a touchpad: in `src/gestures.rs`
+  `TouchGestureRecognizer::precise`, `momentum_pointer`, `precise_scroll`,
+  `precise_scroll_ended`, `stop_pointer_momentum`, `pointer_momentum`, the
+  flag's reset on a touch's start and the pointer source in
+  `tick_momentum_at`; in `src/window.rs` the `Window` fields
+  `precise_quiet`, `precise_seq`, `no_glide` and `scroll_age`,
+  `kinetic_input` (called from `dispatch_event`), `set_no_glide`,
+  `set_scroll_age` and `gliding`
+
+- (b, T8) `Scene::holds` and `Window::paint_range_valid`: a cached view's
+  paint range that the last scene doesn't hold (stale) is never sliced:
+  `extent`, `can_offset`, `replay` and `replay_offset` check it, and
+  `prepaint_view` makes such a view render (its `painted_in` reset)
+  instead of reusing it (the scene.rs:197 panic on a sideways scroll)
+- (f, T1) `crundi_flick` and `TouchGestureRecognizer::precise_steps`: a
+  touchpad's glide starts only after a real flick (the last ~80 ms, the
+  last step a motion, no pause, directions agreeing, ≥12 px at ≥150 px/s,
+  not slowing into a hold)
+- (g, T7) in `src/elements/div.rs` `paint_scroll_listener`: Shift and the
+  wheel scroll sideways; a box that scrolls only up and down leaves a
+  sideways scroll alone; one whose content is wider than it claims it
+  (`Window::claim_x`, `claimed_x`, the field reset per scroll event in
+  `dispatch_mouse_event`), so a workbench pane passes an unclaimed sideways
+  scroll to the strip
 
 `crates/shell/tests/gpui_patch.rs` checks both behaviours in `cargo test`
 on every OS: a clean cached child isn't rendered when its parent is, a moved
@@ -357,3 +381,20 @@ When a `gpui-pre` release (the snapshot gpui-component pins) has all five,
 delete the patch: the cached views here are written for the published
 semantics plus these two. When it has only one, keep the other here, and
 re-measure with `tools/measure-pc.mjs` on the owner's display either way.
+
+## (f) A touchpad's scroll glides on when the fingers lift
+
+The owner's call (22 Nov 2026): touchpad scrolling stopped dead when the
+fingers lifted, where Electron and the web ease out. On Linux, a precise
+scroll (pixel deltas: Wayland's continuous axis) feeds the touch pan's own
+velocity tracker (least squares over the last 100 ms); 50 ms after its last
+step (gpui-pre-linux drops Wayland's axis stop, so the stream going quiet
+stands for the lift) it continues as the touch pan's momentum, with its
+physics (exponential decay), one step a frame through the ordinary scroll
+dispatch, so every scrolling list and pane glides and stops at its edge. A
+line scroll (a mouse wheel), a press, a key or a pinch stops it. X11 sends
+every scroll as lines, so nothing changes there; Windows and macOS send their
+own momentum for a precision touchpad, so nothing is added there (`cfg`
+Linux only). The test driver's wheel never glides unless asked (`precise`),
+so the suites' exact offsets stay; test/workbench.mjs "Kinetic scrolling"
+checks the glide, its stop, the edge, a press catching it and the wheel.

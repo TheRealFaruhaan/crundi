@@ -20,7 +20,13 @@ use gpui_component::Root;
 fn main() {
     // Started as the browser host or a CEF helper: become the host (never returns).
     crundi_webview::init_process();
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,zbus=off")).init();
+    // The log: stderr and crundi.log in the config folder (Electron's), with the boot lines.
+    crundi_shell::lifecycle::init_log("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,zbus=off");
+    // One copy at a time (requestSingleInstanceLock): a second launch shows the first's window and goes.
+    if !crundi_shell::lifecycle::claim() {
+        crundi_shell::lifecycle::log_line("[lifecycle] Another instance is running; showing it");
+        return;
+    }
     // The app quits when asked (Quit, the × without a tray), never because its
     // window closed: on Wayland the × closes it to hide it in the tray (F127).
     gpui_platform::application().with_assets(crundi_theme::AllAssets).with_quit_mode(QuitMode::Explicit).run(move |cx: &mut App| {
@@ -45,7 +51,7 @@ fn main() {
 
         // Centred on the display when there is one; Xvfb reports none, so a
         // window centred on "nothing" would come out 10x10: place it instead.
-        let wsize = size(T::WINDOW_W, T::WINDOW_H);
+        let wsize = start_size(crundi_core::driver::port().is_some());
         let bounds = if cx.primary_display().is_some() { Bounds::centered(None, wsize, cx) } else { Bounds { origin: point(px(0.), px(0.)), size: wsize } };
         let handle = open_main(&stores, bounds, cx);
         // In front with the keys, as Electron's mainWindow.show() and focus().
@@ -76,18 +82,31 @@ fn main() {
         }
     });
     crundi_webview::shutdown();
+    // An update installed: the new version starts (or its installer runs) now the app is gone.
+    crundi_desktop::updater::after_quit();
+    crundi_shell::lifecycle::log_line("[lifecycle] Quit");
+}
+
+/// The window's size at launch: Electron's 1100x750; under the test driver
+/// the harness's 1400x860 (the size every screen in screens/ is taken at).
+fn start_size(driven: bool) -> Size<Pixels> {
+    if driven { size(T::WINDOW_W, T::WINDOW_H) } else { size(T::APP_W, T::APP_H) }
 }
 
 /// Open the window (at start, and again after Wayland's hide closed it):
 /// the Shell over the shared stores, the desktop area's views.
 fn open_main(stores: &crundi_shell::Stores, bounds: Bounds<Pixels>, cx: &mut App) -> WindowHandle<Root> {
     // Frameless, as the PC client: the top bar draws the window's buttons and moves it.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    let wayland = gpui::guess_compositor() == "Wayland";
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    let wayland = false;
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(T::WINDOW_MIN_W, T::WINDOW_MIN_H)),
         titlebar: None,
         window_decorations: Some(WindowDecorations::Client),
-        app_id: Some("crundi".into()),
+        app_id: Some(crundi_shell::lifecycle::window_class(wayland).into()),
         icon: app_icon(),
         ..Default::default()
     };
@@ -105,4 +124,20 @@ fn open_main(stores: &crundi_shell::Stores, bounds: Bounds<Pixels>, cx: &mut App
 fn app_icon() -> Option<std::sync::Arc<image::RgbaImage>> {
     let png = include_bytes!("../assets/icon-256.png");
     image::load_from_memory_with_format(png, image::ImageFormat::Png).ok().map(|i| std::sync::Arc::new(i.to_rgba8()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::start_size;
+    use crundi_theme::T;
+
+    /// Electron's createWindow: 1100x750, at least 800x500 (PARITY-ELECTRON.md, the main window).
+    #[test]
+    fn electron_window_size() {
+        let s = start_size(false);
+        assert_eq!((f32::from(s.width), f32::from(s.height)), (1100., 750.));
+        assert_eq!((f32::from(T::WINDOW_MIN_W), f32::from(T::WINDOW_MIN_H)), (800., 500.));
+        let d = start_size(true);
+        assert_eq!((f32::from(d.width), f32::from(d.height)), (1400., 860.));
+    }
 }

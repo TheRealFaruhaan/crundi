@@ -118,6 +118,7 @@ pub fn start(api: Api, to_ui: impl Fn(Event) + Send + Sync + 'static) -> Live { 
 /// [start] with another heartbeat timing.
 pub fn start_with(api: Api, timing: Timing, to_ui: impl Fn(Event) + Send + Sync + 'static) -> Live {
     let (out, rx) = mpsc::channel::<String>();
+    let resub = out.clone();
     let subs = Arc::new(Mutex::new(Vec::<String>::new()));
     let stop = Arc::new(AtomicBool::new(false));
     let stats = Arc::new(Stats::default());
@@ -125,7 +126,7 @@ pub fn start_with(api: Api, timing: Timing, to_ui: impl Fn(Event) + Send + Sync 
     {
         let (api, subs, stop, stats) = (api.clone(), subs.clone(), stop.clone(), stats.clone());
         let to_ui = to_ui.clone();
-        thread::Builder::new().name("live-ws".into()).spawn(move || socket_loop(api, timing, rx, subs, stop, stats, to_ui)).ok();
+        thread::Builder::new().name("live-ws".into()).spawn(move || socket_loop(api, timing, rx, resub, subs, stop, stats, to_ui)).ok();
     }
     Live { out, subs, stop, stats }
 }
@@ -139,39 +140,95 @@ fn set_timeout(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) {
     }
 }
 
+/// What a new event stream re-sends once the server's state arrives (a
+/// reconnect: the server may have restarted, its chats only now loaded).
+type Resub = (mpsc::Sender<String>, Arc<Mutex<Vec<String>>>);
+
 /// Start an event stream of generation `my`: it ends when a newer one starts.
-fn start_stream(api: &Api, stop: &Arc<AtomicBool>, generation: &Arc<AtomicU64>, stats: &Arc<Stats>, to_ui: &Arc<dyn Fn(Event) + Send + Sync>) {
+fn start_stream(api: &Api, stop: &Arc<AtomicBool>, generation: &Arc<AtomicU64>, stats: &Arc<Stats>, to_ui: &Arc<dyn Fn(Event) + Send + Sync>, resub: Option<Resub>) {
     let my = generation.fetch_add(1, Ordering::SeqCst) + 1;
     stats.streams.fetch_add(1, Ordering::Relaxed);
     let (api, stop, generation, to_ui) = (api.clone(), stop.clone(), generation.clone(), to_ui.clone());
-    thread::Builder::new().name("live-events".into()).spawn(move || events_loop(api, stop, generation, my, to_ui)).ok();
+    thread::Builder::new().name("live-events".into()).spawn(move || events_loop(api, stop, generation, my, to_ui, resub)).ok();
 }
 
-fn socket_loop(api: Api, timing: Timing, rx: mpsc::Receiver<String>, subs: Arc<Mutex<Vec<String>>>, stop: Arc<AtomicBool>, stats: Arc<Stats>, to_ui: Arc<dyn Fn(Event) + Send + Sync>) {
+/// The wait before connect attempt `n` (1, 2, 4, 8, 16, then 30 s), as the
+/// web client backs off (FINDINGS T14).
+pub fn backoff(n: u32) -> Duration { Duration::from_secs((1u64 << n.min(5)).min(30)) }
+
+/// How long a connect or the handshake may take before the attempt fails
+/// (tungstenite::connect has none: a half-open origin behind a proxy held
+/// the link's thread forever, FINDINGS T14).
+const CONNECT_WITHIN: Duration = Duration::from_secs(10);
+
+/// /ws's connect, the TCP connect and the handshake each bounded.
+fn connect(url: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, tungstenite::Error> {
+    use std::net::ToSocketAddrs;
+    let uri: tungstenite::http::Uri = url.parse().map_err(|_| tungstenite::Error::Url(tungstenite::error::UrlError::NoHostName))?;
+    let host = uri.host().ok_or(tungstenite::Error::Url(tungstenite::error::UrlError::NoHostName))?.trim_start_matches('[').trim_end_matches(']').to_string();
+    let port = uri.port_u16().unwrap_or(if uri.scheme_str() == Some("wss") { 443 } else { 80 });
+    let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, "no address");
+    let mut tcp = None;
+    for a in (host.as_str(), port).to_socket_addrs()? {
+        match TcpStream::connect_timeout(&a, CONNECT_WITHIN) { Ok(s) => { tcp = Some(s); break; } Err(e) => last = e }
+    }
+    let tcp = tcp.ok_or(tungstenite::Error::Io(last))?;
+    tcp.set_read_timeout(Some(CONNECT_WITHIN))?;
+    tcp.set_write_timeout(Some(CONNECT_WITHIN))?;
+    let _ = tcp.set_nodelay(true);
+    match tungstenite::client_tls(url, tcp) {
+        Ok((ws, _)) => Ok(ws),
+        Err(tungstenite::HandshakeError::Failure(e)) => Err(e),
+        Err(tungstenite::HandshakeError::Interrupted(_)) => Err(tungstenite::Error::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, "handshake timed out"))),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn socket_loop(api: Api, timing: Timing, rx: mpsc::Receiver<String>, resub: mpsc::Sender<String>, subs: Arc<Mutex<Vec<String>>>, stop: Arc<AtomicBool>, stats: Arc<Stats>, to_ui: Arc<dyn Fn(Event) + Send + Sync>) {
     let (host_tx, host_rx) = mpsc::channel::<Value>();
     let generation = Arc::new(AtomicU64::new(0));
-    start_stream(&api, &stop, &generation, &stats, &to_ui);
+    start_stream(&api, &stop, &generation, &stats, &to_ui, None);
+    // Failed attempts since the last connection (the backoff's step).
+    let mut failed: u32 = 0;
+    // Sleep in slices, so a stop is heard.
+    let wait = |d: Duration, stop: &AtomicBool| { let t = Instant::now(); while t.elapsed() < d && !stop.load(Ordering::Relaxed) { thread::sleep(Duration::from_millis(100)); } };
     while !stop.load(Ordering::Relaxed) {
         let url = match api.ws_url() {
             Ok(u) => u,
             Err(ApiError::SignedOut) => { to_ui(Event::SignedOut); return; }
-            Err(_) => { thread::sleep(Duration::from_secs(3)); continue; }
+            Err(e) => {
+                let d = backoff(failed);
+                failed += 1;
+                log::warn!("live: cannot reach the server ({e:?}), attempt {failed}, next in {d:?}");
+                to_ui(Event::Connected(false));
+                wait(d, &stop);
+                continue;
+            }
         };
-        let mut ws = match tungstenite::connect(url.as_str()) {
-            Ok((ws, _)) => ws,
+        let mut ws = match connect(url.as_str()) {
+            Ok(ws) => ws,
             Err(tungstenite::Error::Http(resp)) if resp.status().as_u16() == 401 => {
                 let used = url.rsplit("token=").next().unwrap_or("").to_string();
                 if let Err(ApiError::SignedOut) = api.refresh_after(&used) { to_ui(Event::SignedOut); return; }
                 continue;
             }
             Err(e) => {
-                log::warn!("live: cannot connect: {e}");
+                // Any failure (a refused connect, 5xx or Cloudflare's 521/522/524
+                // while the server restarts, a timeout): again, backing off.
+                let d = backoff(failed);
+                failed += 1;
+                log::warn!("live: cannot connect: {e} (attempt {failed}, next in {d:?})");
                 to_ui(Event::Connected(false));
-                thread::sleep(Duration::from_secs(3));
+                wait(d, &stop);
                 continue;
             }
         };
-        stats.connects.fetch_add(1, Ordering::Relaxed);
+        let again = stats.connects.fetch_add(1, Ordering::Relaxed) > 0;
+        if again || failed > 0 { log::info!("live: connected again after {failed} failed attempt(s)"); }
+        failed = 0;
+        // A reconnect: a new event stream too (the server's state now, which
+        // also re-subscribes the chats once the server has them).
+        if again { start_stream(&api, &stop, &generation, &stats, &to_ui, Some((resub.clone(), subs.clone()))); }
         set_timeout(&mut ws);
         // Messages queued while away are stale (subscriptions are redone below).
         while rx.try_recv().is_ok() {}
@@ -226,18 +283,25 @@ fn socket_loop(api: Api, timing: Timing, rx: mpsc::Receiver<String>, subs: Arc<M
         }
         crate::host::set_binary_out(None);
         if stop.load(Ordering::Relaxed) { break; }
+        log::warn!("live: the connection dropped ({}), connecting again", if silent { "silent" } else { "closed" });
         to_ui(Event::Connected(false));
-        // The event stream went through the same network: start it again.
-        if silent { start_stream(&api, &stop, &generation, &stats, &to_ui); } else { thread::sleep(Duration::from_secs(2)); }
+        if !silent { wait(backoff(0), &stop); }
     }
 }
 
-fn events_loop(api: Api, stop: Arc<AtomicBool>, generation: Arc<AtomicU64>, my: u64, to_ui: Arc<dyn Fn(Event) + Send + Sync>) {
+fn events_loop(api: Api, stop: Arc<AtomicBool>, generation: Arc<AtomicU64>, my: u64, to_ui: Arc<dyn Fn(Event) + Send + Sync>, mut resub: Option<Resub>) {
     let current = || generation.load(Ordering::SeqCst) == my && !stop.load(Ordering::Relaxed);
+    let mut failed: u32 = 0;
     while current() {
         let r = api.events(|name, data| {
             if !current() { return false; }
+            failed = 0;
             let Ok(v) = serde_json::from_str::<Value>(data) else { return true };
+            if name == "state" {
+                if let Some((out, subs)) = resub.take() {
+                    for id in subs.lock().unwrap().clone() { let _ = out.send(json!({ "type": "subscribe-ui", "id": id }).to_string()); }
+                }
+            }
             to_ui(match name {
                 "state" => Event::State(v),
                 "usage" => Event::Usage(v),
@@ -252,9 +316,13 @@ fn events_loop(api: Api, stop: Arc<AtomicBool>, generation: Arc<AtomicU64>, my: 
         match r {
             Err(ApiError::SignedOut) => { to_ui(Event::SignedOut); return; }
             Err(ApiError::Status(401, _)) => continue,
-            _ => {}
+            Err(e) => log::warn!("live: the event stream failed: {e:?} (attempt {})", failed + 1),
+            Ok(()) => log::warn!("live: the event stream ended"),
         }
-        thread::sleep(Duration::from_secs(3));
+        let d = backoff(failed);
+        failed += 1;
+        let t = Instant::now();
+        while t.elapsed() < d && current() { thread::sleep(Duration::from_millis(100)); }
     }
 }
 
@@ -309,6 +377,76 @@ mod tests {
         let t2 = Instant::now();
         while ups.load(Ordering::SeqCst) < 2 && t2.elapsed() < Duration::from_secs(3) { thread::sleep(Duration::from_millis(20)); }
         assert!(ups.load(Ordering::SeqCst) >= 2, "no Connected(true) after the reconnect");
+        live.stop();
+    }
+
+    /// FINDINGS T14: the origin down (Cloudflare's 521) twice, then up, then
+    /// the socket closed under it (a restart): the link keeps trying, backing
+    /// off, connects again by itself, re-subscribes the open chat on connect
+    /// and again once the new event stream's state arrives.
+    #[test]
+    fn a_restarting_server_is_reconnected_and_resubscribed() {
+        use std::io::Write;
+        assert_eq!([backoff(0), backoff(1), backoff(2), backoff(5), backoff(40)].map(|d| d.as_secs()), [1, 2, 4, 30, 30]);
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let ws_tries = Arc::new(AtomicUsize::new(0));
+        let subs_heard = Arc::new(AtomicUsize::new(0));
+        let (w, h) = (ws_tries.clone(), subs_heard.clone());
+        thread::spawn(move || {
+            let mut held = vec![];
+            for mut s in l.incoming().flatten() {
+                let mut head = [0u8; 16];
+                let n = s.peek(&mut head).unwrap_or(0);
+                if String::from_utf8_lossy(&head[..n]).starts_with("GET /ws") {
+                    let k = w.fetch_add(1, Ordering::SeqCst) + 1;
+                    if k <= 2 { let _ = s.write_all(b"HTTP/1.1 521 Origin Down\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"); continue; }
+                    let h = h.clone();
+                    thread::spawn(move || {
+                        let Ok(mut ws) = tungstenite::accept(s) else { return };
+                        let t = Instant::now();
+                        // The first connection is closed after 1.5 s (the server restarting).
+                        while k > 3 || t.elapsed() < Duration::from_millis(1500) {
+                            let _ = ws.get_mut().set_read_timeout(Some(Duration::from_millis(100)));
+                            match ws.read() {
+                                Ok(Message::Text(m)) if m.as_str().contains("subscribe-ui") && m.as_str().contains("c1") => { h.fetch_add(1, Ordering::SeqCst); }
+                                Ok(_) => {}
+                                Err(tungstenite::Error::Io(_)) => {}
+                                Err(_) => return,
+                            }
+                        }
+                        let _ = ws.close(None);
+                        let _ = ws.flush();
+                    });
+                } else {
+                    let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nevent: state\ndata: {}\n\n");
+                    held.push(s);
+                }
+            }
+        });
+        let tokens = Tokens { access: "a".into(), refresh: "r".into(), expires_at: Instant::now() + Duration::from_secs(3600) };
+        let api = Api::new(&format!("http://127.0.0.1:{port}"), tokens, |_| {});
+        let (ups, downs) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let (u, d) = (ups.clone(), downs.clone());
+        let live = start_with(api, Timing::default(), move |ev| match ev {
+            Event::Connected(true) => { u.fetch_add(1, Ordering::SeqCst); }
+            Event::Connected(false) => { d.fetch_add(1, Ordering::SeqCst); }
+            _ => {}
+        });
+        live.subscribe("c1");
+        let until = |what: &str, secs: u64, f: &dyn Fn() -> bool| {
+            let t = Instant::now();
+            while !f() && t.elapsed() < Duration::from_secs(secs) { thread::sleep(Duration::from_millis(20)); }
+            assert!(f(), "{what}");
+        };
+        until("connected after two 521s", 10, &|| ups.load(Ordering::SeqCst) >= 1);
+        assert!(downs.load(Ordering::SeqCst) >= 2, "reconnecting shown while the origin was down");
+        assert_eq!(ws_tries.load(Ordering::SeqCst), 3);
+        until("the chat subscribed on connect", 5, &|| subs_heard.load(Ordering::SeqCst) >= 1);
+        until("connected again after the close", 10, &|| ups.load(Ordering::SeqCst) >= 2);
+        // On connect, and again once the reconnect's event stream brought the state.
+        until("the chat re-subscribed after the restart", 10, &|| subs_heard.load(Ordering::SeqCst) >= 3);
+        assert!(live.stats.streams.load(Ordering::Relaxed) >= 2, "a new event stream with the reconnect");
         live.stop();
     }
 

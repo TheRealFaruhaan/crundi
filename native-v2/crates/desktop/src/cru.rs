@@ -97,6 +97,8 @@ pub struct Cru {
     pub no_cancel: bool,
     /// What the screen drew last (for the test driver): its place and size, its parts.
     pub ui: Value,
+    /// The chat view's jump to the newest (T17): shown, its dot, how far from the end.
+    pub jump: Value,
 }
 
 thread_local! { static C: RefCell<Cru> = RefCell::new(Cru { chat_view: true, phase: "ended".into(), voice_usable: true, ..Default::default() }); }
@@ -650,6 +652,19 @@ pub fn kid_keyboard(on: bool) {
 fn voice_refused() {
     with(|c| c.notice = if kit::truthy(&c.settings["deepgramLimitReached"]) { "Voice is off: this month's Deepgram limit is reached.".into() } else { "Voice needs a Deepgram key: add one in Settings, Voice assistant.".into() });
     render();
+}
+
+/// Woken by "Hey Cru" (the owner, V7): always voice mode, whatever was
+/// used last. Opening, keyboard mode is let go first (and remembered, as a
+/// choice of voice); already open in keyboard mode, it goes to the voice.
+pub fn open_by_voice() {
+    if with(|c| c.open) {
+        if with(|c| c.keyboard) { set_keyboard(false); }
+        return;
+    }
+    with(|c| c.keyboard = false);
+    save_prefs();
+    open(false);
 }
 
 pub fn set_keyboard(on: bool) {

@@ -10,6 +10,11 @@ use serde_json::{json, Value};
 pub const RATE: usize = 16000;
 pub const SAMPLES_NEEDED: usize = 5;
 pub const SPELLINGS: [&str; 3] = ["▁HE Y ▁C RU", "▁HE Y ▁K RU", "▁HE Y ▁C RE W"];
+/// More ways "Hey Cru" can sound (V2, the owner: "widen the words"): kroo,
+/// krus, hi cru, a cru (the h dropped), hey krew. Training keeps each one
+/// the model hears in any of the owner's takes, so it listens for the way
+/// he says it.
+pub const MORE_SPELLINGS: [&str; 7] = ["▁HE Y ▁K R U", "▁HE Y ▁C R U", "▁HE Y ▁K RU S", "▁HE Y ▁C RU S", "▁HI ▁C RU", "▁A ▁C RU", "▁HE Y ▁K RE W"];
 pub const WAKE: &str = "HEY_CRU";
 pub const DECOYS: &[(&str, &str)] = &[
     ("YOU", "▁HE Y ▁YOU"), ("YOUR", "▁HE Y ▁YOUR"), ("WHO", "▁HE Y ▁WHO"), ("HOO", "▁HE Y ▁HO O"), ("HUGH", "▁HE Y ▁ H UGH"),
@@ -41,14 +46,16 @@ pub type Feats = Vec<Vec<f64>>;
 
 fn fmt(x: f32) -> String { let s = format!("{x}"); s }
 
-pub fn keyword_lines(threshold: f32, score: f32) -> String {
-    SPELLINGS.iter().map(|sp| format!("{sp} :{} #{} @HEY_CRU", fmt(score), fmt(threshold))).collect::<Vec<_>>().join("\n")
+pub fn keyword_lines(threshold: f32, score: f32) -> String { keyword_lines_with(&SPELLINGS, threshold, score) }
+pub fn keyword_lines_with(spellings: &[&str], threshold: f32, score: f32) -> String {
+    spellings.iter().map(|sp| format!("{sp} :{} #{} @HEY_CRU", fmt(score), fmt(threshold))).collect::<Vec<_>>().join("\n")
 }
 pub fn decoy_lines(threshold: f32, score: f32, decoys: &[(&str, &str)]) -> String {
     decoys.iter().map(|(n, sp)| format!("{sp} :{} #{} @NOT_{n}", fmt(score), fmt(threshold))).collect::<Vec<_>>().join("\n")
 }
-pub fn competing_lines(threshold: f32, score: f32, decoys: &[(&str, &str)]) -> String {
-    if decoys.is_empty() { keyword_lines(threshold, score) } else { format!("{}\n{}", keyword_lines(threshold, score), decoy_lines(threshold, score, decoys)) }
+pub fn competing_lines(threshold: f32, score: f32, decoys: &[(&str, &str)]) -> String { competing_lines_with(&SPELLINGS, threshold, score, decoys) }
+pub fn competing_lines_with(spellings: &[&str], threshold: f32, score: f32, decoys: &[(&str, &str)]) -> String {
+    if decoys.is_empty() { keyword_lines_with(spellings, threshold, score) } else { format!("{}\n{}", keyword_lines_with(spellings, threshold, score), decoy_lines(threshold, score, decoys)) }
 }
 
 /// The decoys a profile keeps (all, for a profile from before).
@@ -64,7 +71,14 @@ pub fn listen_lines(profile: &Value) -> String {
     let kw = profile.get("keyword").and_then(|k| k.as_str()).unwrap_or("").to_string();
     if d.is_empty() { kw } else { format!("{kw}\n{}", decoy_lines(pf(profile, "keywordsThreshold") as f32, pf(profile, "keywordsScore") as f32, &d)) }
 }
-pub fn confirm_lines(profile: &Value) -> String { competing_lines(CONFIRM_THRESHOLD, pf(profile, "keywordsScore") as f32, &decoys_of(profile)) }
+pub fn confirm_lines(profile: &Value) -> String { competing_lines_with(&spellings_of(profile), CONFIRM_THRESHOLD, pf(profile, "keywordsScore") as f32, &decoys_of(profile)) }
+/// The spellings a profile listens for (its own, else the three).
+pub fn spellings_of(profile: &Value) -> Vec<&str> {
+    match profile.get("spellings").and_then(|v| v.as_array()) {
+        Some(a) if !a.is_empty() => a.iter().filter_map(|v| v.as_str()).filter_map(|x| SPELLINGS.iter().chain(MORE_SPELLINGS.iter()).find(|s| **s == x).copied()).collect(),
+        _ => SPELLINGS.to_vec(),
+    }
+}
 
 // ─── MFCC (26 mels, 12 cepstra, their deltas) ───
 
@@ -283,6 +297,33 @@ pub fn window_distance(a: &Feats, b: &Feats) -> f64 {
 }
 
 /// How much of the loud part is voiced (a pitch).
+/// How much of a consonant a clip has (V2): the highest zero-crossing rate
+/// two frames running hold (20 ms frames) among its frames with any energy.
+/// "Hey Cru" has the breath of its h and the burst of its k (0.2 and up); a
+/// hum, voiced all through, has none (under 0.1).
+pub fn consonance(clip: &[f32]) -> f64 {
+    let (n, h) = (320usize, 160usize);
+    if clip.len() < n * 2 { return 0.0; }
+    let mut frames = vec![];
+    let mut i = 0;
+    while i + n <= clip.len() {
+        let f = &clip[i..i + n];
+        let e = f.iter().map(|x| (*x as f64).powi(2)).sum::<f64>();
+        let z = f.windows(2).filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0)).count() as f64 / n as f64;
+        frames.push((e, z));
+        i += h;
+    }
+    let peak = frames.iter().map(|f| f.0).fold(0.0, f64::max);
+    if peak <= 0.0 { return 0.0; }
+    frames.windows(2).filter(|w| w[0].0 >= peak * 0.01 && w[1].0 >= peak * 0.01).map(|w| w[0].1.min(w[1].1)).fold(0.0, f64::max)
+}
+
+/// The least consonant a wake may be: its takes' least (measured, like the
+/// wake, on the audio not denoised: RNNoise takes the h's breath and the k's
+/// burst for noise), with room, never under the hum floor (a hum: 0.03-0.05).
+const HUM_FLOOR: f64 = 0.08;
+pub fn consonance_needed(p: &Value) -> f64 { (pf(p, "consonance") * 0.6).max(HUM_FLOOR) }
+
 pub fn voiced_share(clip: &[f32]) -> f64 {
     let (n, h) = (480, 240);
     let energy = |i: usize| (0..n).map(|k| (clip[i + k] as f64).powi(2)).sum::<f64>();
@@ -352,9 +393,25 @@ pub enum Trained { Ok(Value), No { why: String, redo: Vec<usize> } }
 
 /// Train from five recordings; `make` builds the model with keyword lines and a threshold.
 pub fn train(recordings: &[Vec<f32>], make: &mut dyn FnMut(&str, f32) -> Option<Box<dyn Spot>>) -> Trained {
+    train_raw(recordings, None, make)
+}
+
+/// The part of `raw` (the segment not denoised, as long as it) that `clip`
+/// (a slice of `segment`) is; `clip` itself without one.
+pub fn same_span<'a>(segment: &[f32], clip: &'a [f32], raw: Option<&'a [f32]>) -> &'a [f32] {
+    let Some(r) = raw.filter(|r| r.len() == segment.len()) else { return clip };
+    let off = (clip.as_ptr() as usize).saturating_sub(segment.as_ptr() as usize) / std::mem::size_of::<f32>();
+    if off + clip.len() <= r.len() { &r[off..off + clip.len()] } else { clip }
+}
+
+/// [train], the keyword model hearing `raw`: each take not denoised (V2),
+/// when every take has one as long as it.
+pub fn train_raw(recordings: &[Vec<f32>], raw: Option<&[Vec<f32>]>, make: &mut dyn FnMut(&str, f32) -> Option<Box<dyn Spot>>) -> Trained {
+    let raw = raw.filter(|r| r.len() == recordings.len() && r.iter().zip(recordings).all(|(a, b)| a.len() == b.len()));
     let mut clips: Vec<Vec<f32>> = vec![];
+    let mut heard: Vec<Vec<f32>> = vec![];
     let mut redo = vec![];
-    for (i, r) in recordings.iter().enumerate() { match check_sample(r) { Ok(c) => clips.push(c.to_vec()), Err(_) => { clips.push(vec![]); redo.push(i); } } }
+    for (i, r) in recordings.iter().enumerate() { match check_sample(r) { Ok(c) => { heard.push(same_span(r, c, raw.map(|x| x[i].as_slice())).to_vec()); clips.push(c.to_vec()) }, Err(_) => { clips.push(vec![]); heard.push(vec![]); redo.push(i); } } }
     if !redo.is_empty() { return Trained::No { why: "Some recordings had nothing clear in them.".into(), redo }; }
     let templates: Vec<Feats> = clips.iter().map(|c| mfcc(c)).collect();
     let nearest: Vec<f64> = (0..templates.len()).map(|i| (0..templates.len()).filter(|j| *j != i).map(|j| distance(&templates[j], &templates[i])).fold(f64::INFINITY, f64::min)).collect();
@@ -371,14 +428,20 @@ pub fn train(recordings: &[Vec<f32>], make: &mut dyn FnMut(&str, f32) -> Option<
     let mut lens: Vec<usize> = templates.iter().map(|t| t.len()).collect(); lens.sort();
     let frames = lens[lens.len() / 2];
 
+    // The spellings the model hears in his takes (V2), with the three always.
+    let mut spellings: Vec<&str> = SPELLINGS.to_vec();
+    for sp in MORE_SPELLINGS {
+        let Some(mut spot) = make(&keyword_lines_with(&[sp], CONFIRM_THRESHOLD, KEYWORDS_SCORE), CONFIRM_THRESHOLD) else { break };
+        if heard.iter().any(|c| spotted(spot.as_mut(), &levelled(c)).iter().any(|k| k == WAKE)) { spellings.push(sp); }
+    }
     // The decoys the owner's own "Hey Cru" sets off are dropped (up to three rounds).
     let mut dropped: std::collections::HashSet<&str> = Default::default();
     for _ in 0..3 {
         let use_: Vec<(&str, &str)> = DECOYS.iter().copied().filter(|(n, _)| !dropped.contains(n)).collect();
-        let lines = competing_lines(CONFIRM_THRESHOLD, KEYWORDS_SCORE, &use_);
+        let lines = competing_lines_with(&spellings, CONFIRM_THRESHOLD, KEYWORDS_SCORE, &use_);
         let Some(mut spot) = make(&lines, CONFIRM_THRESHOLD) else { return Trained::No { why: "The keyword spotter could not be created (model files missing or damaged)".into(), redo: vec![] } };
         let mut more = false;
-        for c in &clips {
+        for c in &heard {
             for k in spotted(spot.as_mut(), &levelled(c)) {
                 if let Some(n) = k.strip_prefix("NOT_") { if let Some((name, _)) = DECOYS.iter().find(|(x, _)| *x == n) { if dropped.insert(name) { more = true; } } }
             }
@@ -390,8 +453,8 @@ pub fn train(recordings: &[Vec<f32>], make: &mut dyn FnMut(&str, f32) -> Option<
     // The strictest threshold that hears the most takes, then two notches looser.
     let (mut best, mut most) = (THRESHOLDS.len() - 1, 0);
     for (t, th) in THRESHOLDS.iter().enumerate() {
-        let Some(mut spot) = make(&competing_lines(*th, KEYWORDS_SCORE, &decoys), *th) else { continue };
-        let n = clips.iter().filter(|c| spotted(spot.as_mut(), c).iter().any(|k| k == WAKE)).count();
+        let Some(mut spot) = make(&competing_lines_with(&spellings, *th, KEYWORDS_SCORE, &decoys), *th) else { continue };
+        let n = heard.iter().filter(|c| spotted(spot.as_mut(), c).iter().any(|k| k == WAKE)).count();
         if n > most { most = n; best = t; }
         if n == clips.len() { break; }
     }
@@ -401,7 +464,8 @@ pub fn train(recordings: &[Vec<f32>], make: &mut dyn FnMut(&str, f32) -> Option<
     let tpl: Vec<Vec<Vec<f64>>> = all.iter().map(|t| t.iter().map(|f| f.iter().map(|x| r3(*x)).collect()).collect()).collect();
     Trained::Ok(json!({
         "version": 4,
-        "keyword": keyword_lines(threshold, KEYWORDS_SCORE),
+        "keyword": keyword_lines_with(&spellings, threshold, KEYWORDS_SCORE),
+        "spellings": spellings,
         "keywordsScore": KEYWORDS_SCORE,
         "keywordsThreshold": threshold,
         "limit": r3(spread * LIMIT_MARGIN),
@@ -411,6 +475,7 @@ pub fn train(recordings: &[Vec<f32>], make: &mut dyn FnMut(&str, f32) -> Option<
         "modelHeard": most,
         "decoys": decoys.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
         "windowLimit": window_limit_of(&templates),
+        "consonance": r3(heard.iter().map(|c| consonance(c)).fold(f64::INFINITY, f64::min)),
         "templates": tpl,
         "trainedAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
     }))
@@ -428,6 +493,8 @@ pub fn templates_of(p: &Value) -> Vec<Feats> {
 }
 
 pub fn verify_limit(p: &Value) -> f64 { pf(p, "limit") / LIMIT_MARGIN * STRICT_MARGIN }
+/// The strict limit a phrase must meet, from the profile's limit (when it has no strictLimit of its own).
+pub fn strict_limit_of(limit: f64) -> f64 { limit / LIMIT_MARGIN * STRICT_MARGIN }
 pub fn strict_limit(p: &Value) -> f64 { if pf(p, "strictLimit") > 0.0 { pf(p, "strictLimit") } else { pf(p, "limit") / LIMIT_MARGIN * STRICT_MARGIN } }
 pub fn window_limit(p: &Value, tpl: &[Feats]) -> f64 {
     if pf(p, "windowLimit") > 0.0 { return pf(p, "windowLimit"); }
@@ -445,7 +512,14 @@ pub fn verify(p: &Value, tpl: &[Feats], recent: &[f32]) -> (bool, f64) {
 
 /// A burst matched against the owner's phrase; `confirm` is the model's second opinion.
 pub fn match_phrase(p: &Value, tpl: &[Feats], segment: &[f32], confirm: Option<&mut dyn FnMut(&[f32]) -> Vec<String>>) -> (bool, f64, &'static str) {
+    match_phrase_raw(p, tpl, segment, None, confirm)
+}
+
+/// [match_phrase], the model's second opinion on `raw`: the same segment
+/// not denoised (V2), the same samples as the trimmed clip.
+pub fn match_phrase_raw(p: &Value, tpl: &[Feats], segment: &[f32], raw: Option<&[f32]>, confirm: Option<&mut dyn FnMut(&[f32]) -> Vec<String>>) -> (bool, f64, &'static str) {
     let Ok(clip) = check_sample(segment) else { return (false, f64::INFINITY, "length") };
+    let heard = same_span(segment, clip, raw);
     let frames = pf(p, "phraseFrames");
     let len = (clip.len() as f64 - 400.0) / 160.0 + 1.0;
     if len < frames * LENGTH_RANGE.0 || len > frames * LENGTH_RANGE.1 { return (false, f64::INFINITY, "length"); }
@@ -459,10 +533,20 @@ pub fn match_phrase(p: &Value, tpl: &[Feats], segment: &[f32], confirm: Option<&
         let w = tpl.iter().map(|t| window_distance(t, &feats).max(window_distance(&feats, t))).fold(f64::INFINITY, f64::min);
         if w > wl { return (false, score, "onset"); }
     }
-    if let Some(c) = confirm {
-        let names = c(&levelled(clip));
-        if !names.iter().any(|k| k == WAKE) { return (false, score, if names.is_empty() { "no word" } else { "decoy" }); }
-        if (p.get("modelHeard").and_then(|v| v.as_i64()).unwrap_or(0)) < MODEL_TRUSTED && names.iter().any(|k| k != WAKE) { return (false, score, "decoy"); }
+    // V2, the owner: "the way I say Hey Cru is what it should train on".
+    // Where the model hears this voice (most of the takes), it must hear
+    // "Hey Cru" here too and no decoy beside it. Where it doesn't, its word
+    // is no veto: the owner's own takes decide (the phrase, its onset, and
+    // the voice check after this), and the hum a model-less match once let
+    // through (12 Nov) is kept out by the consonants his takes have.
+    let trusted = p.get("modelHeard").and_then(|v| v.as_i64()).unwrap_or(0) >= MODEL_TRUSTED;
+    if trusted {
+        if let Some(c) = confirm {
+            let names = c(&levelled(heard));
+            if !names.iter().any(|k| k == WAKE) { return (false, score, if names.is_empty() { "no word" } else { "decoy" }); }
+        }
+    } else if consonance(heard) < consonance_needed(p) {
+        return (false, score, "hum");
     }
     (true, score, "")
 }
@@ -497,6 +581,18 @@ impl Segmenter {
 
 #[cfg(test)]
 mod tests {
+    /// V2: a hum has no consonant; a burst of breath and a click has.
+    #[test]
+    fn consonance_tells_a_hum() {
+        let hum: Vec<f32> = (0..RATE * 6 / 10).map(|i| { let t = i as f32 / RATE as f32; let env = (std::f32::consts::PI * t / 0.6).sin(); env * 0.3 * ((2.0 * std::f32::consts::PI * 150.0 * t).sin() + 0.5 * (2.0 * std::f32::consts::PI * 300.0 * t).sin() + 0.25 * (2.0 * std::f32::consts::PI * 450.0 * t).sin()) }).collect();
+        assert!(consonance(&hum) < HUM_FLOOR, "a hum: {}", consonance(&hum));
+        let mut seed = 1u32;
+        let mut noise = || { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); ((seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5) * 0.2 };
+        let breath: Vec<f32> = (0..RATE / 10).map(|_| noise()).collect();
+        let word = [breath, hum.clone()].concat();
+        assert!(consonance(&word) >= HUM_FLOOR, "breath then voice: {}", consonance(&word));
+    }
+
     use super::*;
 
     fn tone(ms: usize, hz: f32, amp: f32) -> Vec<f32> { (0..RATE * ms / 1000).map(|i| amp * (2.0 * std::f32::consts::PI * hz * i as f32 / RATE as f32).sin()).collect() }

@@ -2,8 +2,10 @@
 //! view is first needed, the link's two threads, the views it holds (each
 //! an engine panel or a frame), and stopping it.
 //!
-//! - Lazy: no host at launch. `open_view` starts it; commands sent before
-//!   it is up wait in the link (it reads them once CEF has started).
+//! - Lazy: no host at launch. `open_view` starts it, off the main thread
+//!   (the process's start can take seconds on a cold disk or under a virus
+//!   scan, and the window must keep answering); commands sent before it is
+//!   up wait in the link (it reads them once CEF has started).
 //! - Idle: with no view for `idle_grace()` (CRUNDI_BROWSER_IDLE_SECS,
 //!   default 60) and nothing keeping it (the drawer open: `set_keep_alive`),
 //!   it is asked to stop, and killed if it hasn't within 3 s.
@@ -40,7 +42,7 @@ pub enum Owner { Panel(usize), Frame(String) }
 pub enum State { Off, Starting, Up, Stopping }
 
 /// What the reader hands the main thread, with the link's generation.
-enum In { Ev(u32, Ev), Frame(u32, u64, Arc<RenderImage>), Gone(u32) }
+enum In { Ev(u32, Ev), Frame(u32, u64, Arc<RenderImage>), Gone(u32), Started(u32, Child), NotStarted(u32, String) }
 
 static INBOX: Mutex<Vec<In>> = Mutex::new(Vec::new());
 /// Frames the app took from the host (every view, every host this run).
@@ -76,6 +78,8 @@ struct Client {
     config_dir: PathBuf,
     reaped: Option<u32>,
     last_error: String,
+    /// When the host now starting was started (the booting overlay's 10 s line).
+    started_at: Option<Instant>,
     /// The host's last counters (`Ev::Stats`).
     stats: Value,
 }
@@ -84,10 +88,14 @@ thread_local! {
     static C: RefCell<Client> = RefCell::new(Client {
         state: State::Off, epoch: 0, child: None, pid: 0, out: None, owners: HashMap::new(), next: 1,
         idle_since: None, stop_at: None, starts: 0, crashes: 0, failures: 0, available: true,
-        config_dir: PathBuf::new(), reaped: None, last_error: String::new(), stats: Value::Null,
+        config_dir: PathBuf::new(), reaped: None, last_error: String::new(), started_at: None, stats: Value::Null,
     });
     static KEEP_ALIVE: Cell<fn() -> bool> = const { Cell::new(|| false) };
 }
+
+/// The test driver: the next host start slowed this long (ms), once.
+static TEST_DELAY_ONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub fn test_delay_next_start(ms: u64) { TEST_DELAY_ONCE.store(ms, std::sync::atomic::Ordering::Relaxed); }
 
 fn with<R>(f: impl FnOnce(&mut Client) -> R) -> R { C.with(|c| f(&mut c.borrow_mut())) }
 
@@ -171,33 +179,44 @@ fn ensure() -> bool {
 }
 
 fn spawn() -> bool {
-    crate::proc::clear_stale_locks(&crate::common::cef_root());
-    let sp = match crate::proc::spawn_host() {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("[browser] the browser host did not start: {e}");
-            with(|c| { c.available = false; c.last_error = e.to_string(); });
-            return false;
-        }
-    };
-    let pid = sp.child.id();
+    // No host beside the app: no browser this run (known at once, a file's look).
+    if let Err(e) = crate::proc::host_exe() {
+        eprintln!("[browser] the browser host did not start: {e}");
+        with(|c| { c.available = false; c.last_error = e.to_string(); });
+        return false;
+    }
     let epoch = with(|c| { c.epoch += 1; c.epoch });
     let (otx, orx) = mpsc::channel::<Vec<u8>>();
-    let mut sender = sp.send;
-    std::thread::Builder::new().name("browser-host-out".into()).spawn(move || {
-        for b in orx { if sender(&b, None).is_err() { break; } }
-    }).ok();
     let ack = otx.clone();
-    let mut recv = sp.recv;
-    std::thread::Builder::new().name("browser-host-in".into()).spawn(move || reader(epoch, &mut recv, ack)).ok();
-    let dir = with(|c| {
-        c.state = State::Starting; c.child = Some(sp.child); c.pid = pid; c.out = Some(otx);
-        c.starts += 1; c.idle_since = None; c.stop_at = None; c.stats = Value::Null;
-        c.config_dir.clone()
+    // The process is made on a thread of its own: the window keeps
+    // answering while it starts. What is sent meanwhile waits in `orx`.
+    let made = std::thread::Builder::new().name("browser-host-start".into()).spawn(move || {
+        crate::proc::clear_stale_locks(&crate::common::cef_root());
+        // The test driver's slow start (a cold disk, a virus scan): the window must keep answering.
+        if std::env::var_os("CRUNDI_TEST_PORT").is_some() {
+            let once = TEST_DELAY_ONCE.swap(0, std::sync::atomic::Ordering::Relaxed);
+            let ms = if once > 0 { Some(once) } else { std::env::var("CRUNDI_TEST_HOST_START_DELAY_MS").ok().and_then(|v| v.parse::<u64>().ok()) };
+            if let Some(ms) = ms { std::thread::sleep(Duration::from_millis(ms)); }
+        }
+        let push = |m: In| { INBOX.lock().unwrap().push(m); crate::wake(); };
+        let sp = match crate::proc::spawn_host() { Ok(s) => s, Err(e) => return push(In::NotStarted(epoch, e.to_string())) };
+        let mut recv = sp.recv;
+        let mut sender = sp.send;
+        push(In::Started(epoch, sp.child));
+        std::thread::Builder::new().name("browser-host-in".into()).spawn(move || reader(epoch, &mut recv, ack)).ok();
+        // This thread then writes the link.
+        for b in orx { if sender(&b, None).is_err() { break; } }
     });
-    if !dir.as_os_str().is_empty() { crate::proc::write_pid(&dir, pid); }
+    if let Err(e) = made {
+        eprintln!("[browser] the browser host did not start: {e}");
+        with(|c| { c.available = false; c.last_error = e.to_string(); });
+        return false;
+    }
+    with(|c| {
+        c.state = State::Starting; c.child = None; c.pid = 0; c.out = Some(otx); c.started_at = Some(Instant::now());
+        c.starts += 1; c.idle_since = None; c.stop_at = None; c.stats = Value::Null;
+    });
     send(Cmd::Hello { textures: crate::gpu::mode() == crate::gpu::Mode::Texture });
-    eprintln!("[browser] browser host started (pid {pid})");
     true
 }
 
@@ -261,6 +280,8 @@ pub fn waiting() -> Vec<String> {
     INBOX.lock().unwrap().iter().map(|m| match m {
         In::Frame(_, id, _) => format!("frame:{id}"),
         In::Gone(_) => "gone".to_string(),
+        In::Started(..) => "started".to_string(),
+        In::NotStarted(..) => "not-started".to_string(),
         In::Ev(_, e) => { let d = format!("{e:?}"); let name: String = d.chars().take_while(|c| c.is_alphanumeric()).collect(); match ev_id(e) { Some(id) => format!("{name}:{id}"), None => name } }
     }).collect()
 }
@@ -270,7 +291,20 @@ pub fn pump() {
     for m in all {
         let cur = with(|c| c.epoch);
         match m {
-            In::Ev(g, _) | In::Frame(g, ..) | In::Gone(g) if g != cur => {}
+            // A host started for a link given up meanwhile: it goes at once.
+            In::Started(g, mut ch) if g != cur => { crate::proc::kill_tree(ch.id()); std::thread::spawn(move || { let _ = ch.wait(); }); }
+            In::Ev(g, _) | In::Frame(g, ..) | In::Gone(g) | In::NotStarted(g, _) if g != cur => {}
+            In::Started(_, ch) => {
+                let pid = ch.id();
+                let dir = with(|c| { c.child = Some(ch); c.pid = pid; c.config_dir.clone() });
+                if !dir.as_os_str().is_empty() { crate::proc::write_pid(&dir, pid); }
+                eprintln!("[browser] browser host started (pid {pid})");
+            }
+            In::NotStarted(_, e) => {
+                eprintln!("[browser] the browser host did not start: {e}");
+                with(|c| { c.available = false; c.last_error = e; });
+                gone();
+            }
             In::Frame(_, id, img) => match owner(id) {
                 Some(Owner::Panel(i)) => crate::engine::on_frame(i, id, img),
                 Some(Owner::Frame(k)) => crate::frames::on_frame(&k, id, img),
@@ -302,7 +336,8 @@ fn ev_id(e: &Ev) -> Option<u64> {
     Some(match e {
         Ev::Shm { id, .. } | Ev::Paint { id, .. } | Ev::Loading { id, .. } | Ev::LoadError { id, .. } | Ev::LoadEnd { id, .. }
         | Ev::Title { id, .. } | Ev::Address { id, .. } | Ev::Cursor { id, .. } | Ev::Console { id, .. } | Ev::Popup { id, .. }
-        | Ev::Scrolled { id } | Ev::Net { id, .. } | Ev::CdpResult { id, .. } | Ev::Gone { id, .. } | Ev::Closed { id } | Ev::Texture { id, .. } => *id,
+        | Ev::Scrolled { id } | Ev::Net { id, .. } | Ev::CdpResult { id, .. } | Ev::Gone { id, .. } | Ev::Closed { id } | Ev::Texture { id, .. }
+        | Ev::Download { id, .. } | Ev::Downloaded { id, .. } => *id,
         Ev::Ready { .. } | Ev::Failed { .. } | Ev::Stats { .. } => return None,
     })
 }
@@ -341,6 +376,8 @@ pub(crate) fn next_due() -> Option<Instant> {
     with(|c| match c.state {
         State::Stopping => c.stop_at.map(|t| t + Duration::from_secs(3) + Duration::from_millis(10)),
         State::Starting | State::Up if c.owners.is_empty() && !KEEP_ALIVE.with(|k| k.get())() => Some(c.idle_since.unwrap_or_else(Instant::now) + idle_grace()),
+        // The booting overlay's second line, due at 10 s.
+        State::Starting => c.started_at.map(|t| t + BOOT_SLOW).filter(|t| *t > Instant::now()),
         _ => None,
     })
 }
@@ -397,13 +434,38 @@ pub fn shutdown() {
     drop_pid();
 }
 
+/// After this long starting, the booting overlay adds its second line.
+pub const BOOT_SLOW: Duration = Duration::from_secs(10);
+
+/// What a surface waiting for the host shows over itself (the booting
+/// overlay): the host starting (slow: past BOOT_SLOW), or its start failed
+/// (the error). None: up, or not wanted.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Boot { Starting { slow: bool }, Failed(String) }
+
+pub fn boot() -> Option<Boot> {
+    with(|c| match c.state {
+        State::Starting => Some(Boot::Starting { slow: c.started_at.is_some_and(|t| t.elapsed() >= BOOT_SLOW) }),
+        State::Off if !c.available && !c.last_error.is_empty() => Some(Boot::Failed(c.last_error.clone())),
+        _ => None,
+    })
+}
+
+/// The booting overlay's Retry: the browser available again and started.
+pub fn retry() {
+    with(|c| { c.available = true; c.last_error.clear(); c.failures = 0; });
+    let _ = ensure();
+}
+
 /// The driver's view (props "browserHost").
 pub fn props() -> Value {
+    let b = boot();
     with(|c| json!({
         "state": match c.state { State::Off => "off", State::Starting => "starting", State::Up => "up", State::Stopping => "stopping" },
         "pid": if c.state == State::Off { Value::Null } else { json!(c.pid) },
         "views": c.owners.len(), "starts": c.starts, "crashes": c.crashes, "available": c.available,
         "reaped": c.reaped, "idleSecs": idle_grace().as_secs_f64(), "unloadSecs": unload_grace().as_secs_f64(), "error": c.last_error,
+        "boot": match &b { Some(Boot::Starting { slow }) => json!(if *slow { "slow" } else { "starting" }), Some(Boot::Failed(_)) => json!("failed"), None => Value::Null },
         // Frames: taken by the app (all hosts this run), and the running
         // host's counters (sent, not sent as unchanged or hidden, bytes
         // copied into segments, GPU frames); the GPU path's mode.

@@ -14,6 +14,7 @@ pub mod engine;
 pub mod enroll;
 
 use crate::ctx as kit;
+use crundi_core::capture::Clean;
 use crundi_theme::{IconName, T};
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
@@ -51,7 +52,7 @@ enum Ctl { Profile(Value), Feed(Vec<f32>), Stop }
 
 /// The training's state (the web's vwt).
 #[derive(Default)]
-struct Train { active: bool, recs: Vec<Option<Vec<f32>>>, todo: Vec<usize>, pos: usize, rec: Option<(Vec<f32>, f64, bool, usize)>, msg: String, bad: bool, busy: bool, level: f32, stop: Option<Arc<AtomicBool>> }
+struct Train { active: bool, recs: Vec<Option<Vec<f32>>>, raws: Vec<Option<Vec<f32>>>, raw_rec: Vec<f32>, todo: Vec<usize>, pos: usize, rec: Option<(Vec<f32>, f64, bool, usize)>, msg: String, bad: bool, busy: bool, level: f32, stop: Option<Arc<AtomicBool>> }
 
 #[derive(Default)]
 struct St {
@@ -71,6 +72,8 @@ struct St {
     last_heard: Option<(String, Instant)>,
     log: Vec<String>,
     checked_at: Option<Instant>,
+    /// The wall clock at that look: a gap far past CHECK_EVERY means the PC slept.
+    checked_wall: Option<std::time::SystemTime>,
     started: bool,
 }
 
@@ -101,7 +104,16 @@ fn save_enabled(on: bool) -> bool {
 // ─── The conditions ───
 
 /// On battery? (Linux: a mains supply says offline; macOS: pmset; Windows: assumed on AC.)
-fn read_power() -> bool {
+pub fn read_power() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+        // SAFETY: a plain call filling a sized struct.
+        let mut st: SYSTEM_POWER_STATUS = unsafe { std::mem::zeroed() };
+        // ACLineStatus: 0 offline (on battery), 1 online, 255 unknown.
+        return unsafe { GetSystemPowerStatus(&mut st) } != 0 && st.ACLineStatus == 0;
+    }
+    #[allow(unreachable_code)]
     if cfg!(target_os = "linux") {
         let Ok(rd) = std::fs::read_dir("/sys/class/power_supply") else { return false };
         let mains: Vec<bool> = rd.flatten().filter(|e| std::fs::read_to_string(e.path().join("type")).is_ok_and(|t| t.trim() == "Mains"))
@@ -112,8 +124,12 @@ fn read_power() -> bool {
     } else { false }
 }
 
-/// The screen locked? (Linux: logind's LockedHint; elsewhere: not known, so no.)
-fn read_locked() -> bool {
+/// The screen locked? (Linux: logind's LockedHint; Windows: the input
+/// desktop is Winlogon's (idle.rs); macOS: not known, so no.)
+pub fn read_locked() -> bool {
+    #[cfg(target_os = "windows")]
+    { return crate::idle::screen_locked(); }
+    #[allow(unreachable_code)]
     if !cfg!(target_os = "linux") { return false; }
     let Ok(o) = std::process::Command::new("loginctl").args(["show-session", "auto", "-p", "LockedHint", "--value"]).output() else { return false };
     String::from_utf8_lossy(&o.stdout).trim() == "yes"
@@ -163,9 +179,19 @@ pub fn tick() {
     let due = with(|s| checks(s) && s.checked_at.is_none_or(|t| t.elapsed() >= CHECK_EVERY));
     if due {
         let (b, l) = (read_power(), read_locked());
-        with(|s| { s.checked_at = Some(Instant::now()); s.on_battery = s.test_power.unwrap_or(b); s.locked = s.test_lock.unwrap_or(l); });
+        let now = std::time::SystemTime::now();
+        let slept = with(|s| s.checked_wall.is_some_and(|w| resumed(w, now)));
+        with(|s| { s.checked_at = Some(Instant::now()); s.checked_wall = Some(now); s.on_battery = s.test_power.unwrap_or(b); s.locked = s.test_lock.unwrap_or(l); });
+        // Back from sleep (powerMonitor 'resume'): the microphone a sleep
+        // interrupted does not come back by itself, so the worker starts again.
+        if slept && with(|s| s.worker.is_some()) { log("resumed from sleep: listening again".into()); stop_worker(); }
     }
     reconcile();
+}
+
+/// The PC slept between two looks 2 s apart: the wall clock moved on much further.
+fn resumed(before: std::time::SystemTime, now: std::time::SystemTime) -> bool {
+    now.duration_since(before).is_ok_and(|d| d > CHECK_EVERY + Duration::from_secs(30))
 }
 
 fn reconcile() {
@@ -203,25 +229,35 @@ fn start_worker() {
         let mut wake = match engine::Wake::new(&profile) { Ok(w) => w, Err(e) => { kit::main_thread(move || { with(|s| s.mic_error = e); redraw(); }); return; } };
         let owner = engine::Owner::load();
         // The microphone (or nothing, under the test driver without one: fed only).
-        let (mtx, mrx) = mpsc::channel::<Vec<f32>>();
+        let (mtx, mrx) = mpsc::channel::<(Vec<f32>, Vec<f32>)>();
         let mic_ok = mic(mtx, s2.clone());
         if let Err(e) = &mic_ok { if std::env::var_os("CRUNDI_TEST_PORT").is_none() { let e = e.clone(); kit::main_thread(move || { with(|s| s.mic_error = e); redraw(); }); return; } }
         kit::main_thread(|| { with(|s| s.ready = true); log("listening".into()); redraw(); });
         let mut current = profile;
         loop {
             if s2.load(Ordering::Relaxed) { return; }
-            let mut blocks: Vec<Vec<f32>> = vec![];
+            let mut blocks: Vec<(Vec<f32>, Vec<f32>)> = vec![];
             while let Ok(c) = rx.try_recv() {
                 match c {
                     Ctl::Stop => return,
                     Ctl::Profile(p) => { if let Ok(w) = engine::Wake::new(&p) { wake = w; current = p; } }
-                    Ctl::Feed(s) => { for c in s.chunks(1600) { blocks.push(c.to_vec()); } blocks.push(vec![0.0; enroll::RATE]); }
+                    Ctl::Feed(s) => { for c in s.chunks(1600) { blocks.push((c.to_vec(), c.to_vec())); } blocks.push((vec![0.0; enroll::RATE], vec![0.0; enroll::RATE])); }
                 }
             }
             while let Ok(b) = mrx.try_recv() { blocks.push(b); }
             if blocks.is_empty() { std::thread::sleep(Duration::from_millis(30)); continue; }
-            for b in blocks {
-                let Some(h) = wake.accept(&b) else { continue };
+            for (b, braw) in blocks {
+                let h = wake.accept_both(&b, &braw);
+                // A phrase that was not quite it (T16): its match, to tell a miss from not hearing at all.
+                // (its gate, and the burst kept in voice-wake/misses/ to replay a miss.)
+                if let Some((score, limit, why, clip)) = wake.near_miss.take() {
+                    let file = keep_miss(&format!("phrase-{why}-{score:.3}"), &clip);
+                    // (and its undenoised twin, what the model and the hum guard heard)
+                    if let Some(r) = wake.last_raw.take() { let _ = keep_miss(&format!("phrase-{why}-{score:.3}-raw"), &r); }
+                    kit::main_thread(move || log(format!("near miss: a phrase matched {score:.3} (strict limit {:.3} of {limit:.3}), refused by the {why} check{file}", enroll::strict_limit_of(limit))));
+                }
+                let Some(h) = h else { continue };
+                if !h.ok { let file = keep_miss(&format!("model-{:.3}", h.score), &h.clip); if !file.is_empty() { kit::main_thread(move || log(format!("the model's hit kept{file}"))); } }
                 // The owner's voice, when the profile has it (ownerChecked).
                 let mut verdict = if h.ok { "detected" } else { "rejected" };
                 let mut voice = Value::Null;
@@ -230,6 +266,7 @@ fn start_worker() {
                         let (ok, s) = o.check(&current["voice"], &h.clip);
                         voice = json!(s);
                         if ok == Some(false) { verdict = "rejected"; wake.refused(); }
+                        if ok.is_none() { let s2 = s; kit::main_thread(move || log(format!("the owner's voice check could not tell (score {s2:.3})"))); }
                     }
                 }
                 let (kw, score, via) = (h.keyword.clone(), h.score, h.via);
@@ -237,6 +274,29 @@ fn start_worker() {
             }
         }
     });
+}
+
+/// A refused wake's audio (16 kHz mono WAV) in voice-wake/misses/, the
+/// last 20 kept: to replay a miss on the owner's own microphone (T16).
+fn keep_miss(name: &str, clip: &[f32]) -> String {
+    let d = dir().join("misses");
+    if std::fs::create_dir_all(&d).is_err() || clip.is_empty() { return String::new(); }
+    let pcm: Vec<u8> = clip.iter().flat_map(|x| (((x.clamp(-1.0, 1.0)) * 32767.0) as i16).to_le_bytes()).collect();
+    let rate = enroll::RATE as u32;
+    let mut w = Vec::with_capacity(44 + pcm.len());
+    w.extend_from_slice(b"RIFF"); w.extend_from_slice(&(36 + pcm.len() as u32).to_le_bytes()); w.extend_from_slice(b"WAVEfmt ");
+    w.extend_from_slice(&16u32.to_le_bytes()); w.extend_from_slice(&1u16.to_le_bytes()); w.extend_from_slice(&1u16.to_le_bytes());
+    w.extend_from_slice(&rate.to_le_bytes()); w.extend_from_slice(&(rate * 2).to_le_bytes()); w.extend_from_slice(&2u16.to_le_bytes()); w.extend_from_slice(&16u16.to_le_bytes());
+    w.extend_from_slice(b"data"); w.extend_from_slice(&(pcm.len() as u32).to_le_bytes()); w.extend_from_slice(&pcm);
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let f = d.join(format!("{ms}-{name}.wav"));
+    if std::fs::write(&f, w).is_err() { return String::new(); }
+    if let Ok(rd) = std::fs::read_dir(&d) {
+        let mut all: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wav")).collect();
+        all.sort();
+        while all.len() > 20 { let _ = std::fs::remove_file(all.remove(0)); }
+    }
+    format!(" ({})", f.display())
 }
 
 fn stop_worker() {
@@ -249,51 +309,54 @@ fn heard(verdict: &str, keyword: &str, score: f64, via: &str, voice: Value) {
     log(format!("heard {keyword} (match {score}) via {via}, owner's voice {voice}"));
     with(|s| s.last_heard = Some((keyword.to_string(), Instant::now())));
     kit::raise();
-    if !voice_open() { crate::cru::open(false); }
+    // V7: a wake by voice is voice mode, even if Cru was last used by keyboard.
+    crate::cru::open_by_voice();
     redraw();
 }
 
 /// The microphone at 16 kHz mono, in blocks, until `stop` (a thread of its
 /// own holds the stream; its setup's answer comes back first).
-fn mic(out: mpsc::Sender<Vec<f32>>, stop: Arc<AtomicBool>) -> Result<(), String> {
+fn mic(out: mpsc::Sender<(Vec<f32>, Vec<f32>)>, stop: Arc<AtomicBool>) -> Result<(), String> {
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
     std::thread::spawn(move || {
         use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-        let setup = || -> Result<(cpal::Stream, usize, mpsc::Receiver<Vec<f32>>), String> {
+        let setup = || -> Result<(cpal::Stream, usize, mpsc::Receiver<(Vec<f32>, Vec<f32>)>), String> {
             let host = cpal::default_host();
             let dev = host.default_input_device().ok_or("no microphone")?;
             let cfg = dev.default_input_config().map_err(|e| e.to_string())?;
             let (rate, ch) = (cfg.sample_rate().0 as usize, cfg.channels() as usize);
-            let (tx, rx) = mpsc::channel::<Vec<f32>>();
+            // What it hears from (T16): to tell a wrong device or format from a quiet microphone.
+            let what = format!("microphone: {} ({:?}, {} Hz, {} channel{}), denoised, low-passed to 16 kHz mono", dev.name().unwrap_or_else(|_| "?".into()), cfg.sample_format(), rate, ch, if ch == 1 { "" } else { "s" });
+            kit::main_thread(move || log(what));
+            let (tx, rx) = mpsc::channel::<(Vec<f32>, Vec<f32>)>();
             let err = |e| eprintln!("[voice-wake] microphone: {e}");
             let stream = match cfg.sample_format() {
-                cpal::SampleFormat::F32 => { let o = tx.clone(); dev.build_input_stream(&cfg.into(), move |d: &[f32], _| { let _ = o.send(crundi_core::voice::mono(d, ch)); }, err, None) }
-                cpal::SampleFormat::I16 => { let o = tx.clone(); dev.build_input_stream(&cfg.into(), move |d: &[i16], _| { let f: Vec<f32> = d.iter().map(|x| *x as f32 / 32768.0).collect(); let _ = o.send(crundi_core::voice::mono(&f, ch)); }, err, None) }
+                cpal::SampleFormat::F32 => { let o = tx.clone(); let mut c = Clean::for_wake(rate as u32); dev.build_input_stream(&cfg.into(), move |d: &[f32], _| { let b = c.push_both(&crundi_core::voice::mono(d, ch)); if !b.0.is_empty() { let _ = o.send(b); } }, err, None) }
+                cpal::SampleFormat::I16 => { let o = tx.clone(); let mut c = Clean::for_wake(rate as u32); dev.build_input_stream(&cfg.into(), move |d: &[i16], _| { let f: Vec<f32> = d.iter().map(|x| *x as f32 / 32768.0).collect(); let b = c.push_both(&crundi_core::voice::mono(&f, ch)); if !b.0.is_empty() { let _ = o.send(b); } }, err, None) }
                 _ => return Err("this microphone's format is not supported".into()),
             }.map_err(|e| e.to_string())?;
             stream.play().map_err(|e| e.to_string())?;
-            Ok((stream, rate, rx))
+            // Cleaned (capture.rs, as Chromium cleans Electron's): out at 48 kHz.
+            Ok((stream, crundi_core::capture::OUT_RATE as usize, rx))
         };
         let (stream, rate, rx) = match setup() { Ok(x) => { let _ = ready_tx.send(Ok(())); x } Err(e) => { let _ = ready_tx.send(Err(e)); return; } };
         let _keep = stream;
-        let mut pos = 0.0f64;
-        let step = rate as f64 / enroll::RATE as f64;
-        let mut carry: Vec<f32> = vec![];
+        let (mut down, mut down_raw) = (engine::To16::new(rate), engine::To16::new(rate));
+        // The input level, logged every 30 s: its loudest 100 ms and its median (dBFS).
+        let (mut lv, mut acc, mut n, mut since) = (Vec::<f64>::new(), 0f64, 0usize, Instant::now());
         while !stop.load(Ordering::Relaxed) {
-            while let Ok(b) = rx.try_recv() {
-                carry.extend(b);
-                // To 16 kHz: the mean of each step's samples.
-                let mut o = vec![];
-                while pos + step <= carry.len() as f64 {
-                    let a = pos as usize;
-                    let z = ((pos + step) as usize).min(carry.len()).max(a + 1);
-                    o.push(carry[a..z].iter().sum::<f32>() / (z - a) as f32);
-                    pos += step;
+            while let Ok((b, braw)) = rx.try_recv() {
+                let o = down.push(&b);
+                let mut r = down_raw.push(&braw);
+                r.resize(o.len(), 0.0);
+                for x in &o { acc += (*x as f64).powi(2); n += 1; if n == enroll::RATE / 10 { lv.push(10.0 * (acc / n as f64 + 1e-12).log10()); acc = 0.0; n = 0; } }
+                if since.elapsed() >= Duration::from_secs(30) && !lv.is_empty() {
+                    lv.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                    let line = format!("input level: loudest {:.0} dBFS, median {:.0} dBFS", lv[lv.len() - 1], lv[lv.len() / 2]);
+                    kit::main_thread(move || log(line));
+                    lv.clear(); since = Instant::now();
                 }
-                let used = (pos as usize).min(carry.len());
-                carry.drain(..used);
-                pos -= used as f64;
-                if !o.is_empty() && out.send(o).is_err() { return; }
+                if !o.is_empty() && out.send((o, r)).is_err() { return; }
             }
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -317,7 +380,7 @@ pub fn set(on: bool) {
 /// Train: five recordings, from the start.
 pub fn train_start() {
     if with(|s| s.training.active) { return; }
-    with(|s| s.training = Train { active: true, recs: vec![None; enroll::SAMPLES_NEEDED], todo: (0..enroll::SAMPLES_NEEDED).collect(), msg: "Click Record, then say “Hey Cru” the way you normally would.".into(), ..Default::default() });
+    with(|s| s.training = Train { active: true, recs: vec![None; enroll::SAMPLES_NEEDED], raws: vec![None; enroll::SAMPLES_NEEDED], todo: (0..enroll::SAMPLES_NEEDED).collect(), msg: "Click Record, then say “Hey Cru” the way you normally would.".into(), ..Default::default() });
     log("training started".into());
     reconcile();
     if !engine::installed() && !with(|s| s.installing) { install(); }
@@ -341,17 +404,17 @@ pub fn record() {
         if with(|s| s.training.rec.is_some()) { finish(); }
         return;
     }
-    let (tx, rx) = mpsc::channel::<Vec<f32>>();
+    let (tx, rx) = mpsc::channel::<(Vec<f32>, Vec<f32>)>();
     let stop = Arc::new(AtomicBool::new(false));
     if let Err(e) = mic(tx, stop.clone()) {
         with(|s| { s.training.msg = format!("Could not open the microphone: {e}"); s.training.bad = true; });
         return redraw();
     }
-    with(|s| { s.training.rec = Some((vec![], 1.0, false, 0)); s.training.stop = Some(stop.clone()); });
+    with(|s| { s.training.rec = Some((vec![], 1.0, false, 0)); s.training.raw_rec.clear(); s.training.stop = Some(stop.clone()); });
     // The blocks to the main thread, while it records.
     std::thread::spawn(move || {
         while !stop.load(Ordering::Relaxed) {
-            match rx.recv_timeout(Duration::from_millis(100)) { Ok(b) => kit::main_thread(move || feed(&b)), Err(mpsc::RecvTimeoutError::Timeout) => {}, Err(_) => return }
+            match rx.recv_timeout(Duration::from_millis(100)) { Ok((b, r)) => kit::main_thread(move || { with(|s| if s.training.rec.is_some() { s.training.raw_rec.extend_from_slice(&r) }); feed(&b) }), Err(mpsc::RecvTimeoutError::Timeout) => {}, Err(_) => return }
         }
     });
     redraw();
@@ -374,16 +437,21 @@ fn feed(c: &[f32]) {
 
 fn finish() {
     let Some((all, ..)) = with(|s| { if let Some(st) = s.training.stop.take() { st.store(true, Ordering::Relaxed); } s.training.rec.take() }) else { return };
-    take(all);
+    let raw = with(|s| std::mem::take(&mut s.training.raw_rec));
+    take_both(all, Some(raw));
 }
 
 /// A take in: checked, kept; after the last, trained.
-pub fn take(all: Vec<f32>) {
+pub fn take(all: Vec<f32>) { take_both(all, None) }
+
+/// A take and the same take not denoised (the keyword model's, V2).
+fn take_both(all: Vec<f32>, raw: Option<Vec<f32>>) {
     let Some(i) = with(|s| s.training.todo.get(s.training.pos).copied()) else { return };
     match enroll::check_sample(&all) {
         Err(why) => with(|s| { s.training.msg = format!("{why} Record it again."); s.training.bad = true; }),
         Ok(_) => {
-            let more = with(|s| { s.training.recs[i] = Some(all); s.training.pos += 1; s.training.bad = false; let more = s.training.pos < s.training.todo.len(); if more { s.training.msg = "Got it.".into(); } more });
+            let raw = raw.filter(|r| r.len() == all.len());
+            let more = with(|s| { s.training.raws[i] = raw; s.training.recs[i] = Some(all); s.training.pos += 1; s.training.bad = false; let more = s.training.pos < s.training.todo.len(); if more { s.training.msg = "Got it.".into(); } more });
             if !more { return train(); }
         }
     }
@@ -392,11 +460,13 @@ pub fn take(all: Vec<f32>) {
 
 fn train() {
     let recs: Vec<Vec<f32>> = with(|s| { s.training.busy = true; s.training.msg.clear(); s.training.recs.iter().map(|r| r.clone().unwrap_or_default()).collect() });
+    // The undenoised takes, when every one has its own (else the model hears the cleaned ones).
+    let raws: Option<Vec<Vec<f32>>> = with(|s| s.training.raws.iter().cloned().collect::<Option<Vec<_>>>());
     redraw();
     std::thread::spawn(move || {
         // The model first (downloaded once), then a few seconds.
         let ready = if engine::installed() { Ok(()) } else { engine::install() };
-        let r = ready.map_err(|e| (e, vec![])).and_then(|_| engine::train_with_voice(&recs));
+        let r = ready.map_err(|e| (e, vec![])).and_then(|_| engine::train_with_voice_raw(&recs, raws.as_deref()));
         kit::main_thread(move || trained(r));
     });
 }
@@ -499,7 +569,18 @@ pub fn settings_part(_window: &mut Window, _cx: &mut App) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
-    use super::{next_due, with, St, CHECK_EVERY};
+
+    #[test]
+    fn sleep_is_a_long_gap() {
+        let t = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        assert!(!resumed(t, t + Duration::from_secs(2)));
+        assert!(!resumed(t, t + Duration::from_secs(20)));
+        assert!(resumed(t, t + Duration::from_secs(600)));
+        assert!(!resumed(t + Duration::from_secs(5), t));
+    }
+
+    use super::{next_due, resumed, with, St, CHECK_EVERY};
+    use std::time::Duration;
     use serde_json::json;
     use std::time::Instant;
 

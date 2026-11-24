@@ -7,7 +7,8 @@
 //! cursor, the parachute; and it is the logo: the head in the top bar grows a
 //! body and walks off before it turns up, and comes back to fold away into
 //! the logo. One Mini at a time (HOLDER), and its own outings in the top bar
-//! (TOP). Not shown at all where motion is reduced.
+//! (TOP). Not shown at all where motion is reduced or Mini is turned off
+//! (Settings > Desktop App, client.json "mini").
 //!
 //! How it runs here (ARCHITECTURE.md rules 3 and 6): a chat's Mini is drawn
 //! by its own cached leaf, `MiniLayer`, over the chat pane's body; the top
@@ -206,6 +207,9 @@ struct SysHandle(SysRef);
 impl Global for SysHandle {}
 
 /// The system (made once).
+/// No Mini now: reduced motion, or turned off in Settings > Desktop App.
+fn quiet(cx: &App) -> bool { cx.reduce_motion() || !crundi_shell::local::mini_on() }
+
 pub fn sys(cx: &mut App) -> SysRef {
     if let Some(h) = cx.try_global::<SysHandle>() { return h.0.clone(); }
     let spots = crundi_shell::spots::spots(cx);
@@ -667,7 +671,7 @@ impl System {
     }
 
     fn start(&mut self, id: &str, name: &'static str, cx: &mut App) {
-        if cx.reduce_motion() { return; }
+        if quiet(cx) { return; }
         if self.holder == Holder::Top { self.top_cut(); return; }
         if !matches!(&self.holder, Holder::None) && self.holder != Holder::Chat(id.to_string()) { return; }
         self.holder = Holder::Chat(id.to_string());
@@ -1006,7 +1010,7 @@ impl System {
             if seen { c.away_since = None; } else if c.away_since.is_none() { c.away_since = Some(t); }
             if c.away_since.is_some_and(|a| t - a > 5000.) { c.away_since = None; self.gone(id, false); self.flush_logo(cx); return; }
         }
-        if c.scene.is_some() || !ok || !seen || held || t < c.want_at || !auto || cx.reduce_motion() { return; }
+        if c.scene.is_some() || !ok || !seen || held || t < c.want_at || !auto || quiet(cx) { return; }
         self.holder = Holder::Chat(id.to_string());
         c.scene = Some("coming");
         self.logo_leave(Who::Parked(id.to_string()), cx);
@@ -1127,7 +1131,7 @@ impl System {
         })
     }
     fn top_outing(&mut self, kind: &str, r: TopRead, cx: &mut App) -> bool {
-        if self.holder != Holder::None || self.logo_away || self.tops.busy || cx.reduce_motion() { return false; }
+        if self.holder != Holder::None || self.logo_away || self.tops.busy || quiet(cx) { return false; }
         let Some(st) = self.top_env(cx) else { return false };
         let Some((mut m, home, _)) = self.logo_stage("top") else { return false };
         self.holder = Holder::Top; self.tops.busy = true;
@@ -1166,7 +1170,7 @@ impl System {
         let t = now_ms();
         if t - self.tops.last_tick < 2900. { return; }
         self.tops.last_tick = t;
-        if !self.auto || self.holder != Holder::None || self.logo_away || self.tops.busy || cx.reduce_motion() || self.logo_mark().is_none() { return; }
+        if !self.auto || self.holder != Holder::None || self.logo_away || self.tops.busy || quiet(cx) || self.logo_mark().is_none() { return; }
         if !crundi_shell::stores(cx).session.read(cx).signed_in() { return; }
         let r = self.top_read(cx);
         let mut ready: Vec<(&'static str, (f64, f64))> = vec![];

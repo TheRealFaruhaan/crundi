@@ -12,7 +12,7 @@ pub fn leaf_chip(id: impl Into<ElementId>, icon: IconName, label: impl Into<Shar
     let tip: SharedString = tip.into();
     div().id(id).flex().flex_none().items_center().gap(T::LEAF_CHIP_GAP).py(T::LEAF_CHIP_PY).px(T::SP_10).rounded(T::R_PILL).cursor_pointer()
         .border_1().border_color(T::border()).bg(T::bg()).text_color(T::text_secondary()).text_size(T::LEAF_CHIP_TEXT)
-        .hover(|s| s.border_color(T::accent()).text_color(T::text()).bg(T::accent_dim()))
+        .hover(|s| s.border_color(T::accent()).text_color(T::text()).bg(T::accent_dim_on_bg()))
         .child(div().flex_none().text_size(T::LEAF_ICON).text_color(T::accent_hover()).child(icon))
         .child(label.into())
         .tooltip(crate::tooltip(tip))
@@ -27,5 +27,18 @@ pub fn leaf_act(id: impl Into<ElementId>, icon: IconName, label: Option<&'static
         .hover(|s| s.border_color(T::accent()).text_color(T::text()))
         .child(div().flex_none().text_size(T::LEAF_ICON).child(icon))
         .when_some(label, |d, l| d.child(l))
+        .tooltip(crate::tooltip(tip))
+}
+
+/// A pane's split control (the web's .leaf-ctrls button, V5): 22 × 18, the
+/// small radius, a border on the secondary surface, the layout icon;
+/// hover: accent border, primary text. Shown over the pane's head while the
+/// pointer is on the pane (Workbench).
+pub fn leaf_split(id: impl Into<ElementId>, icon: IconName, tip: impl Into<SharedString>) -> Stateful<Div> {
+    let tip: SharedString = tip.into();
+    div().id(id).flex().flex_none().items_center().justify_center().w(px(22.)).h(px(18.)).rounded(px(5.)).cursor_pointer()
+        .border_1().border_color(T::border()).bg(T::bg_secondary()).text_color(T::text_secondary())
+        .hover(|s| s.border_color(T::accent()).text_color(T::text()))
+        .child(div().flex_none().text_size(px(13.)).child(icon))
         .tooltip(crate::tooltip(tip))
 }

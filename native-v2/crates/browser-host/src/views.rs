@@ -51,6 +51,12 @@ thread_local! {
     /// own; "server", each homepool network and each hidden browser ("mem:")
     /// their own.
     static CONTEXTS: RefCell<HashMap<String, RequestContext>> = RefCell::new(HashMap::new());
+    /// A profile is usable once CEF has initialised it (it does so
+    /// asynchronously): its proxy can be set and its browsers made only then.
+    /// Until then the opens wait here, by network (V4).
+    static WAITING: RefCell<HashMap<String, Vec<PendingOpen>>> = RefCell::new(HashMap::new());
+    /// The proxy each profile has (to set it again if the app's changes).
+    static CTX_PROXY: RefCell<HashMap<String, Option<Proxy>>> = RefCell::new(HashMap::new());
     /// Browsers made and not yet gone (on_before_close).
     static LIVE: Cell<usize> = const { Cell::new(0) };
     static STATS: RefCell<(Stats, Stats)> = RefCell::new(Default::default());
@@ -101,7 +107,7 @@ pub fn handle(c: Cmd) -> bool {
         Cmd::Hello { .. } => {}
         Cmd::Quit => return false,
         Cmd::Open { id, url, frame, network, proxy, origin, w, h, dpr } => open(id, &url, frame, &network, proxy, &origin, w, h, dpr),
-        Cmd::Close { id } => close(id),
+        Cmd::Close { id } => { WAITING.with(|p| for v in p.borrow_mut().values_mut() { v.retain(|o| o.id != id); }); close(id) }
         Cmd::Size { id, w, h, dpr, screen } => {
             let known = with(|v| v.get_mut(&id).map(|x| { x.w = w.max(1); x.h = h.max(1); x.dpr = dpr.max(0.5); }).is_some());
             if known { with(|v| if let Some(x) = v.get_mut(&id) { x.full = true; }); if let Some(hh) = host_of(id) { if screen { hh.notify_screen_info_changed(); } hh.was_resized(); } }
@@ -142,13 +148,19 @@ pub fn handle(c: Cmd) -> bool {
         },
         Cmd::Js { id, code } => if let Some(f) = browser_of(id).and_then(|b| b.main_frame()) { f.execute_java_script(Some(&CefString::from(code.as_str())), None, 0); },
         Cmd::DevTools { id } => if let Some(hh) = host_of(id) {
-            if hh.has_dev_tools() != 0 { hh.close_dev_tools(); } else { hh.show_dev_tools(Some(&WindowInfo::default()), None, Some(&BrowserSettings::default()), None); }
+            if hh.has_dev_tools() != 0 { hh.close_dev_tools(); } else { {
+                // A window of its own, in the pages' (windowless) runtime style: a Chrome-style
+                // DevTools for an Alloy page is refused, and no window opened.
+                let wi = WindowInfo { runtime_style: RuntimeStyle::ALLOY, bounds: Rect { x: 80, y: 80, width: 1000, height: 700 }, ..WindowInfo::default() };
+                hh.show_dev_tools(Some(&wi), None, Some(&BrowserSettings::default()), None);
+            } }
         },
         Cmd::Ack { id } => {
             let redraw = with(|v| v.get_mut(&id).map(|x| { x.busy = false; std::mem::take(&mut x.dirty) }).unwrap_or(false));
             if redraw { if let Some(hh) = host_of(id) { hh.invalidate(PaintElementType::VIEW); } }
         }
         Cmd::ClearCookies { site } => clear_cookies(site.as_deref()),
+        Cmd::DownloadTo { dl, path, .. } => download_to(dl, &path),
     }
     true
 }
@@ -156,11 +168,18 @@ pub fn handle(c: Cmd) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn open(id: u64, url: &str, frame: bool, network: &str, proxy: Option<Proxy>, origin: &str, w: i32, h: i32, dpr: f32) {
     if with(|v| v.contains_key(&id)) { return; }
+    // V4: a profile of its own not ready yet: made (or still being made) by
+    // CEF, this open waits for it (ContextInit below).
+    if !frame && !ready(network, proxy.as_ref()) {
+        WAITING.with(|p| p.borrow_mut().entry(network.to_string()).or_default().push(PendingOpen { id, url: url.to_string(), network: network.to_string(), proxy, origin: origin.to_string(), w, h, dpr }));
+        return;
+    }
     with(|v| v.insert(id, HView { browser: None, frame, w: w.max(1), h: h.max(1), dpr: dpr.max(0.5), seg: None, epoch: 0, busy: false, dirty: false, full: true, seg_wh: (0, 0), hidden: false, _obs: None }));
     let referrer = if frame && !origin.is_empty() { origin.to_string() } else { String::new() };
     let mut client = ViewClient::new(
         ViewRender::new(id), ViewLife::new(id), ViewLoad::new(id), ViewDisplay::new(id),
         ViewDialogs::new(frame), ViewMenu::new(frame), ViewRequests::new(id, frame, ViewResource::new(url.to_string(), referrer)),
+        ViewDownloads::new(id),
     );
     let mut window_info = WindowInfo::default().set_as_windowless(Default::default());
     // The GPU path (gpu.rs): frames as shared textures.
@@ -183,22 +202,68 @@ fn open(id: u64, url: &str, frame: bool, network: &str, proxy: Option<Proxy>, or
     }
 }
 
-fn context_for(network: &str, proxy: Option<&Proxy>) -> Option<RequestContext> {
-    // A hidden browser: a profile of its own, in memory (main.js "mcp-browser-<key>").
-    if network.starts_with("mem:") {
-        let ctx = request_context_create_context(Some(&RequestContextSettings::default()), None)?;
-        CONTEXTS.with(|c| c.borrow_mut().insert(network.to_string(), ctx.clone()));
-        return Some(ctx);
+/// An open waiting for its network's profile (V4).
+struct PendingOpen { id: u64, url: String, network: String, proxy: Option<Proxy>, origin: String, w: i32, h: i32, dpr: f32 }
+
+/// Is [network]'s profile ready for a browser? "client" (CEF's own) always
+/// is; another network's is made on first use, asynchronously, and is ready
+/// once ContextInit has run (its proxy set). A ready profile whose proxy
+/// the app changed gets the new one.
+fn ready(network: &str, proxy: Option<&Proxy>) -> bool {
+    if !network.starts_with("mem:") && crate::common::profile_dir(network).is_empty() { return true; }
+    if let Some(ctx) = CONTEXTS.with(|c| c.borrow().get(network).cloned()) {
+        let have = CTX_PROXY.with(|c| c.borrow().get(network).cloned());
+        match have {
+            // Initialised: the proxy again if it changed.
+            Some(had) => {
+                if had.as_ref() != proxy { if let Some(p) = proxy { set_proxy(network, &ctx, p); } CTX_PROXY.with(|c| c.borrow_mut().insert(network.to_string(), proxy.cloned())); }
+                true
+            }
+            None => false,
+        }
+    } else {
+        make_context(network, proxy);
+        false
     }
-    let dir = crate::common::profile_dir(network);
-    if dir.is_empty() { return None; }
-    if let Some(c) = CONTEXTS.with(|c| c.borrow().get(network).cloned()) { return Some(c); }
-    let path = crate::common::cef_root().join(&dir);
-    let settings = RequestContextSettings { cache_path: CefString::from(path.to_string_lossy().as_ref()), persist_session_cookies: 1, ..Default::default() };
-    let ctx = request_context_create_context(Some(&settings), None)?;
-    CONTEXTS.with(|c| c.borrow_mut().insert(network.to_string(), ctx.clone()));
-    if let Some(p) = proxy { set_proxy(network, &ctx, p); }
-    Some(ctx)
+}
+
+/// A network's profile, made: on disk ("server", homepool) or in memory
+/// (a hidden browser, "mem:"); ContextInit finishes it.
+fn make_context(network: &str, proxy: Option<&Proxy>) {
+    let settings = if network.starts_with("mem:") { RequestContextSettings::default() } else {
+        let path = crate::common::cef_root().join(crate::common::profile_dir(network));
+        RequestContextSettings { cache_path: CefString::from(path.to_string_lossy().as_ref()), persist_session_cookies: 1, ..Default::default() }
+    };
+    let mut init = ContextInit::new(network.to_string(), proxy.cloned());
+    match request_context_create_context(Some(&settings), Some(&mut init)) {
+        Some(ctx) => { CONTEXTS.with(|c| c.borrow_mut().insert(network.to_string(), ctx)); }
+        None => {
+            eprintln!("[browser host] the {network} network's profile could not be made");
+            for o in WAITING.with(|p| p.borrow_mut().remove(network)).unwrap_or_default() { emit(&Ev::Gone { id: o.id, status: -1 }); }
+        }
+    }
+}
+
+fn context_for(network: &str, _proxy: Option<&Proxy>) -> Option<RequestContext> {
+    // (open() has waited for it: ready.)
+    CONTEXTS.with(|c| c.borrow().get(network).cloned())
+}
+
+wrap_request_context_handler! {
+    pub struct ContextInit {
+        network: String,
+        proxy: Option<Proxy>,
+    }
+    impl RequestContextHandler {
+        // CEF has made the profile: its proxy, then the browsers that waited (V4).
+        fn on_request_context_initialized(&self, request_context: Option<&mut RequestContext>) {
+            if let (Some(ctx), Some(p)) = (request_context, self.proxy.as_ref()) { set_proxy(&self.network, ctx, p); }
+            CTX_PROXY.with(|c| c.borrow_mut().insert(self.network.clone(), self.proxy.clone()));
+            for o in WAITING.with(|p| p.borrow_mut().remove(&self.network)).unwrap_or_default() {
+                open(o.id, &o.url, false, &o.network, o.proxy, &o.origin, o.w, o.h, o.dpr);
+            }
+        }
+    }
 }
 
 /// A network's profile goes out through the app's proxy (net.rs), which
@@ -579,6 +644,47 @@ wrap_request_handler! {
     }
 }
 
+// ─── Downloads (app/main.js wireDownloads: one Save dialog per download) ───
+
+thread_local! {
+    /// Downloads waiting for the app's answer (where to save), by CEF's id.
+    static PENDING: RefCell<HashMap<u32, BeforeDownloadCallback>> = RefCell::new(HashMap::new());
+}
+
+/// The app's answer: continue into `path` without CEF's own dialog, or
+/// cancel ("": the callback let go unrun cancels the download).
+fn download_to(dl: u32, path: &str) {
+    let Some(cb) = PENDING.with(|p| p.borrow_mut().remove(&dl)) else { return };
+    if !path.is_empty() { cb.cont(Some(&CefString::from(path)), 0); }
+}
+
+wrap_download_handler! {
+    pub struct ViewDownloads {
+        id: u64,
+    }
+    impl DownloadHandler {
+        fn can_download(&self, _browser: Option<&mut Browser>, _url: Option<&CefString>, _request_method: Option<&CefString>) -> ::std::os::raw::c_int { 1 }
+        // Held: the app asks the person where (Ev::Download), then Cmd::DownloadTo.
+        fn on_before_download(&self, _browser: Option<&mut Browser>, download_item: Option<&mut DownloadItem>, suggested_name: Option<&CefString>, callback: Option<&mut BeforeDownloadCallback>) -> ::std::os::raw::c_int {
+            let (Some(item), Some(cb)) = (download_item, callback) else { return 0 };
+            let dl = item.id();
+            let url = CefString::from(&item.url()).to_string();
+            let name = suggested_name.map(|n| n.to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| "download".into());
+            PENDING.with(|p| p.borrow_mut().insert(dl, cb.clone()));
+            emit(&Ev::Download { id: self.id, dl, name, url });
+            1
+        }
+        fn on_download_updated(&self, _browser: Option<&mut Browser>, download_item: Option<&mut DownloadItem>, _callback: Option<&mut DownloadItemCallback>) {
+            let Some(item) = download_item else { return };
+            let done = item.is_complete() != 0;
+            if done || item.is_canceled() != 0 || item.is_interrupted() != 0 {
+                let path = CefString::from(&item.full_path()).to_string();
+                emit(&Ev::Downloaded { id: self.id, dl: item.id(), path, ok: done });
+            }
+        }
+    }
+}
+
 wrap_client! {
     pub struct ViewClient {
         render: RenderHandler,
@@ -588,6 +694,7 @@ wrap_client! {
         dialogs: JsdialogHandler,
         menu: ContextMenuHandler,
         requests: RequestHandler,
+        downloads: DownloadHandler,
     }
     impl Client {
         fn render_handler(&self) -> Option<RenderHandler> { Some(self.render.clone()) }
@@ -597,5 +704,6 @@ wrap_client! {
         fn jsdialog_handler(&self) -> Option<JsdialogHandler> { Some(self.dialogs.clone()) }
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> { Some(self.menu.clone()) }
         fn request_handler(&self) -> Option<RequestHandler> { Some(self.requests.clone()) }
+        fn download_handler(&self) -> Option<DownloadHandler> { Some(self.downloads.clone()) }
     }
 }

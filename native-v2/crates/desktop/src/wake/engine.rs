@@ -252,6 +252,50 @@ impl Owner {
 // ─── The wake (worker.js createWake) ───
 
 /// A wake: how it was heard, its score, and the clip the owner's voice is checked on.
+/// The microphone's mono samples at its own rate to 16 kHz (mic), as
+/// Chromium's AudioContext({ sampleRate: 16000 }) resamples Electron's: a
+/// low-pass (63-tap windowed sinc, cut at 7 kHz) first, then the 16 kHz
+/// points between its samples. (V2: the mean of each step it used to take
+/// folded everything over 8 kHz back into the band, which the keyword model
+/// does not hear "Hey Cru" through.)
+pub struct To16 { step: f64, pos: f64, buf: Vec<f32>, taps: Vec<f32> }
+
+impl To16 {
+    pub fn new(rate: usize) -> To16 {
+        const N: usize = 63;
+        let fc = 7000.0 / rate as f64;
+        let m = (N - 1) as f64 / 2.0;
+        let mut taps: Vec<f64> = (0..N).map(|k| {
+            let x = k as f64 - m;
+            let sinc = if x == 0.0 { 2.0 * fc } else { (2.0 * std::f64::consts::PI * fc * x).sin() / (std::f64::consts::PI * x) };
+            sinc * (0.54 - 0.46 * (2.0 * std::f64::consts::PI * k as f64 / (N - 1) as f64).cos())
+        }).collect();
+        let sum: f64 = taps.iter().sum();
+        for t in &mut taps { *t /= sum; }
+        To16 { step: rate as f64 / RATE as f64, pos: (N - 1) as f64, buf: vec![0.0; N - 1], taps: taps.into_iter().map(|t| t as f32).collect() }
+    }
+    fn at(&self, i: usize) -> f32 { self.taps.iter().enumerate().map(|(k, t)| t * self.buf[i - k]).sum() }
+    pub fn push(&mut self, b: &[f32]) -> Vec<f32> {
+        self.buf.extend_from_slice(b);
+        let mut o = vec![];
+        while self.pos + 1.0 < self.buf.len() as f64 {
+            let i = self.pos as usize;
+            let f = (self.pos - i as f64) as f32;
+            let (a, c) = (self.at(i), self.at(i + 1));
+            o.push(a + (c - a) * f);
+            self.pos += self.step;
+        }
+        // Keep what the next samples' filter still reaches back to.
+        let keep = (self.pos as usize).saturating_sub(self.taps.len() - 1).min(self.buf.len());
+        self.buf.drain(..keep);
+        self.pos -= keep as f64;
+        o
+    }
+}
+
+/// The phrase match a wake needs (the profile's limit; lower is closer).
+fn profile_limit(p: &Value) -> f64 { p["limit"].as_f64().unwrap_or(0.0) }
+
 pub struct Heard { pub ok: bool, pub keyword: String, pub score: f64, pub via: &'static str, pub clip: Vec<f32> }
 
 pub struct Wake {
@@ -264,13 +308,20 @@ pub struct Wake {
     filled: usize,
     at: usize,
     last_hit: Option<std::time::Instant>,
+    /// The last few seconds not denoised (V2): what the keyword model hears.
+    raw_hist: Vec<f32>,
+    /// The last phrase that did not wake but came within twice its limit:
+    /// (its match, the limit, the gate that refused it, the burst at 16 kHz).
+    pub near_miss: Option<(f64, f64, &'static str, Vec<f32>)>,
+    /// The near miss's burst not denoised.
+    pub last_raw: Option<Vec<f32>>,
 }
 
 impl Wake {
     pub fn new(profile: &Value) -> Result<Wake, String> {
         if !enroll::valid_profile(profile) { return Err("Hey Cru is not trained".into()); }
         let spot = Spotter::new(&enroll::listen_lines(profile), profile["keywordsScore"].as_f64().unwrap_or(1.5) as f32, profile["keywordsThreshold"].as_f64().unwrap_or(0.2) as f32, true)?;
-        Ok(Wake { tpl: enroll::templates_of(profile), profile: profile.clone(), spot, seg: enroll::Segmenter::new(), loose: None, ring: vec![0.0; (VERIFY_SECONDS * RATE as f32) as usize], filled: 0, at: 0, last_hit: None })
+        Ok(Wake { tpl: enroll::templates_of(profile), profile: profile.clone(), spot, seg: enroll::Segmenter::new(), loose: None, ring: vec![0.0; (VERIFY_SECONDS * RATE as f32) as usize], filled: 0, at: 0, last_hit: None, raw_hist: vec![], near_miss: None, last_raw: None })
     }
 
     fn push(&mut self, s: &[f32]) {
@@ -287,9 +338,18 @@ impl Wake {
     }
 
     /// A block of 16 kHz samples in: a wake (or a refused one), or nothing.
-    pub fn accept(&mut self, samples: &[f32]) -> Option<Heard> {
+    pub fn accept(&mut self, samples: &[f32]) -> Option<Heard> { self.accept_both(samples, samples) }
+
+    /// A block in, cleaned (the phrase, its match, the owner's voice) and
+    /// the same block not denoised (V2: the keyword model's, as Electron's
+    /// model heard Chromium's audio, not RNNoise's).
+    pub fn accept_both(&mut self, samples: &[f32], raw: &[f32]) -> Option<Heard> {
+        let raw = if raw.len() == samples.len() { raw } else { samples };
         self.push(samples);
-        let k = self.spot.accept(samples);
+        self.raw_hist.extend_from_slice(raw);
+        let keep = RATE * 4;
+        if self.raw_hist.len() > keep { let cut = self.raw_hist.len() - keep; self.raw_hist.drain(..cut); }
+        let k = self.spot.accept(raw);
         let burst = self.seg.accept(samples);
         if self.last_hit.is_some_and(|t| t.elapsed().as_millis() as u64 <= COOLDOWN_MS) { return None; }
         if let Some(b) = burst {
@@ -299,8 +359,12 @@ impl Wake {
                 if loose.is_none() { *loose = Spotter::new(&enroll::confirm_lines(&profile), profile["keywordsScore"].as_f64().unwrap_or(1.5) as f32, enroll::CONFIRM_THRESHOLD, false).ok(); }
                 match loose.as_mut() { Some(s) => enroll::spotted(s, clip), None => vec![] }
             };
-            let (ok, score, _) = enroll::match_phrase(&profile, &tpl, &b, Some(&mut confirm));
+            // The burst ends with this block: its undenoised twin, the same last samples.
+            let raw_b = (b.len() <= self.raw_hist.len()).then(|| self.raw_hist[self.raw_hist.len() - b.len()..].to_vec());
+            let (ok, score, why) = enroll::match_phrase_raw(&profile, &tpl, &b, raw_b.as_deref(), Some(&mut confirm));
             self.tpl = tpl;
+            let limit = profile_limit(&self.profile);
+            if !ok && score.is_finite() && limit > 0.0 && score < limit * 2.0 { self.near_miss = Some((score, limit, why, b.clone())); self.last_raw = raw_b.clone(); }
             if ok {
                 self.last_hit = Some(std::time::Instant::now());
                 let clip = enroll::trim(&b, 100).map(|c| c.to_vec()).unwrap_or(b);
@@ -318,13 +382,16 @@ impl Wake {
 
     /// The owner's voice refused it: the cooldown does not hide the next.
     pub fn refused(&mut self) { self.last_hit = None; }
-    pub fn reset(&mut self) { self.spot.reset(); self.seg.reset(); self.filled = 0; self.at = 0; }
+    pub fn reset(&mut self) { self.spot.reset(); self.seg.reset(); self.filled = 0; self.at = 0; self.raw_hist.clear(); }
 }
 
 /// Train from five recordings, with the owner's voice when its model is there.
-pub fn train_with_voice(recordings: &[Vec<f32>]) -> Result<(Value, String), (String, Vec<usize>)> {
+pub fn train_with_voice(recordings: &[Vec<f32>]) -> Result<(Value, String), (String, Vec<usize>)> { train_with_voice_raw(recordings, None) }
+
+/// [train_with_voice], the keyword model hearing the takes not denoised (V2).
+pub fn train_with_voice_raw(recordings: &[Vec<f32>], raw: Option<&[Vec<f32>]>) -> Result<(Value, String), (String, Vec<usize>)> {
     let mut make = maker();
-    match enroll::train(recordings, &mut make) {
+    match enroll::train_raw(recordings, raw, &mut make) {
         enroll::Trained::No { why, redo } => Err((why, redo)),
         enroll::Trained::Ok(mut p) => {
             let clips: Vec<Vec<f32>> = recordings.iter().filter_map(|r| enroll::check_sample(r).ok().map(|c| c.to_vec())).collect();
@@ -347,6 +414,26 @@ pub fn read_wav(b: &[u8]) -> Option<Vec<f32>> {
 
 #[cfg(test)]
 mod tests {
+    /// V2: To16 keeps speech (1 kHz) at its level, removes what would fold
+    /// back into the band (12 kHz from 48 kHz), and gives 16 000 a second
+    /// whatever the blocks.
+    #[test]
+    fn to16_low_passes_and_keeps_the_rate() {
+        let tone = |hz: f64, rate: usize, n: usize| -> Vec<f32> { (0..n).map(|i| (2.0 * std::f64::consts::PI * hz * i as f64 / rate as f64).sin() as f32 * 0.5).collect() };
+        let rms = |x: &[f32]| (x.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / x.len() as f64).sqrt();
+        for rate in [48_000usize, 44_100] {
+            let mut d = super::To16::new(rate);
+            let mut out = vec![];
+            for b in tone(1000.0, rate, rate).chunks(441) { out.extend(d.push(b)); }
+            assert!((out.len() as i64 - 16_000).abs() <= 64, "{rate}: {} samples", out.len());
+            let r = rms(&out[1000..]);
+            assert!((r - 0.5 / 2f64.sqrt()).abs() < 0.02, "{rate}: speech kept at {r}");
+            let mut d = super::To16::new(rate);
+            let hi: Vec<f32> = tone(12_000.0, rate, rate).chunks(441).flat_map(|b| d.push(b)).collect();
+            assert!(rms(&hi[1000..]) < 0.01, "{rate}: 12 kHz folded back at {}", rms(&hi[1000..]));
+        }
+    }
+
     use super::*;
 
     /// Trained on one voice's five takes: its "Hey Cru" wakes, its decoys do
@@ -373,5 +460,64 @@ mod tests {
         };
         assert!(heard("draco-pos-heycru"), "the owner's Hey Cru wakes");
         for n in ["draco-neg-heyyou", "draco-neg-heywho", "draco-neg-heythere"] { assert!(!heard(n), "{n} must not wake"); }
+    }
+
+    /// T16: the same recordings through the microphone's path (mic): as
+    /// PipeWire's ALSA "default" gives them (44.1 kHz stereo F32, in 10 ms
+    /// blocks), with a laptop fan's steady noise at what farhan-RP-15's
+    /// microphone gives at rest (about -34 dBFS), to mono, cleaned (Clean, as
+    /// Chromium cleans Electron's), to 16 kHz by To16. The training finds the
+    /// phrase (modelHeard) and the owner's Hey Cru wakes; other speech and
+    /// silence do not. Without the noise too.
+    #[test]
+    fn wakes_through_the_microphone_path() {
+        let eval = std::env::var("VW_EVAL_DIR").unwrap_or_else(|_| "/tmp/cru-eval".into());
+        let models = std::env::var("VW_INSTALL_DIR").unwrap_or_else(|_| "/tmp/vw-install".into());
+        if !Path::new(&models).join(MODEL_ID).exists() || !Path::new(&format!("{eval}/draco-train1.wav")).exists() { eprintln!("skip: no recordings or models"); return; }
+        unsafe { std::env::set_var("CRUNDI_WAKE_MODELS", &models); }
+        for noise_rms in [0.0f32, 0.02] {
+            let mic = |s: Vec<f32>| -> (Vec<f32>, Vec<f32>) {
+                let (rate, ch) = (44100usize, 2usize);
+                let mut seed = 7u32;
+                let mut lp = 0f32;
+                let mut noise = move || { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); let w = (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5; lp = lp * 0.9 + w * 0.1; lp };
+                let pad = |v: Vec<f32>| { let mut p = vec![0f32; RATE]; p.extend(v); p.extend(vec![0f32; RATE]); p };
+                let s = pad(s);
+                let n = s.len() * rate / RATE;
+                let mut st = Vec::with_capacity(n * ch);
+                for i in 0..n {
+                    let x = i as f64 * RATE as f64 / rate as f64;
+                    let (a, f) = (x as usize, (x - x.floor()) as f32);
+                    let v = s.get(a).copied().unwrap_or(0.0) * (1.0 - f) + s.get(a + 1).copied().unwrap_or(0.0) * f + noise() * noise_rms / 0.053;
+                    for _ in 0..ch { st.push(v); }
+                }
+                // V2: as the client does, the cleaned audio and its undenoised twin.
+                let mut c = crundi_core::capture::Clean::for_wake(rate as u32);
+                let (mut d, mut dr) = (To16::new(crundi_core::capture::OUT_RATE as usize), To16::new(crundi_core::capture::OUT_RATE as usize));
+                let (mut clean, mut raw) = (vec![], vec![]);
+                for b in st.chunks(441 * ch) { let (x, r) = c.push_both(&crundi_core::voice::mono(b, ch)); let o = d.push(&x); let mut q = dr.push(&r); q.resize(o.len(), 0.0); clean.extend(o); raw.extend(q); }
+                (clean, raw)
+            };
+            let wav = |n: &str| std::fs::read(format!("{eval}/{n}.wav")).ok().and_then(|b| read_wav(&b)).map(&mic);
+            let pairs: Vec<(Vec<f32>, Vec<f32>)> = (1..=5).map(|i| wav(&format!("draco-train{i}")).unwrap()).collect();
+            let recs: Vec<Vec<f32>> = pairs.iter().map(|p| p.0.clone()).collect();
+            let raws: Vec<Vec<f32>> = pairs.iter().map(|p| p.1.clone()).collect();
+            let (profile, _) = train_with_voice_raw(&recs, Some(&raws)).unwrap_or_else(|(why, redo)| panic!("noise {noise_rms}: training: {why} {redo:?}"));
+            eprintln!("noise {noise_rms}: trained: threshold {} modelHeard {} phraseFrames {} spellings {}", profile["keywordsThreshold"], profile["modelHeard"], profile["phraseFrames"], profile["spellings"]);
+            assert!(profile["modelHeard"].as_f64().unwrap_or(0.0) >= 3.0, "noise {noise_rms}: the model hears the phrase in most takes");
+            let heard = |s: (Vec<f32>, Vec<f32>)| -> bool { let mut w = Wake::new(&profile).unwrap(); s.0.chunks(1600).zip(s.1.chunks(1600)).any(|(c, r)| w.accept_both(c, r).is_some_and(|h| h.ok)) };
+            assert!(heard(wav("draco-pos-heycru").unwrap()), "noise {noise_rms}: the owner's Hey Cru wakes through the microphone path");
+            assert!(!heard(wav("draco-neg-heyyou").unwrap()), "noise {noise_rms}: other speech does not wake");
+            assert!(!heard(mic(vec![0.0; RATE * 3])), "noise {noise_rms}: silence (and the fan) does not wake");
+            // V2: a voice the model can't hear (the owner's: modelHeard 1):
+            // the takes decide, the hum guard keeps a hum out.
+            let mut own = profile.clone();
+            own["modelHeard"] = serde_json::json!(0);
+            eprintln!("noise {noise_rms}: consonance of the takes {}, needed {}", own["consonance"], enroll::consonance_needed(&own));
+            let heard_own = |s: (Vec<f32>, Vec<f32>)| -> bool { let mut w = Wake::new(&own).unwrap(); s.0.chunks(1600).zip(s.1.chunks(1600)).any(|(c, r)| w.accept_both(c, r).is_some_and(|h| h.ok)) };
+            assert!(heard_own(wav("draco-pos-heycru").unwrap()), "noise {noise_rms}: untrusted model: the owner's Hey Cru wakes");
+            assert!(!heard_own(mic(vec![0.0; RATE * 3])), "noise {noise_rms}: untrusted model: silence and the fan do not wake");
+            eprintln!("noise {noise_rms}: untrusted model, 'hey you' wakes: {}", heard_own(wav("draco-neg-heyyou").unwrap()));
+        }
     }
 }

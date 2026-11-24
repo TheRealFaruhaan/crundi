@@ -764,6 +764,10 @@ impl Render for TermScreen {
             }))
             .on_scroll(cx.listener(move |this, e: &ScrollEvent, _, cx| {
                 let y = f32::from(e.delta.pixel_delta(px(ch)).y);
+                // (T7: a sideways scroll is not the terminal's: it goes on, to
+                // the workbench strip.)
+                let d = e.delta.pixel_delta(px(ch));
+                if (e.modifiers.shift && d.x == px(0.)) || d.x.abs() > d.y.abs() { return; }
                 if y > 0. { this.state.update(cx, |t, cx| t.scroll(T::WS_TERM_WHEEL, cx)); } else if y < 0. { this.state.update(cx, |t, cx| t.scroll(-T::WS_TERM_WHEEL, cx)); }
                 cx.stop_propagation();
             }))

@@ -893,7 +893,7 @@ pub fn init() {
 pub fn props() -> Value {
     let act = active_tab();
     with(|d| json!({
-        "open": d.open, "width": d.width, "side": d.side, "project": d.project,
+        "open": d.open, "width": d.width, "side": d.side, "project": d.project, "boot": crate::ui::boot_drawn(), "devtoolsSent": crundi_webview::engine::DEVTOOLS_SENT.load(std::sync::atomic::Ordering::Relaxed),
         "annotating": d.annotating, "tool": d.tool, "pop": d.pop, "panel": d.panel,
         "chats": d.chats.iter().map(|(id, t)| json!({ "id": id, "title": t })).collect::<Vec<_>>(), "chat": d.chat,
         "note": d.note.map(|(i, n)| json!([i, n])),
@@ -906,6 +906,7 @@ pub fn props() -> Value {
             // Frames its page has sent, and whether the host has it hidden (no frames).
             "frames": t.panel.map(|i| browser::with(|st| st.panels.get(i).map(|p| p.frames).unwrap_or(0))).unwrap_or(0),
             "paused": t.panel.is_some_and(browser::is_hidden),
+            "loading": t.panel.is_some_and(|i| browser::with(|st| st.panels.get(i).is_some_and(|p| p.loading))),
         })).collect::<Vec<_>>()).unwrap_or_default(),
         "projects": d.projects.iter().map(|(k, p)| (k.clone(), json!(p.tabs.len()))).collect::<serde_json::Map<_, _>>(),
         "spots": spots(), "root": ROOT.with(|r| r.get()).to_vec(),

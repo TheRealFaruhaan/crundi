@@ -10,7 +10,34 @@
 
 use gpui::{px, rgb, rgba, App, FontWeight, Hsla, Pixels};
 
-pub use gpui_kit_assets::{AllAssets, IconName};
+pub use gpui_kit_assets::IconName;
+
+/// The client's asset source: the icon catalog, and the two fonts gpui's SVG
+/// renderer asks for by path (IBM Plex Sans and Lilex, OFL, as Zed ships
+/// them). They are compiled in, so every package (the .deb, the Windows
+/// installer) carries them and an SVG's text never logs "could not find asset".
+pub struct AllAssets;
+
+/// The fonts gpui's SVG renderer loads through the asset source.
+pub const SVG_FONTS: &[(&str, &[u8])] = &[
+    ("fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf", include_bytes!("../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf")),
+    ("fonts/lilex/Lilex-Regular.ttf", include_bytes!("../assets/fonts/lilex/Lilex-Regular.ttf")),
+];
+
+impl gpui::AssetSource for AllAssets {
+    fn load(&self, path: &str) -> gpui::Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        if let Some((_, data)) = SVG_FONTS.iter().find(|(p, _)| *p == path) {
+            return Ok(Some(std::borrow::Cow::Borrowed(*data)));
+        }
+        gpui_kit_assets::AllAssets.load(path)
+    }
+
+    fn list(&self, path: &str) -> gpui::Result<Vec<gpui::SharedString>> {
+        let mut all = gpui_kit_assets::AllAssets.list(path)?;
+        all.extend(SVG_FONTS.iter().filter(|(p, _)| p.starts_with(path)).map(|(p, _)| (*p).into()));
+        Ok(all)
+    }
+}
 
 /// The tokens.
 pub struct T;
@@ -33,6 +60,10 @@ impl T {
     pub fn accent_hover() -> Hsla { rgb(0x818cf8).into() }
     pub fn accent_deep() -> Hsla { rgb(0x4f46e5).into() }
     pub fn accent_dim() -> Hsla { rgba(0x6366f126).into() }
+    /// accent_dim laid on bg_secondary, opaque: the hover of a control over other content (T4).
+    pub fn accent_dim_on_secondary() -> Hsla { rgb(0x1e1f3a).into() }
+    /// accent_dim laid on bg, opaque.
+    pub fn accent_dim_on_bg() -> Hsla { rgb(0x171831).into() }
     pub fn accent_edge() -> Hsla { rgba(0x6366f159).into() }
     pub fn amber() -> Hsla { rgb(0xfbbf24).into() }
     pub fn green() -> Hsla { rgb(0x10b981).into() }
@@ -141,10 +172,14 @@ impl T {
     pub const TRACK_WIDE: f32 = 0.05;
 
     // ─── Named sizes, only for structure ───
+    /// The test harness's window (every screen in screens/ is taken at it).
     pub const WINDOW_W: Pixels = px(1400.);
     pub const WINDOW_H: Pixels = px(860.);
-    pub const WINDOW_MIN_W: Pixels = px(900.);
-    pub const WINDOW_MIN_H: Pixels = px(520.);
+    /// The app's window at launch and its least size: Electron's (app/main.js createWindow).
+    pub const APP_W: Pixels = px(1100.);
+    pub const APP_H: Pixels = px(750.);
+    pub const WINDOW_MIN_W: Pixels = px(800.);
+    pub const WINDOW_MIN_H: Pixels = px(500.);
     pub const TOPBAR_H: Pixels = px(48.);
     pub const TABBAR_H: Pixels = px(36.);
     pub const SIDEBAR_W: Pixels = px(240.);
@@ -202,6 +237,8 @@ impl T {
     pub const TOAST_MAX_W: Pixels = px(420.);
     pub const TOAST_TEXT: Pixels = Self::TEXT_14;
     pub const CONTROL_SM: Pixels = px(28.);
+    /// The kid screen's grown-ups' lock (.cv-lock: 30px).
+    pub const KID_LOCK: Pixels = px(30.);
     pub const CONTROL: Pixels = px(34.);
     pub const CONTROL_LG: Pixels = px(36.);
     /// The Schedule dialog's weekday button (the web's .sm-day, 34x32).
@@ -932,5 +969,17 @@ mod tests {
         for m in ["dark", "light"] {
             assert!(serde_json::from_value::<gpui_component::ThemeConfig>(super::theme_config(m)).is_ok(), "{m}");
         }
+    }
+
+    /// T2: the paths gpui's SVG renderer loads (vendor/gpui/src/svg_renderer.rs
+    /// load_bundled_fonts) are served, and the icons still are.
+    #[test]
+    fn serves_the_svg_renderer_fonts() {
+        use gpui::AssetSource;
+        for p in ["fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf", "fonts/lilex/Lilex-Regular.ttf"] {
+            let d = super::AllAssets.load(p).expect(p).expect(p);
+            assert!(d.len() > 100_000 && d[..4] == [0, 1, 0, 0], "{p}");
+        }
+        assert!(super::AllAssets.list("icons/").unwrap().len() > 100);
     }
 }

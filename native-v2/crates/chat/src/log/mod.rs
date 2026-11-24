@@ -625,8 +625,14 @@ pub(crate) fn open_link(l: &Link, cx: &mut App) {
         Link::Url(u) => { if let Err(e) = crundi_shell::session::open_url(u) { log::warn!("open {u}: {e}"); } }
         Link::Path(p) => {
             cx.set_global(crundi_shell::OpenPath(p.clone()));
-            let stores = crundi_shell::stores(cx);
-            if let Some(h) = cx.active_window() { let _ = h.update(cx, |_, window, cx| { crundi_shell::run_action(&stores, "open-path", window, cx); }); }
+            // T15: after the click's own event (the window is busy with it
+            // while it runs, so updating it from here did nothing), and in
+            // the window that has the keys, else the first.
+            cx.defer(|cx| {
+                let stores = crundi_shell::stores(cx);
+                let Some(h) = cx.active_window().or_else(|| cx.windows().into_iter().next()) else { log::warn!("open-path: no window"); return };
+                if h.update(cx, |_, window, cx| { crundi_shell::run_action(&stores, "open-path", window, cx); }).is_err() { log::warn!("open-path: the window is gone"); }
+            });
         }
     }
 }
@@ -661,7 +667,7 @@ impl Render for LogView {
         self.tail.act_seen = act.is_some();
         self.tail.act_inline = act == Some(false);
         if act != Some(true) { activity::begin(self, cx); }
-        let room = if act == Some(true) { room + activity::height(self.fs()) } else { room };
+        let room = self.foot_room(cx);
         self.tail.room = room;
         let geo = tail::measure(self, cx);
         // The pointer while a press is held, wherever it goes (over the

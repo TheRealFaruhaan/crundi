@@ -28,6 +28,7 @@ use crate::{
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
+use crate::{ScrollDelta, ScrollSource};
 use crate::interactive::TouchEvent;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -1336,6 +1337,16 @@ pub struct Window {
     pub(crate) window_profiler: profiler::WindowProfiler,
     last_input_modality: InputModality,
     touch_gestures: TouchGestureRecognizer,
+    /// crundi patch (f), PATCH.md: the touchpad's quiet timer (its glide
+    /// starts when the precise scroll stops), and a scroll the caller asked
+    /// not to glide (the test driver's wheel).
+    precise_quiet: Option<Task<()>>,
+    precise_seq: u64,
+    no_glide: bool,
+    /// crundi patch (g), PATCH.md: a sideways scroll in dispatch was taken
+    /// by something that can scroll sideways (reset for each scroll event).
+    claimed_x: bool,
+    scroll_age: std::time::Duration,
     touch_prediction_enabled: bool,
     long_press_timer: Option<Task<()>>,
     long_press_capture: Option<EntityId>,
@@ -2471,6 +2482,11 @@ impl Window {
                     .gestures()
                     .map_or_else(GestureTuning::default, |gestures| gestures.tuning()),
             ),
+            precise_quiet: None,
+            precise_seq: 0,
+            no_glide: false,
+            claimed_x: false,
+            scroll_age: std::time::Duration::ZERO,
             touch_prediction_enabled: true,
             long_press_timer: None,
             long_press_capture: None,
@@ -4429,6 +4445,12 @@ impl Window {
                 .can_offset(paint.start.scene_index..paint.end.scene_index)
     }
 
+    /// crundi patch (b), PATCH.md (T8): whether a cached view's paint range
+    /// lies within the last frame's scene (else it is stale and not reused).
+    pub(crate) fn paint_range_valid(&self, paint: &Range<PaintIndex>) -> bool {
+        self.rendered_frame.scene.holds(&(paint.start.scene_index..paint.end.scene_index))
+    }
+
     /// crundi patch (b), PATCH.md: what a cached view's last paint covers,
     /// unclipped, in window pixels (`None`: it drew nothing).
     pub(crate) fn painted_extent(&self, paint: &Range<PaintIndex>) -> Option<Bounds<Pixels>> {
@@ -6190,6 +6212,9 @@ impl Window {
         // Handlers may set this to true by calling `prevent_default`.
         self.default_prevented = false;
 
+        // crundi patch (f): kinetic scrolling for a touchpad.
+        self.kinetic_input(&event, cx);
+
         let event = match event {
             // Track the mouse position with our own state, since accessing the platform
             // API for the mouse position can only occur on the main thread.
@@ -6503,6 +6528,60 @@ impl Window {
         }));
     }
 
+    /// crundi patch (f), PATCH.md: kinetic scrolling for a touchpad. On
+    /// Linux (Wayland's continuous axis: pixel deltas; X11 sends lines and
+    /// can't tell a touchpad from a wheel) a precise scroll that stops glides
+    /// on at its last ~100 ms's speed and decays (the touch pan's momentum
+    /// and physics). Windows and macOS send their own momentum, so nothing
+    /// is added there. A line scroll, a press, a key or a pinch stops it.
+    fn kinetic_input(&mut self, event: &PlatformInput, cx: &mut App) {
+        let no_glide = std::mem::take(&mut self.no_glide);
+        let age = std::mem::take(&mut self.scroll_age);
+        match event {
+            PlatformInput::Scroll(s) if cfg!(target_os = "linux") && !no_glide && s.source == ScrollSource::Pointer && matches!(s.delta, ScrollDelta::Pixels(_)) => {
+                let ScrollDelta::Pixels(d) = s.delta else { return };
+                self.touch_gestures.precise_scroll(s.position, d, age);
+                self.precise_seq = self.precise_seq.wrapping_add(1);
+                let seq = self.precise_seq;
+                let quiet = cx.background_executor().timer(std::time::Duration::from_millis(50));
+                self.precise_quiet = Some(self.spawn(cx, async move |cx| {
+                    quiet.await;
+                    cx.update(|window, _| {
+                        if window.precise_seq != seq { return; }
+                        window.precise_quiet = None;
+                        if window.touch_gestures.precise_scroll_ended() { window.schedule_touch_momentum_tick(); window.refresh(); }
+                    })
+                    .ok();
+                }));
+            }
+            PlatformInput::Scroll(_) | PlatformInput::MouseDown(_) | PlatformInput::KeyDown(_) | PlatformInput::Pinch(_) => {
+                self.precise_seq = self.precise_seq.wrapping_add(1);
+                self.precise_quiet = None;
+                self.touch_gestures.stop_pointer_momentum();
+            }
+            _ => {}
+        }
+    }
+
+    /// crundi patch (f): the next scroll event does not glide (the test
+    /// driver's mouse wheel, whose suites expect exact offsets).
+    pub fn set_no_glide(&mut self) { self.no_glide = true; }
+
+    /// crundi patch (g), PATCH.md: the scroll being dispatched is used
+    /// sideways (an area that scrolls sideways, a canvas, a page).
+    pub fn claim_x(&mut self) { self.claimed_x = true; }
+
+    /// crundi patch (g): whether something under the pointer took the
+    /// scroll being dispatched sideways (inner listeners run first).
+    pub fn claimed_x(&self) -> bool { self.claimed_x }
+
+    /// crundi patch (f): the next scroll event happened `age` ago (the test
+    /// driver's touchpad burst, sent at once, timed as the hardware sends it).
+    pub fn set_scroll_age(&mut self, age: std::time::Duration) { self.scroll_age = age; }
+
+    /// crundi patch (f): the touchpad's glide is running (the test driver).
+    pub fn gliding(&self) -> bool { self.touch_gestures.pointer_momentum() || self.precise_quiet.is_some() }
+
     fn schedule_touch_momentum_tick(&mut self) {
         self.on_next_frame(|window, cx| {
             if let Some(gesture) = window.touch_gestures.tick_momentum() {
@@ -6516,6 +6595,8 @@ impl Window {
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
         self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position());
+        // crundi patch (g): each scroll event's sideways claim starts afresh.
+        if event.is::<crate::ScrollEvent>() { self.claimed_x = false; }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         if self.is_inspector_picking(cx) {

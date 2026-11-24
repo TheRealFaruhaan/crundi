@@ -139,9 +139,41 @@ pub fn start() -> Result<(), String> {
     let stop = Arc::new(AtomicBool::new(false));
     let (ktx, krx) = mpsc::channel();
     with(|n| { n.stop = Some(stop.clone()); n.kick = Some(ktx); n.state = "connecting".into(); });
+    let s2 = stop.clone();
     thread::spawn(move || run(server, key, stop, krx));
+    thread::spawn(move || public_ip_loop(s2));
     Ok(())
 }
+
+/// Where the public address is asked (main.js hpRefreshIp); CRUNDI_PUBLIC_IP_URL
+/// stands in for it under the test driver.
+fn ip_url() -> String {
+    std::env::var("CRUNDI_PUBLIC_IP_URL").ok().filter(|u| !u.is_empty() && crundi_core::driver::port().is_some()).unwrap_or_else(|| "https://api.ipify.org".into())
+}
+
+/// While the node runs: the public address now and every 10 minutes; a new
+/// one goes to the server at once (sendInfo). Offline: tried again later.
+fn public_ip_loop(stop: Arc<AtomicBool>) {
+    let url = ip_url();
+    let mut next = Instant::now();
+    // (Refused: the node's loop ended for good, and this one with it.)
+    while !stop.load(Ordering::Relaxed) && with(|n| n.state != "refused") {
+        if Instant::now() >= next {
+            next = Instant::now() + Duration::from_secs(600);
+            let got = ureq::get(&url).config().timeout_global(Some(Duration::from_secs(10))).build().call().ok()
+                .and_then(|mut r| r.body_mut().read_to_string().ok()).map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty() && t.len() <= 60 && t.chars().all(|c| c.is_ascii_hexdigit() || c == '.' || c == ':'));
+            if let Some(ip) = got {
+                let changed = with(|n| if n.public_ip != ip { n.public_ip = ip.clone(); true } else { false });
+                if changed { log(&format!("public IP {ip}")); INFO_DUE.store(true, Ordering::Relaxed); }
+            }
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+}
+
+/// A new public address: the session sends its info now.
+static INFO_DUE: AtomicBool = AtomicBool::new(false);
 
 fn halt() {
     let s = with(|n| { n.kick = None; n.stop.take() });
@@ -239,7 +271,7 @@ fn session(mut ws: tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<Tc
             let r = match o { Out::Bin(b) => { UP.fetch_add(b.len().saturating_sub(5) as u64, Ordering::Relaxed); ws.send(Message::binary(b)) } Out::Text(t) => ws.send(Message::text(t)) };
             if r.is_err() { return false; }
         }
-        if last_info.elapsed() > Duration::from_secs(30) { last_info = Instant::now(); let _ = tx.send(Out::Text(info())); }
+        if last_info.elapsed() > Duration::from_secs(30) || INFO_DUE.swap(false, Ordering::Relaxed) { last_info = Instant::now(); let _ = tx.send(Out::Text(info())); }
         match ws.read() {
             Ok(Message::Binary(b)) => {
                 let Some((t, id, p)) = crundi_webview::net::parse(&b) else { continue };
@@ -339,7 +371,7 @@ fn pump(id: u32, mut rd: TcpStream, tx: mpsc::Sender<Out>, paused: Paused) {
 fn info() -> String {
     let platform = if cfg!(target_os = "windows") { "windows" } else if cfg!(target_os = "macos") { "darwin" } else { "linux" };
     let ip = with(|n| n.public_ip.clone());
-    json!({ "type": "info", "platform": platform, "app": "crundi-desktop", "version": env!("CARGO_PKG_VERSION"), "network": "PC", "publicIp": ip, "paused": false, "pauseReason": "", "bytesToday": UP.load(Ordering::Relaxed) + DOWN.load(Ordering::Relaxed), "mobileBytesToday": 0 }).to_string()
+    json!({ "type": "info", "platform": platform, "app": "crundi-desktop", "version": crundi_shell::lifecycle::version(), "network": "PC", "publicIp": ip, "paused": false, "pauseReason": "", "bytesToday": UP.load(Ordering::Relaxed) + DOWN.load(Ordering::Relaxed), "mobileBytesToday": 0 }).to_string()
 }
 
 #[cfg(test)]

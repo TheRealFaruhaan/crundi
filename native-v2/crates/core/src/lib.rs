@@ -7,6 +7,7 @@
 pub mod agents;
 pub mod api;
 pub mod attach;
+pub mod capture;
 pub mod chat;
 pub mod drafts;
 pub mod driver;

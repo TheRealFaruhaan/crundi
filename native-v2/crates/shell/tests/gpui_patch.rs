@@ -624,3 +624,121 @@ fn a_clip_turning_wide_keeps_views_in_view_cached(cx: &mut TestAppContext) {
     cx.simulate_mouse_up(point(px(50.), px(40.)), MouseButton::Left, Modifiers::default());
     assert_eq!(hits.get(), h0 + 1, "…and pressed as before");
 }
+
+// ─── T1: a touchpad glides only after a real flick (gpui::crundi_flick) ───
+
+/// Steps every `every` ms, oldest first, each (dx, dy): (age before the last, dx, dy).
+fn timed(every: f32, deltas: &[(f32, f32)]) -> Vec<(f32, f32, f32)> {
+    let n = deltas.len();
+    deltas.iter().enumerate().map(|(i, &(x, y))| ((n - 1 - i) as f32 * every, x, y)).collect()
+}
+
+#[test]
+fn a_flick_glides() {
+    // A flick: a short burst still fast (and speeding up) at lift-off.
+    let v = gpui::crundi_flick(&timed(10., &[(0., 4.), (0., 10.), (0., 18.), (0., 24.), (0., 26.)])).expect("a flick glides");
+    assert!(v.1 > 1000. && v.0.abs() < 1., "{v:?}");
+    // Sideways too.
+    assert!(gpui::crundi_flick(&timed(12., &[(-12., 1.), (-15., 0.), (-16., -1.), (-18., 0.)])).is_some_and(|v| v.0 < -500.));
+}
+
+#[test]
+fn no_glide_after_scroll_hold_slow_drag_slip_or_wobble() {
+    // Scrolled fast, held still (a 200 ms pause), then lifted with a slip.
+    let mut hold = timed(10., &[(0., 20.), (0., 22.), (0., 21.), (0., 20.)]);
+    for s in hold.iter_mut() { s.0 += 210.; }
+    hold.extend([(10., 0., 1.), (0., 0., 2.)]);
+    assert_eq!(gpui::crundi_flick(&hold), None, "scroll, hold, lift");
+    // Scrolled fast, slowing to a stop under the finger (no pause in events).
+    assert_eq!(gpui::crundi_flick(&timed(10., &[(0., 20.), (0., 18.), (0., 12.), (0., 5.), (0., 2.), (0., 1.)])), None, "slowing into a hold");
+    // A rest reported at the end (zero deltas) zeroes it.
+    assert_eq!(gpui::crundi_flick(&timed(10., &[(0., 20.), (0., 22.), (0., 21.), (0., 0.)])), None, "a rest at the end");
+    // A slow drag: 1 px every 12 ms (~80 px/s).
+    assert_eq!(gpui::crundi_flick(&timed(12., &[(0., 1.); 12])), None, "slow drag");
+    // A lift-off's micro-slip: 1-3 px.
+    assert_eq!(gpui::crundi_flick(&timed(8., &[(0., 1.), (0., 2.), (0., 3.)])), None, "slip on lift");
+    assert_eq!(gpui::crundi_flick(&timed(8., &[(1., 0.), (0., 2.)])), None, "two-step slip");
+    // A wobble: back and forth, fast but going nowhere.
+    assert_eq!(gpui::crundi_flick(&timed(10., &[(0., 15.), (0., -14.), (0., 16.), (0., -15.), (0., 14.)])), None, "wobble");
+    // Nothing at all.
+    assert_eq!(gpui::crundi_flick(&[]), None);
+}
+
+// ─── T8: a cached pane scrolled sideways and down through its range never panics ───
+
+struct Strip { panes: Vec<Entity<Leaf>>, scroll: gpui::ScrollHandle }
+impl Render for Strip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let mut row = div().flex().w(px(4. * 300.)).h(px(600.));
+        for p in &self.panes { row = row.child(div().w(px(300.)).h(px(600.)).child(p.clone().cached(StyleRefinement::default().size_full()))); }
+        div().id("strip").size_full().overflow_scroll().track_scroll(&self.scroll).child(row)
+    }
+}
+
+#[gpui::test]
+fn cached_panes_scrolled_through_their_range_never_panic(cx: &mut TestAppContext) {
+    let n = Rc::new(Cell::new(0));
+    let (root, cx) = cx.add_window_view(move |_, cx| {
+        let panes = (0..4).map(|_| cx.new(|_| Leaf { renders: n.clone() })).collect();
+        Strip { panes, scroll: gpui::ScrollHandle::new() }
+    });
+    let sc = root.read_with(cx, |r, _| r.scroll.clone());
+    draw(cx);
+    for round in 0..4 {
+        for i in 0..=40 {
+            let f = if round % 2 == 0 { i as f32 / 40. } else { 1. - i as f32 / 40. };
+            let max = sc.max_offset();
+            sc.set_offset(point(-max.x * f, -max.y * (1. - f)));
+            // A pane changes now and then (its range is laid down afresh).
+            if i % 7 == 0 { root.update(cx, |r, cx| r.panes[i % 4].update(cx, |_, cx| cx.notify())); }
+            root.update(cx, |_, cx| cx.notify());
+            draw(cx);
+        }
+        settle(cx);
+    }
+}
+
+// ─── T11: a floating layer on top owns every scroll over it ───
+
+/// A tall list behind (the chat) and, over it, a popover (occluding, as
+/// cru-panel and every menu panel) with its own scrolling list and padding.
+struct Under { back: gpui::ScrollHandle, pop: gpui::ScrollHandle }
+impl Render for Under {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let rows = |n: usize| div().flex().flex_col().children((0..n).map(|i| div().h(px(20.)).child(format!("row {i}"))));
+        div().relative().size_full()
+            .child(div().id("back").absolute().top_0().left_0().w(px(400.)).h(px(400.)).overflow_y_scroll().track_scroll(&self.back).child(rows(200)))
+            .child(div().id("pop").occlude().absolute().top(px(50.)).left(px(100.)).w(px(200.)).h(px(200.)).p(px(30.))
+                .child(div().id("pop-list").size_full().overflow_y_scroll().track_scroll(&self.pop).child(rows(30))))
+    }
+}
+
+#[gpui::test]
+fn a_layer_on_top_owns_every_scroll_over_it(cx: &mut TestAppContext) {
+    let (root, cx) = cx.add_window_view(|_, _| Under { back: gpui::ScrollHandle::new(), pop: gpui::ScrollHandle::new() });
+    let (back, pop) = root.read_with(cx, |r, _| (r.back.clone(), r.pop.clone()));
+    back.set_offset(point(px(0.), px(-500.)));
+    draw(cx);
+    let wheel = |cx: &mut VisualTestContext, x: f32, y: f32, dy: f32| {
+        cx.simulate_event(gpui::ScrollEvent { position: point(px(x), px(y)), delta: gpui::ScrollDelta::Pixels(point(px(0.), px(dy))), ..Default::default() });
+        draw(cx);
+    };
+    let b0 = back.offset();
+    // Over the popover's list, mid-range: the list scrolls, the chat stays.
+    wheel(cx, 200., 150., -60.);
+    assert!(pop.offset().y < px(0.), "the popover's list scrolls");
+    assert_eq!(back.offset(), b0, "mid-range: the chat behind stays");
+    // At the list's ends, both ways.
+    for _ in 0..20 { wheel(cx, 200., 150., -100.); }
+    assert_eq!(back.offset(), b0, "at the bottom end: the chat behind stays");
+    for _ in 0..20 { wheel(cx, 200., 150., 100.); }
+    assert_eq!(pop.offset().y, px(0.));
+    assert_eq!(back.offset(), b0, "at the top end: the chat behind stays");
+    // Over its padding.
+    wheel(cx, 110., 60., -80.);
+    wheel(cx, 110., 60., 80.);
+    assert_eq!(back.offset(), b0, "over the padding: the chat behind stays");
+    // Beside the popover the chat scrolls as before.
+    wheel(cx, 50., 300., -40.);
+    assert!(back.offset().y < b0.y, "beside it the chat scrolls");
+}

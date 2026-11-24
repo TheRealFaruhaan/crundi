@@ -87,8 +87,31 @@ static BIN_OUT: Mutex<Option<mpsc::Sender<Vec<u8>>>> = Mutex::new(None);
 /// CRUNDI_NATIVE_HOST=0 turns hosting off.
 pub fn registration() -> Option<Value> {
     if std::env::var("CRUNDI_NATIVE_HOST").is_ok_and(|v| v == "0") { return None; }
-    Some(json!({ "type": "register-native-host", "capabilities": CAPABILITIES, "deviceId": device_id() }))
+    Some(register())
 }
+
+/// The register message: what this host can do, its device, and who it is
+/// (dev:app/main.js connectNativeHost: name, clientKind and version, so a
+/// server with several PCs attached can tell them apart).
+fn register() -> Value {
+    json!({ "type": "register-native-host", "capabilities": CAPABILITIES, "deviceId": device_id(),
+        "name": gethostname::gethostname().to_string_lossy(), "clientKind": CLIENT_KIND, "version": crundi_shell::lifecycle::version() })
+}
+
+/// The kind this client says it is (the workers' kinds: src/workers.js).
+pub const CLIENT_KIND: &str = "native";
+
+/// How many times this window told the server it came to the front.
+static ACTIVE_SENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The person came to this window (dev:app/main.js browser-window-focus):
+/// the server sends its new pages here when several PCs are attached.
+pub fn window_active(cx: &gpui::App) {
+    if registration().is_none() || BIN_OUT.lock().unwrap().is_none() { return; }
+    crundi_shell::ws_send(cx, &json!({ "type": "native-host-active" }));
+    ACTIVE_SENT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+pub fn active_sent() -> u64 { ACTIVE_SENT.load(std::sync::atomic::Ordering::Relaxed) }
 
 /// This PC's id for the server (homepool, the host list): made once, kept.
 pub fn device_id() -> String {
@@ -139,7 +162,7 @@ pub fn start(url: String) {
         match tungstenite::connect(url.as_str()) {
             Ok((mut ws, _)) => {
                 if let MaybeTlsStream::Plain(s) = ws.get_mut() { let _ = s.set_read_timeout(Some(Duration::from_millis(30))); }
-                let reg = registration().unwrap_or_else(|| json!({ "type": "register-native-host", "capabilities": CAPABILITIES, "deviceId": device_id() }));
+                let reg = registration().unwrap_or_else(register);
                 if ws.send(Message::text(reg.to_string())).is_err() { continue; }
                 ui_status(format!("Connected to {shown}, registering"));
                 loop {

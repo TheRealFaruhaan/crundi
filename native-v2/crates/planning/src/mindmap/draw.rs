@@ -819,7 +819,10 @@ impl MapContent {
         content = content.child(super::idea_el::MapEl { items: rest, z }).children(divs);
         *s.drawn.borrow_mut() = drawn;
         if s.ring_on { content = content.child(ring(s, z)); }
-        if let Some(h) = &s.hover { if !(s.edit_on && s.edit_node.as_ref().is_some_and(|e| e.id == h.id)) { content = content.child(card(h, Mode::Open, z, None, true, false)); } }
+        // The idea opened up covers the ideas under it, words too (the web's
+        // :hover z-index 20): a layer of its own, drawn over the map's (in
+        // one layer every card is drawn under every word).
+        if let Some(h) = &s.hover { if !(s.edit_on && s.edit_node.as_ref().is_some_and(|e| e.id == h.id)) { content = content.child(w::layer(card(h, Mode::Open, z, None, true, false))); } }
         if s.edit_on { if let Some(e) = &s.edit_node { content = content.child(card(e, Mode::Editing, z, Some(&u.edit), true, false)); } }
         if s.draft_on { content = content.child(draft(s, z, &u.draft)); }
         w::layer(content).into_any_element()
@@ -953,8 +956,11 @@ impl Render for MapView {
                 window.on_mouse_event(|e: &MouseMoveEvent, phase, window, cx| {
                     if phase == DispatchPhase::Capture && super::pressing(cx) { super::pointer_move(f32::from(e.position.x), f32::from(e.position.y), window, cx); }
                 });
+                // In the capture phase: a drop target (a chat's box, a
+                // terminal) stops the release's bubble, and the idea in hand
+                // stayed over it (the owner, 22 Nov).
                 window.on_mouse_event(move |e: &MouseUpEvent, phase, window, cx| {
-                    if phase == DispatchPhase::Bubble && e.button == MouseButton::Left && !b.contains(&e.position) && super::pressing(cx) { super::release_outside(window, cx); }
+                    if phase == DispatchPhase::Capture && e.button == MouseButton::Left && !b.contains(&e.position) && super::pressing(cx) { super::release_outside(window, cx); }
                 });
             }).absolute().top_0().left_0().size_full())
             .child(content)

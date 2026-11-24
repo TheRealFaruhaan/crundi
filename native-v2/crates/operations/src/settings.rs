@@ -11,6 +11,7 @@
 
 mod local;
 pub mod rules;
+mod speaker;
 
 use crate::skills::common::{self as c, Fields, HasFields};
 use crate::compat::AreaEvent;
@@ -94,7 +95,9 @@ pub struct St {
     // Cru.
     voice: Voice,
     // The Desktop App.
-    launch: bool, launch_hint: String, auto_update: bool, upd_channel: i32, upd_avail: bool, upd_status: String,
+    launch: bool, launch_hint: String, auto_update: bool, mini: bool, upd_channel: i32, upd_avail: bool, upd_status: String,
+    /// The updater's download: under way, finished (the action button's words).
+    upd_downloading: bool, upd_downloaded: bool,
     f: Fields,
     page: Option<Entity<Page>>,
     /// The signed-in server's address (Session), kept here for drawing.
@@ -141,9 +144,10 @@ impl Default for St {
             pair_focus: None, pair_scroll: ScrollHandle::new(),
             sess_open: false, sess_state: "loading".into(), sess_error: String::new(), sessions: vec![], sess_others: 0,
             voice: Voice::default(),
-            launch: local::launch(), launch_hint: local::launch_hint(), auto_update: l.auto_update.unwrap_or(true),
-            upd_channel: if l.channel == "dev" { 1 } else { 0 }, upd_avail: false,
-            upd_status: format!("Up to date \u{2014} v{}", env!("CARGO_PKG_VERSION")),
+            launch: local::launch(), launch_hint: local::launch_hint(), auto_update: local::auto_update(), mini: crundi_shell::local::mini_on(),
+            upd_channel: if local::channel() == "dev" { 1 } else { 0 }, upd_avail: false,
+            upd_status: format!("Up to date \u{2014} v{}", crundi_shell::lifecycle::version()),
+            upd_downloading: false, upd_downloaded: false,
             f: Fields::default(),
             page: None,
             server: String::new(),
@@ -206,11 +210,25 @@ pub fn set_open(cx: &mut App, key: &str, on: bool) -> bool {
 
 pub fn is_open(cx: &mut App, key: &str) -> bool { get(cx, |s| s.open.get(key).copied().unwrap_or(false)) }
 
-/// The PC client's own update (the ship phase's updater): the Desktop App
-/// section's status line.
-pub fn set_update_available(cx: &mut App, available: bool, label: &str) {
-    let label = label.to_string();
-    upd(cx, |s| { s.upd_avail = available; if !label.is_empty() { s.upd_status = label; } });
+/// The PC client's own update (the desktop area's updater, Electron's
+/// update:status): the Desktop App section's status row (updStatusRowHtml)
+/// and the Settings tab's dot.
+pub fn set_update_state(cx: &mut App, u: &Value) {
+    let b = |k: &str| u.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    let st = |k: &str| u.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let (avail, dl, ready, enabled) = (b("available"), b("downloading"), b("downloaded"), b("enabled"));
+    let status = if dl {
+        format!("Downloading\u{2026} {}%", u.get("percent").and_then(|v| v.as_u64()).unwrap_or(0))
+    } else if avail {
+        let v = st("version");
+        let head = if st("channel") == "dev" { if st("latestKind") == "production" { format!("Production release available \u{2014} v{v}") } else { format!("Dev build available \u{2014} v{v}") } } else { format!("Update available \u{2014} v{v}") };
+        if ready { format!("{head} (ready)") } else { head }
+    } else {
+        let cur = st("current");
+        if cur.is_empty() { "Up to date".to_string() } else { format!("Up to date \u{2014} v{cur}") }
+    };
+    let chan = if st("channel") == "dev" { 1 } else { 0 };
+    upd(cx, |s| { s.upd_avail = avail; s.upd_downloading = dl; s.upd_downloaded = ready; s.upd_status = status; s.auto_update = enabled; s.upd_channel = chan; });
 }
 
 /// The terminal's newline key ("shift" or "ctrl"), for the terminal panels.
@@ -1040,6 +1058,7 @@ fn pair_close(cx: &mut App) {
 // ─── Cru ───
 
 fn voice_load(cx: &mut App) {
+    speaker::load(cx);
     crundi_shell::call(cx, |api| api.get("/api/voice/settings"), |r, cx| {
         let s = match r { Ok(s) if s.get("ok") == Some(&Value::Bool(true)) => s, _ => { upd(cx, |s| s.voice.shown = false); return; } };
         upd(cx, |st| voice_show(st, &s));
@@ -1102,6 +1121,9 @@ fn voice_show(st: &mut St, s: &Value) {
     st.f.set("vs-dday", js_num(f("deepgramBillingDay").filter(|n| *n > 0.0).unwrap_or(1.0)));
     for k in ["vs-akey", "vs-dkey", "vs-xkey"] { st.f.set(k, ""); }
 }
+
+/// The status line under Cru's settings (vsNote('vs-status')).
+fn voice_status(cx: &mut App, text: String, bad: bool) { upd(cx, |s| { s.voice.status = text; s.voice.status_bad = bad; }); }
 
 /// Save a part of Cru's settings; the status line says how it went.
 fn voice_save(cx: &mut App, body: Value, note: String, then: impl FnOnce(bool, &mut App) + 'static) {
@@ -1211,13 +1233,12 @@ fn voice_reset(cx: &mut App) {
 // ─── The Desktop App (this client) ───
 
 fn desktop_show(cx: &mut App) {
-    let l = local::load();
     upd(cx, |s| {
         s.launch = local::launch();
         s.launch_hint = local::launch_hint();
-        s.auto_update = l.auto_update.unwrap_or(true);
-        s.upd_channel = if l.channel == "dev" { 1 } else { 0 };
-        if !s.upd_avail { s.upd_status = format!("Up to date \u{2014} v{}", env!("CARGO_PKG_VERSION")); }
+        s.auto_update = local::auto_update();
+        s.mini = crundi_shell::local::mini_on();
+        s.upd_channel = if local::channel() == "dev" { 1 } else { 0 };
     });
 }
 
@@ -1228,25 +1249,36 @@ fn launch_toggle(cx: &mut App, on: bool) {
     }
 }
 
+fn mini_toggle(cx: &mut App, on: bool) {
+    crundi_shell::local::set_mini(on);
+    upd(cx, |s| s.mini = on);
+}
+
 fn update_toggle(cx: &mut App, on: bool) {
-    local::update(|l| l.auto_update = Some(on));
+    // update:setEnabled: saved, and on turning it on, checked at once.
+    crundi_shell::lifecycle::set_auto_update(on);
     upd(cx, |s| s.auto_update = on);
+    crundi_shell::lifecycle::updater(if on { "enabled-on" } else { "enabled-off" });
 }
 
 fn desktop_channel(cx: &mut App, i: i32) {
     if get(cx, |s| s.upd_channel) == i { return; }
     let go = move |cx: &mut App| {
-        local::update(|l| l.channel = if i == 1 { "dev".into() } else { "production".into() });
+        // update:setChannel: saved, the offer forgotten, checked again.
+        crundi_shell::lifecycle::set_channel(i == 1);
         upd(cx, |s| s.upd_channel = i);
+        crundi_shell::lifecycle::updater("channel");
     };
     if i == 1 { confirm_dev(cx, "the desktop app", go); } else { go(cx); }
 }
 
 fn update_check(cx: &mut App) {
-    c::toast(cx, "Checking for updates\u{2026}");
-    // The ship phase brings the updater; until then this build has none to ask.
-    c::after(cx, 600, |cx| c::toast(cx, "This build cannot update itself yet: install the newer one by hand"));
+    // update:check (the updater answers with its status, or a prompt).
+    if !crundi_shell::lifecycle::updater("check") { c::toast(cx, "Update checks run in the installed app only."); }
 }
+
+/// update:install: Download & install, or Restart & install once downloaded.
+fn update_install(_cx: &mut App) { crundi_shell::lifecycle::updater("install"); }
 
 /// The signed-in server's address (kit::base).
 fn base(cx: &App) -> String { crundi_shell::api(cx).map(|a| a.base().to_string()).unwrap_or_default() }
@@ -1377,7 +1409,7 @@ const ITEMS: &[Item] = &[
     Item::Group("NOTIFICATIONS"), Item::Fold("channels", "Notification Channels"), Item::Fold("notify", "Notification Settings"),
     Item::Group("ACCESS"), Item::Fold("signin", "Sign-in"), Item::Fold("phone", "Phone app"), Item::Fold("session", "Session"),
     Item::Group("THIS SERVER"), Item::Fold("config", "Configuration"), Item::Fold("terminal", "Terminal"), Item::Fold("backup", "Backup & restore"),
-    Item::Group("MORE"), Item::Fold("desktop", "Desktop App"),
+    Item::Group("MORE"), Item::Fold("pcworker", "This PC as a worker"), Item::Fold("desktop", "Desktop App"),
 ];
 
 /// A section's body (drawn only while it is open), as its parts.
@@ -1400,6 +1432,8 @@ fn body_of(key: &str, want: Want, window: &mut Window, cx: &mut App) -> Parts {
         "config" => config_body(want, window, cx),
         "terminal" => terminal_body(want, window, cx),
         "backup" => crate::skills::backup_section(want, window, cx),
+        // The PC client's own (Desktop's part: local/mod.rs worker_part).
+        "pcworker" => { let p = crate::compat::settings_parts(window, cx, "pc-worker"); Parts::one(div().flex().flex_col().children(p)) }
         _ => desktop_body(want, cx),
     }
 }
@@ -1660,6 +1694,8 @@ fn voice_body(want: Want, window: &mut Window, cx: &mut App) -> Parts {
         .when(v.has_volume, |d| d.part(|| vs_select("volume", "Volume", "How loud Cru talks, everywhere. Cru can change it too: say louder or quieter.", s)))
         .part(|| vs_select("pauseMs", "Pause before sending", "How long you may pause before what you said is sent.", s))
         .when(v.has_sclose, |d| d.part(|| vs_select("screenCloseSeconds", "Close the voice screen after", "On the phone, the web and the PC. Hey Cru opens it again.", s)))
+        // Whose voice Cru acts on (capability 'voice-speaker'; an older server: left out).
+        .when_some(speaker::part(), |d, p| d.part(move || p))
         .when(v.has_admin, |d| d.part(|| col(T::SP_4)
             .child(row().gap(T::SP_6).child(w::check("vs-admin", "", v.admin, |on, _, cx| voice_admin(cx, *on))).child(w::icon(IconName::ShieldAlert, T::ICON_SM))
                 .child(div().text_size(T::TEXT_13).text_color(T::text()).child("Admin mode")))
@@ -1926,13 +1962,17 @@ fn desktop_body(want: Want, cx: &mut App) -> Parts {
     let s = st(cx);
     parts(T::SP_12).wanting(want)
         .part(|| info_row("Launch at startup", &s.launch_hint, vec![w::switch("launch", s.launch, |v, _, cx| launch_toggle(cx, *v)).into_any_element()]))
+        .part(|| info_row("Show Mini", "The little robot that keeps you company while you wait.", vec![w::switch("mini", s.mini, |v, _, cx| mini_toggle(cx, *v)).into_any_element()]))
         .part(|| info_row("Automatic updates", "Check on launch and once a day. Always asks before installing.", vec![w::switch("auto-update", s.auto_update, |v, _, cx| update_toggle(cx, *v)).into_any_element()]))
         .part(|| info_row("Release channel", "Dev gets preview builds early. A newer production release is offered either way.",
             vec![w::segmented("upd-channel", &["Production", "Dev"], s.upd_channel.max(0) as usize, |i, _, cx| desktop_channel(cx, *i as i32)).into_any_element()]))
         .part(|| row().gap(T::SP_12)
             .child(row().flex_1().min_w_0().child(w::dot(if s.upd_avail { T::accent() } else { T::green() }))
                 .child(div().text_size(T::TEXT_13).text_color(if s.upd_avail { T::accent_hover() } else { T::text_secondary() }).child(s.upd_status.clone())))
-            .child(w::button("update-check", "Check now").on_click(|_, _, cx| update_check(cx))))
+            .child(if s.upd_avail {
+                w::disabled(w::primary("update-install", if s.upd_downloaded { "Restart & install" } else if s.upd_downloading { "Downloading\u{2026}" } else { "Download & install" }), s.upd_downloading)
+                    .on_click(|_, _, cx| update_install(cx))
+            } else { w::button("update-check", "Check now").on_click(|_, _, cx| update_check(cx)) }))
 }
 
 /// Connect a phone (crundi-phone.js connect()): the picture, the line under
@@ -2029,9 +2069,11 @@ pub fn test_ui(name: &str, args: &[String], _window: &mut Window, cx: &mut App) 
             "vs-set-away" => voice_away(cx, Some(a(1) == "true"), None),
             "vs-reset" => voice_reset(cx),
             "launch-toggle" => launch_toggle(cx, a(1) == "true"),
+            "mini-toggle" => mini_toggle(cx, a(1) == "true"),
             "update-toggle" => update_toggle(cx, a(1) == "true"),
             "upd-set-channel" => desktop_channel(cx, a(1).parse().unwrap_or(0)),
             "update-check" => update_check(cx),
+            "update-install" => update_install(cx),
             _ => return Some(json!({ "ok": false, "error": "no such control" })),
         },
         _ => return None,
@@ -2068,8 +2110,8 @@ pub fn props(_window: &mut Window, cx: &mut App) -> Value {
         "terminal": { "newlineKey": s.newline_key, "autopark": f("autopark"), "min": s.autopark_min },
         "voice": { "shown": s.voice.shown, "model": s.voice.sel.get("model").map(|e| e.1).unwrap_or(-1), "models": s.voice.sel.get("model").map(|e| e.0.len()).unwrap_or(0),
             "status": s.voice.status, "admin": s.voice.admin, "spend": s.voice.spend, "spendNote": s.voice.spend_note, "keysNote": s.voice.keys_note,
-            "away": s.voice.away, "awayClasses": s.voice.away_classes.len() },
-        "desktop": { "launch": s.launch, "autoUpdate": s.auto_update, "channel": s.upd_channel, "status": s.upd_status, "dot": s.upd_avail },
+            "away": s.voice.away, "awayClasses": s.voice.away_classes.len(), "speaker": speaker::state() },
+        "desktop": { "launch": s.launch, "mini": s.mini, "autoUpdate": s.auto_update, "channel": s.upd_channel, "status": s.upd_status, "dot": s.upd_avail, "downloading": s.upd_downloading, "downloaded": s.upd_downloaded },
         "modal": s.pair_open,
         "opened": c::s(&s.data, "opened"),
         "ptt": crate::ptt::label(&crate::ptt::get()), "pttCapturing": s.ptt_capturing,

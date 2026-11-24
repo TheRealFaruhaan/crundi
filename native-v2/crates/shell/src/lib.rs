@@ -6,7 +6,11 @@
 //! SignIn view while signed out.
 
 pub mod conn;
+pub mod lifecycle;
 pub mod live_hub;
+// Local mode (the all-in-one's own server): its state, client.json, its screens.
+pub mod local;
+pub mod local_ui;
 pub mod nav;
 pub mod projects;
 // Cru's push-to-talk shortcut (ptt.json), ported for the Desktop area (additive).
@@ -246,6 +250,29 @@ pub fn init(cx: &mut App) -> Stores {
                 // The link as a dropped connection would leave it (the badge's timers run as for real).
                 "server-screen" => show_server_screen(a(0) != "false", window, cx),
                 "server-screen-save" => session.update(cx, |s, cx| s.save_server_over(&a(0), cx)),
+                // The server screen's choice in the all-in-one (a press on its radio).
+                "server-mode" => { let si = views::shell(cx)?.read(cx).sign_in.clone(); si.update(cx, |v, cx| v.set_srv_remote(a(0) == "remote", cx)) }
+                // Local mode's screens: a press on their buttons and links (index.html).
+                n if n.starts_with("setup-") || n.starts_with("local-") => {
+                    let si = views::shell(cx)?.read(cx).sign_in.clone();
+                    let ls = si.read(cx).local_screen.clone();
+                    let h = local::hooks(cx);
+                    match n {
+                        "setup-next" => ls.update(cx, |v, cx| v.next(window, cx)),
+                        "setup-back" => ls.update(cx, |v, cx| v.back(cx)),
+                        "setup-skip" => ls.update(cx, |v, cx| v.skip(window, cx)),
+                        "setup-restore" => ls.update(cx, |v, cx| v.save(true, window, cx)),
+                        "setup-mode" => ls.update(cx, |v, cx| v.set_single(a(0) != "multi", cx)),
+                        // A click into the step's box (the keys go there).
+                        "setup-focus" => ls.update(cx, |v, cx| v.focus_box(cx)),
+                        "setup-auto-update" => ls.update(cx, |v, cx| v.set_checks(Some(a(0) != "false"), None, cx)),
+                        "setup-auto-launch" => ls.update(cx, |v, cx| v.set_checks(None, Some(a(0) != "false"), cx)),
+                        "local-start" => if let Some(h) = h { (h.start)() },
+                        "local-stop" => if let Some(h) = h { (h.stop)() },
+                        "local-restart" => if let Some(h) = h { (h.restart)() },
+                        _ => return None,
+                    }
+                }
                 "conn-link" => { let c = conn::conn(cx); c.update(cx, |c, cx| c.link(a(0) == "true", cx)) }
                 "remove-project" => {
                     let n = stores.projects.read(cx).list.iter().find(|p| p.alias == a(0)).map(|p| p.name.clone()).unwrap_or_else(|| a(0));

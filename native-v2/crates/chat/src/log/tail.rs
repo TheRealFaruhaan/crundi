@@ -199,10 +199,11 @@ pub(crate) fn mark_last(v: &LogView, ix: usize, n: usize, el: AnyElement) -> Any
 }
 
 /// The driver's view of it: the tail drawn by its own view (row, height),
-/// and where the list last put the last row.
+/// and where the list last put the last row; the gap the body places the
+/// tail at and the room the list last padded its end with (the same, F3).
 pub(crate) fn state(v: &LogView, cx: &App) -> serde_json::Value {
     let g = v.tail.geo.get();
-    serde_json::json!({ "live": v.tail_live(cx).map(|t| serde_json::json!({ "row": t.ix, "h": f32::from(t.h) })), "atFoot": g.at_foot, "gap": f32::from(g.gap), "width": f32::from(g.width), "rows": g.rows, "seen": [g.seen.0, g.seen.1, g.seen.2] })
+    serde_json::json!({ "live": v.tail_live(cx).map(|t| serde_json::json!({ "row": t.ix, "h": f32::from(t.h) })), "atFoot": g.at_foot, "gap": f32::from(g.gap), "width": f32::from(g.width), "rows": g.rows, "seen": [g.seen.0, g.seen.1, g.seen.2], "place": v.tail_place(cx).map(|p| f32::from(p.2)), "room": f32::from(v.tail.room) })
 }
 
 /// The blink turned: the tail's view redraws its caret, if it draws it.
@@ -219,14 +220,27 @@ impl LogView {
     pub(crate) fn tail_live(&self, cx: &App) -> Option<On> {
         let t = self.tail.on?;
         let n = self.store.read(cx).rows.len();
-        (self.tail.watched && !self.tail.boxed && t.ix + 1 == n && self.list.is_following_tail()).then_some(t)
+        // (At the foot: else the activity row is drawn in the list, under
+        // the last row, where the tail would sit over it.)
+        (self.tail.watched && !self.tail.boxed && t.ix + 1 == n && self.list.is_following_tail() && self.tail.at_foot()).then_some(t)
+    }
+
+    /// The list's room under its last row this frame: the agents' dock, and
+    /// the activity row's when its own view draws it at the foot.
+    pub(crate) fn foot_room(&self, cx: &App) -> Pixels {
+        let room = super::agents::room(self);
+        if self.activity(cx) == Some(true) { room + super::activity::height(self.fs()) } else { room }
     }
 
     /// For the chat's body: the tail's view, its height and its gap above
-    /// the log's bottom, while it draws itself.
+    /// the log's bottom, while it draws itself. The gap is this frame's room
+    /// (the one the list pads its end with), not the last layout's: the
+    /// activity row moving from the list to its own view changes it from
+    /// one frame to the next, and a stale gap drew the tail a row low under
+    /// a blank one (F3).
     pub fn tail_place(&self, cx: &App) -> Option<(Entity<TailView>, Pixels, Pixels)> {
         let t = self.tail_live(cx)?;
-        Some((self.tail.view.clone()?, t.h, self.tail.geo.get().gap))
+        Some((self.tail.view.clone()?, t.h, self.foot_room(cx)))
     }
 
     /// The TailView's element: the row as the list would draw it.
