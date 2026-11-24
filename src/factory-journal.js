@@ -301,6 +301,9 @@ export function reduce(prev, ev) {
       // Changed on a running run: overrides the factory's own.
       r.limits = ev.limits || null;
       break;
+    case 'run-limits':
+      runLimits(rec, ev, at);
+      break;
     case 'pause':
       // mode 'now': the turns in progress were stopped (stopped: who). With
       // resumeOnReset it carries on by itself once the usage window that was
@@ -382,6 +385,59 @@ export function reduce(prev, ev) {
   applyHolds(rec);
   if (rec.state) rec.state.updatedAt = at || rec.state.updatedAt;
   return rec;
+}
+
+/**
+ * 'run-limits': the person (or the Manager on their word) changed this run's
+ * loop limits or caps. They go into the run's own snapshot, so the factory is
+ * untouched and the change replays with the journal. A cap given here is the
+ * run's whole limit from now on (what earlier "Let it carry on"s added is
+ * folded in). A run held at the cap that was raised carries on when the new
+ * limit leaves room.
+ *   { edges: { edgeId: maxRounds (0: no limit) }, maxMinutes?, maxHandoffs?, by }
+ */
+function runLimits(rec, ev, at) {
+  const s = rec.state, r = rec.run;
+  if (!s) return;
+  const done = { edges: {} };
+  for (const [id, n] of Object.entries(ev.edges && typeof ev.edges === 'object' ? ev.edges : {})) {
+    const res = Engine.setLoopLimit(s, id, n);
+    if (!res.ok) continue;
+    rec.state = res.run;
+    done.edges[id] = { from: res.before, to: Number(n) };
+  }
+  const st = rec.state, caps = st.snapshot.settings.caps;
+  const mm = Number(ev.maxMinutes), mh = Number(ev.maxHandoffs);
+  if (Number.isInteger(mm) && mm >= 1) {
+    done.maxMinutes = mm;
+    caps.maxMinutes = mm;
+    r.time.maxMinutes = mm;
+    r.capMinutesExtra = 0;
+  }
+  if (Number.isInteger(mh) && mh >= 1) {
+    done.maxHandoffs = mh;
+    caps.maxHandoffs = mh;
+    r.capExtra = 0;
+  }
+  const changed = { ...(r.runLimits || {}) };
+  changed.edges = { ...(changed.edges || {}) };
+  for (const [id, x] of Object.entries(done.edges)) changed.edges[id] = x.to;
+  if (done.maxMinutes) changed.maxMinutes = done.maxMinutes;
+  if (done.maxHandoffs) changed.maxHandoffs = done.maxHandoffs;
+  r.runLimits = changed;
+  // Held at a cap that now leaves room: carry on.
+  const hit = r.capHit;
+  const room = hit && (hit.which === 'maxMinutes' ? done.maxMinutes && timeLeft(rec, ms(at)) > 0
+    : hit.which === 'maxHandoffs' ? done.maxHandoffs && st.handoffs < done.maxHandoffs : false);
+  if (room) {
+    r.capHit = null;
+    if (st.status === 'waiting') {
+      st.status = st.tokens.some(t => ['work', 'answer', 'wait', 'delegated'].includes(t.status)) ? 'running'
+        : st.tokens.some(t => t.status === 'ask') ? 'waiting' : 'running';
+    }
+    if (!r.paused) openClock(r, at);
+  }
+  history(rec, { type: 'run-limits', by: ev.by || 'person', ...done, ...(room ? { released: hit.which } : {}) });
 }
 
 function queue(rec, effects, at) {

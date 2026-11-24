@@ -82,6 +82,24 @@ class FactoryLiveTest {
         assertFalse(PauseOptions.supported(emptySet()))
     }
 
+    @Test fun runLimitsOnlyWhenTheServerHasThem() {
+        assertTrue(RunLimits.supported(setOf("handshake", "factory-run-limits")))
+        assertFalse(RunLimits.supported(setOf("handshake", "factory-pause-options")))
+        // An older server sends neither loops nor caps: the card has nothing to show.
+        val old = CrundiJson.decodeFromString(FactoryRun.serializer(), """{"id":"r1","status":"running"}""")
+        assertTrue(old.loops.isEmpty())
+        assertNull(old.caps)
+        val r = CrundiJson.decodeFromString(FactoryRun.serializer(), """{"id":"r1","status":"waiting","loops":[{"edgeId":"e4","from":"Planner","to":"Manager","maxRounds":3,"used":3,"reopened":1},{"edgeId":"e22","from":"Approved?","to":"Which workers?","maxRounds":3,"used":0}],"caps":{"maxMinutes":240,"usedMinutes":61,"maxHandoffs":200,"handoffs":12}}""")
+        assertTrue(r.loops[0].usedUp)
+        assertFalse(r.loops[1].usedUp)
+        assertEquals("61 of 240 min · 12 of 200 handoffs · 2 loops, 1 used up", RunLimits.summary(r))
+        // Only what changed is sent.
+        val (e, m, h) = RunLimits.changes(r, mapOf("e4" to 6, "e22" to 3), 240, 300)
+        assertEquals(mapOf("e4" to 6), e)
+        assertNull(m)
+        assertEquals(300, h)
+    }
+
     @Test fun needsCardsOnlyWhenTheServerHasIt() {
         assertTrue(NeedsCards.supported(setOf("handshake", "trigger-needs-cards")))
         assertFalse(NeedsCards.supported(setOf("handshake", "webhooks")))

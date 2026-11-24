@@ -23,7 +23,7 @@ function time(at) {
 const first = (s, n = 160) => { const t = String(s || '').split('\n')[0]; return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 
 /** One journal event as a line of the timeline (null: not worth showing). */
-function describe(ev, names, nodes) {
+function describe(ev, names, nodes, edgesById = new Map()) {
   const who = (id) => names.get(id) || id || '';
   switch (ev.type) {
     case 'start': return { k: 'start', main: 'Started', sub: ev.task };
@@ -56,6 +56,14 @@ function describe(ev, names, nodes) {
     case 'hold': return { k: 'info', main: `${who(ev.employeeId)} woke by itself and was told to hold`, sub: ev.why === 'held' ? 'The Manager had told them to wait' : 'The run is paused' };
     case 'resume': return { k: 'info', main: 'Resumed' };
     case 'cap': return { k: 'escalate', main: `Limit reached (${ev.which === 'maxMinutes' ? ev.limit + ' minutes' : ev.limit + ' handoffs'})` };
+    case 'run-limits': {
+      const bits = [
+        ...Object.entries(ev.edges || {}).map(([id, n]) => { const e = edgesById.get(id); return `${e ? (nodes.get(e.source)?.label || e.source) + ' → ' + (nodes.get(e.target)?.label || e.target) : id}: ${n ? n + ' rounds' : 'no limit'}`; }),
+        ev.maxMinutes ? ev.maxMinutes + ' minutes' : '',
+        ev.maxHandoffs ? ev.maxHandoffs + ' handoffs' : '',
+      ].filter(Boolean);
+      return { k: 'info', main: ev.by === 'manager' ? 'The Manager changed the run\'s limits' : 'Run limits changed', sub: bits.join(' · ') };
+    }
     case 'crash': return { k: 'crash', main: 'Crashed', sub: ev.reason };
     case 'recover': return { k: 'info', main: 'Recovered', sub: ev.note || '' };
     case 'reopen': return { k: 'escalate', main: 'Back to work', sub: first(ev.reason) };
@@ -99,6 +107,47 @@ function LimitsEditor({ limits, busy, onSave }) {
       <Toggle checked={l.paceOnly} label="Pause only when ahead of pace" onChange={v => setL({ ...l, paceOnly: v })} />
       {l.paceOnly ? <div className="ff-grid2"><label className="ff-field"><span className="ff-field-label">Always pause at %</span><input className="ff-input" type="number" min={50} max={100} value={l.paceCeiling ?? 100} onChange={e => setL({ ...l, paceCeiling: Number(e.target.value) })} /></label><label className="ff-field"><span className="ff-field-label">Resume when behind pace by (0: at reset)</span>{num('paceResumeBehind', 0, 50)}</label></div> : null}
       <div className="ff-btnrow"><button className="ff-btn primary" disabled={!!busy} onClick={() => { onSave(l); setOpen(false); }}>Apply to this run</button></div>
+    </details>
+  );
+}
+
+/**
+ * This run's own loop limits and caps (the server lists 'factory-run-limits'):
+ * raise a loop that ran out, or the time and handoff limits, without
+ * touching the factory. Only what changed is sent.
+ */
+function RunLimitsEditor({ loops, caps, busy, onSave }) {
+  const start = () => ({ edges: Object.fromEntries(loops.map(l => [l.edgeId, l.maxRounds])), maxMinutes: caps.maxMinutes, maxHandoffs: caps.maxHandoffs });
+  const [v, setV] = useState(start);
+  const [open, setOpen] = useState(false);
+  const key = JSON.stringify([loops, caps.maxMinutes, caps.maxHandoffs]);
+  useEffect(() => { if (!open) setV(start()); }, [key, open]);
+  const full = loops.filter(l => l.maxRounds > 0 && l.used >= l.maxRounds).length;
+  const sum = `${caps.usedMinutes} of ${caps.maxMinutes} min · ${caps.handoffs} of ${caps.maxHandoffs} handoffs${loops.length ? ` · ${loops.length} loop${loops.length === 1 ? '' : 's'}${full ? `, ${full} used up` : ''}` : ''}`;
+  const int = (x) => { const n = Number(x); return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0; };
+  const save = () => {
+    const body = { edges: {} };
+    for (const l of loops) if (v.edges[l.edgeId] !== l.maxRounds) body.edges[l.edgeId] = int(v.edges[l.edgeId]);
+    if (v.maxMinutes !== caps.maxMinutes) body.maxMinutes = int(v.maxMinutes);
+    if (v.maxHandoffs !== caps.maxHandoffs) body.maxHandoffs = int(v.maxHandoffs);
+    onSave(body);
+    setOpen(false);
+  };
+  return (
+    <details className="ff-more" open={open} onToggle={e => setOpen(e.currentTarget.open)}>
+      <summary>Run limits: {sum}</summary>
+      {loops.map(l => (
+        <label key={l.edgeId} className="ff-field">
+          <span className="ff-field-label"><Icon name="loop" size={12} /> {l.from} → {l.to}: {l.used} used{l.maxRounds > 0 && l.used >= l.maxRounds ? ' (used up)' : ''} · rounds, 0: no limit</span>
+          <input className="ff-input" type="number" min={l.maxRounds > 0 || l.used ? Math.max(0, l.used) : 0} max={1000} value={v.edges[l.edgeId]} onChange={e => setV({ ...v, edges: { ...v.edges, [l.edgeId]: Number(e.target.value) } })} />
+        </label>
+      ))}
+      <div className="ff-grid2">
+        <label className="ff-field"><span className="ff-field-label">Time limit, minutes ({caps.usedMinutes} used)</span><input className="ff-input" type="number" min={caps.usedMinutes + 1} max={10080} value={v.maxMinutes} onChange={e => setV({ ...v, maxMinutes: Number(e.target.value) })} /></label>
+        <label className="ff-field"><span className="ff-field-label">Handoff limit ({caps.handoffs} made)</span><input className="ff-input" type="number" min={caps.handoffs + 1} max={10000} value={v.maxHandoffs} onChange={e => setV({ ...v, maxHandoffs: Number(e.target.value) })} /></label>
+      </div>
+      <p className="ff-hint">For this run only; the factory keeps its own. The Manager is told, and a run stopped at a limit carries on once the new one leaves room.</p>
+      <div className="ff-btnrow"><button className="ff-btn primary" disabled={!!busy} onClick={save}>Apply to this run</button></div>
     </details>
   );
 }
@@ -265,16 +314,23 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
     if (dims.length) setSizes(p => { const next = { ...p }; for (const c of dims) next[c.id] = { width: c.dimensions.width, height: c.dimensions.height }; return next; });
   }, []);
 
-  const timeline = useMemo(() => events.map((ev, i) => ({ i: i + 1, at: ev.at, ...(describe(ev, names, nodesById) || {}) })).filter(x => x.main), [events, names, nodesById]);
+  const edgesById = useMemo(() => new Map((f?.edges || []).map(x => [x.id, x])), [f]);
+  const timeline = useMemo(() => events.map((ev, i) => ({ i: i + 1, at: ev.at, ...(describe(ev, names, nodesById, edgesById) || {}) })).filter(x => x.main), [events, names, nodesById, edgesById]);
 
   // Pause's choices (finish or stop now, carry on after the usage reset), only
   // when the server lists them in its handshake; otherwise a plain Pause.
   const [pauseOpts, setPauseOpts] = useState(false);
+  const [runLimitsOk, setRunLimitsOk] = useState(false);   // 'factory-run-limits': this run's loops and caps can be raised
   const [pauseMenu, setPauseMenu] = useState(false);
   const [pauseReset, setPauseReset] = useState(false);
   useEffect(() => {
     let gone = false;
-    apiFetch('/api/handshake').then(r => r.json()).then(hs => { if (!gone) setPauseOpts(((hs && hs.server && hs.server.capabilities) || []).includes('factory-pause-options')); }).catch(() => {});
+    apiFetch('/api/handshake').then(r => r.json()).then(hs => {
+      if (gone) return;
+      const caps = (hs && hs.server && hs.server.capabilities) || [];
+      setPauseOpts(caps.includes('factory-pause-options'));
+      setRunLimitsOk(caps.includes('factory-run-limits'));
+    }).catch(() => {});
     return () => { gone = true; };
   }, [apiFetch]);
   const act = async (body, label) => {
@@ -404,6 +460,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
         {run?.usage?.turns > 0 && <><span>Spent</span><span>{run.usage.costUsd ? '$' + run.usage.costUsd.toFixed(2) + ' · ' : ''}{run.usage.turns} turns in {run.usage.chats} chats</span></>}
       </div>
       {live && run?.limits && <LimitsEditor limits={run.limits} busy={busy} onSave={(l) => act({ action: 'limits', limits: l }, 'limits')} />}
+      {live && runLimitsOk && run?.caps && Array.isArray(run.loops) && ['starting', 'running', 'waiting', 'paused', 'crashed', 'finishing'].includes(run.status) && <RunLimitsEditor loops={run.loops} caps={run.caps} busy={busy} onSave={(b) => act({ action: 'runLimits', ...b }, 'runLimits')} />}
       {live && run?.waitingOn === 'manager' && <p className="ff-hint">The Manager is talking to you in its chat.</p>}
       {live && run?.managerChatId && openChat && <button className="ff-btn" onClick={() => openChat(run.managerChatId, 'Manager')}><Icon name="crown" size={14} />Open the Manager's chat</button>}
       {asks.map(a => (
@@ -431,7 +488,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
           <div className="ff-btnrow"><button className="ff-btn primary" disabled={!!busy} onClick={() => act({ action: 'recover', note }, 'recover')}>Recover</button></div>
         </div>
       )}
-      {live && run?.capHit && <div className="ff-actor"><div className="ff-actor-head"><Icon name="alert" size={14} />It reached its limit ({run.capHit.which === 'maxMinutes' ? run.capHit.limit + ' minutes' : run.capHit.limit + ' handoffs'}).</div><div className="ff-btnrow"><button className="ff-btn primary" disabled={!!busy} onClick={() => act({ action: 'resume' }, 'resume')}>Let it carry on</button></div></div>}
+      {live && run?.capHit && <div className="ff-actor"><div className="ff-actor-head"><Icon name="alert" size={14} />It reached its limit ({run.capHit.which === 'maxMinutes' ? run.capHit.limit + ' minutes' : run.capHit.limit + ' handoffs'}).</div><div className="ff-btnrow"><button className="ff-btn primary" disabled={!!busy} onClick={() => act({ action: 'resume' }, 'resume')}>Let it carry on</button></div>{runLimitsOk && run.caps && <p className="ff-hint">Or raise the limit for this run under Run limits.</p>}</div>}
       {err && <div className="ff-issue error"><Icon name="alert" size={13} /><div>{err}</div></div>}
       <p className="ff-hint">{panel ? 'Tap someone at work to read their transcript live; tap a finished step to see what happened there.' : "Tap a step to see what happened there and open that person's transcript."}</p>
     </div>

@@ -5297,6 +5297,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         case 'recover': result = await factoryRunner.recover(body.id, { note: body.note || '' }); break;
         case 'ask': result = await factoryRunner.askReply(body.id, body.tokenId, body.replyId, body.note || ''); break;
         case 'limits': result = await factoryRunner.setLimits(body.id, body.limits || {}); break;
+        // Capability 'factory-run-limits': this run's loop limits ({ edgeId: rounds, 0 = none })
+        // and caps (maxMinutes, maxHandoffs), raised without touching the factory.
+        case 'runLimits': result = await factoryRunner.setRunLimits(body.id, { edges: body.edges || null, maxMinutes: body.maxMinutes, maxHandoffs: body.maxHandoffs }); break;
         // A PC holding steps stayed away: run them here instead (the run's Details).
         case 'moveToServer': result = await factoryRunner.moveToServer(body.id, { worker: String(body.worker || '') }); break;
         case 'endWait': result = await factoryRunner.endWait(body.id, body.tokenId, { outcome: body.outcome, note: body.note || '' }); break;
@@ -8636,7 +8639,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
       if (body.tool === 'factory_control') {
         if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
-        try { return json(res, await factoryRunner.controlFromManager(String(a.sessionId || ''), { action: a.action, reason: a.reason || '', limits: a.limits || null, mode: a.mode === 'now' ? 'now' : '', resumeOnReset: !!a.resumeOnReset, worker: String(a.worker || '') })); }
+        try { return json(res, await factoryRunner.controlFromManager(String(a.sessionId || ''), { action: a.action, reason: a.reason || '', limits: a.limits || null, mode: a.mode === 'now' ? 'now' : '', resumeOnReset: !!a.resumeOnReset, worker: String(a.worker || ''), edges: a.edges && typeof a.edges === 'object' ? a.edges : null, maxMinutes: a.maxMinutes, maxHandoffs: a.maxHandoffs })); }
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
       if (body.tool === 'factory_status') {

@@ -285,6 +285,10 @@ export function createFactoryRunner({
       pcsAway: pcsAwayOf(entry),
       usage: usageOf(r),
       limits: limitsOf(entry),
+      // The run's loops and caps as they stand (capability 'factory-run-limits':
+      // POST action 'runLimits' changes them for this run).
+      loops: loopsView(entry),
+      caps: capsView(entry),
       waitingForSeat: entry.live.seats.map(x => ({ tokenId: x.ef.tokenId, employeeId: x.ef.employeeId, employee: s.snapshot.roster.find(p => p.id === x.ef.employeeId)?.name || x.ef.employeeId })),
       findings: Engine.ledgerOf(s).items.map(i => ({ id: i.id, text: i.text, where: i.where, blocking: i.blocking, status: i.status, by: roster.get(i.by)?.name || i.by, reopened: i.reopened || 0 })),
       asks,
@@ -1224,6 +1228,80 @@ export function createFactoryRunner({
     });
   }
 
+  /** The run's loops, as summary() and the Manager's status show them. */
+  function loopsView(entry) {
+    return Engine.loopsOf(st(entry), Object.keys(rr(entry).runLimits?.edges || {}));
+  }
+
+  /** The run's caps in force: the time and handoff limits, and what is used. */
+  function capsView(entry) {
+    const r = rr(entry), s = st(entry);
+    const t = r.time;
+    const usedMs = t.activeMs + (t.since ? Math.max(0, Date.now() - Date.parse(t.since)) : 0);
+    return {
+      maxMinutes: t.maxMinutes + (r.capMinutesExtra || 0), usedMinutes: Math.floor(usedMs / 60_000),
+      maxHandoffs: s.snapshot.settings.caps.maxHandoffs + (r.capExtra || 0), handoffs: s.handoffs,
+    };
+  }
+
+  /**
+   * Raise (or lift) a running run's loop limits and caps, for this run only:
+   * edges { edgeId: maxRounds, 0 = no limit }, maxMinutes, maxHandoffs (the
+   * run's whole limit from now on). A loop may not go below the rounds it has
+   * used, a cap not below what is used. A run held at a cap that now has room
+   * carries on; the Manager is told what changed. by: 'person' | 'manager'.
+   */
+  async function setRunLimits(runId, { edges = null, maxMinutes, maxHandoffs } = {}, { by = 'person' } = {}) {
+    const entry = runs.get(runId);
+    if (!entry) return { ok: false, error: 'Run not found.' };
+    return locked(entry, async () => {
+      const s = st(entry), r = rr(entry);
+      if (!UNFINISHED.has(s.status)) return { ok: false, error: 'This run has ended; there are no limits left to change.' };
+      if (edges != null && (typeof edges !== 'object' || Array.isArray(edges))) return { ok: false, error: 'edges must be an object: { connectionId: rounds }.' };
+      const ev = { type: 'run-limits', by: by === 'manager' ? 'manager' : 'person', edges: {} };
+      const lines = [];
+      const loops = new Map(Engine.loopsOf(s, Object.keys(edges || {}).filter(id => s.snapshot.edges.some(e => e.id === id))).map(l => [l.edgeId, l]));
+      for (const [id, raw] of Object.entries(edges || {})) {
+        const n = typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : raw;
+        const chk = Engine.setLoopLimit(s, id, n);
+        if (!chk.ok) return { ok: false, error: chk.error };
+        if (chk.before === n) continue;
+        ev.edges[id] = n;
+        const l = loops.get(id);
+        lines.push(`the loop "${l?.from || '?'}" -> "${l?.to || '?'}" (${id}) ${n === 0 ? 'has no limit now' : `may go round ${n} time${n === 1 ? '' : 's'} now`} (it has used ${chk.used}${chk.before ? ` of ${chk.before}` : ''})`);
+      }
+      const caps = capsView(entry);
+      const num = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
+      const mm = num(maxMinutes), mh = num(maxHandoffs);
+      if (mm !== null) {
+        if (!Number.isInteger(mm) || mm < 1 || mm > 7 * 24 * 60) return { ok: false, error: 'maxMinutes is a whole number of minutes from 1 to 10080 (a week).' };
+        if (mm <= caps.usedMinutes) return { ok: false, error: `The run has already been at work for ${caps.usedMinutes} minutes; give it more than that.` };
+        if (mm !== caps.maxMinutes) { ev.maxMinutes = mm; lines.push(`the run's time limit is ${mm} minutes now (${caps.usedMinutes} used)`); }
+      }
+      if (mh !== null) {
+        if (!Number.isInteger(mh) || mh < 1 || mh > 10_000) return { ok: false, error: 'maxHandoffs is a whole number from 1 to 10000.' };
+        if (mh <= caps.handoffs) return { ok: false, error: `The run has already made ${caps.handoffs} handoffs; give it more than that.` };
+        if (mh !== caps.maxHandoffs) { ev.maxHandoffs = mh; lines.push(`the run may make ${mh} handoffs now (${caps.handoffs} made)`); }
+      }
+      if (!lines.length) return { ok: true, run: summary(entry), message: 'Nothing changed: those are the limits already.' };
+      const wasHeld = r.capHit;
+      commit(entry, ev);
+      startClock(entry);
+      const released = !!wasHeld && !rr(entry).capHit;
+      const who = ev.by === 'manager' ? 'On the person\'s word, you changed this run\'s limits' : 'The person changed this run\'s limits';
+      const note = `${who}: ${lines.join('; ')}.${released ? ' The run had stopped at its limit and carries on now.' : ''}`;
+      let told = new Set();
+      if (released && !rr(entry).paused) told = await wakeAfterHold(entry, note);
+      const mgr = entry.live.employees[MANAGER_ID];
+      if (ev.by === 'person' && !told.has(MANAGER_ID) && mgr?.chatId && agents.isAlive(mgr.chatId)) {
+        const route = Object.keys(ev.edges).length ? ' If you were waiting on a loop that had reached its limit, you can route through it again now.' : '';
+        sendTo(mgr.chatId, `[Factory] ${note}${route}`);
+      }
+      writeCache(entry);
+      return { ok: true, run: summary(entry), message: note };
+    });
+  }
+
   /**
    * The change request as a step carries it: in full for the Manager's first
    * step (and after a recovery), as a brief with the file's path otherwise.
@@ -1843,30 +1921,43 @@ export function createFactoryRunner({
         : 'the run reached a limit; the person let it carry on');
       commit(entry, { type: 'resume' });
       startClock(entry);
-      for (const [eid, emp] of Object.entries(entry.live.employees)) {
-        const held = emp.held || emp.pauseHeld;
-        const wasHeld = emp.held ? 'the Manager had told you to wait' : emp.pauseHeld ? 'you were told to hold while it was paused' : '';
-        emp.held = false; emp.pauseHeld = false;
-        const why = stopped.has(eid) ? `${base}. Your turn was stopped by the pause; pick up where you were`
-          : held ? `${base}. ${wasHeld[0].toUpperCase() + wasHeld.slice(1)}; you may carry on now` : base;
-        if (!emp.chatId || !agents.isAlive(emp.chatId)) continue;
-        const idle = agents.state(emp.chatId) === 'idle';
-        if (emp.busy && idle) {
-          const ef = activationFor(entry, emp.busy);
-          if (ef) await startStep(entry, emp, ef, { recovery: await recoveryFor(entry, eid, ef, why, '') });
-        } else if (held && emp.busy) {
-          // Still in a turn: the message waits for its next pause.
-          sendTo(emp.chatId, `[Factory] The run is resumed: ${why}. Carry on with your step.`);
-        } else if (eid === MANAGER_ID && stopped.has(eid)) {
-          sendTo(emp.chatId, `[Factory] The run is resumed: ${base}. The pause stopped your turn; carry on where you were.`);
-        }
-      }
-      // Steps nobody is working on: a recovery while paused leaves them for
-      // here (their chats ended with the restart), so start them now.
-      await startOrphanedSteps(entry, base);
-      await drain(entry);
+      await wakeAfterHold(entry, base, stopped);
       return { ok: true, run: summary(entry) };
     });
+  }
+
+  /**
+   * The run is no longer held (resumed, or the cap it stopped at was
+   * raised): whoever was stopped or told to hold carries on, with `base` as
+   * the reason, and steps nobody is working on start. The ids told are returned.
+   */
+  async function wakeAfterHold(entry, base, stopped = new Set()) {
+    const told = new Set();
+    for (const [eid, emp] of Object.entries(entry.live.employees)) {
+      const held = emp.held || emp.pauseHeld;
+      const wasHeld = emp.held ? 'the Manager had told you to wait' : emp.pauseHeld ? 'you were told to hold while it was paused' : '';
+      emp.held = false; emp.pauseHeld = false;
+      const why = stopped.has(eid) ? `${base}. Your turn was stopped by the pause; pick up where you were`
+        : held ? `${base}. ${wasHeld[0].toUpperCase() + wasHeld.slice(1)}; you may carry on now` : base;
+      if (!emp.chatId || !agents.isAlive(emp.chatId)) continue;
+      const idle = agents.state(emp.chatId) === 'idle';
+      if (emp.busy && idle) {
+        const ef = activationFor(entry, emp.busy);
+        if (ef) { await startStep(entry, emp, ef, { recovery: await recoveryFor(entry, eid, ef, why, '') }); told.add(eid); }
+      } else if (held && emp.busy) {
+        // Still in a turn: the message waits for its next pause.
+        sendTo(emp.chatId, `[Factory] The run is resumed: ${why}. Carry on with your step.`);
+        told.add(eid);
+      } else if (eid === MANAGER_ID && stopped.has(eid)) {
+        sendTo(emp.chatId, `[Factory] The run is resumed: ${base}. The pause stopped your turn; carry on where you were.`);
+        told.add(eid);
+      }
+    }
+    // Steps nobody is working on: a recovery while paused leaves them for
+    // here (their chats ended with the restart), so start them now.
+    await startOrphanedSteps(entry, base);
+    await drain(entry);
+    return told;
   }
 
   /**
@@ -2553,10 +2644,10 @@ export function createFactoryRunner({
       const off = [...new Set(pcs.filter(p => !p.online).map(p => p.worker))];
       if (off.length) lines.push(`PCs offline: ${off.join(', ')}. Steps on them wait until they are back; the rest of the run carries on.`);
     }
-    const loops = f.edges.filter(e => e.maxRounds > 0 && (s.edgeCounts[e.id] || 0) > 0);
+    const loops = loopsView(entry).filter(l => l.used > 0);
     if (loops.length) {
-      lines.push('', 'Loops used:');
-      for (const e of loops) lines.push(`- "${nodes.get(e.source)?.label || e.source}" -> "${nodes.get(e.target)?.label || e.target}": ${s.edgeCounts[e.id]} of ${e.maxRounds}${s.exhausted[e.id] ? ` (reopened ${s.exhausted[e.id]}x)` : ''}`);
+      lines.push('', 'Loops used (the person can raise a limit for this run; on their word, factory_control run-limits with edges { id: rounds }):');
+      for (const l of loops) lines.push(`- "${l.from}" -> "${l.to}" (${l.edgeId}): ${l.used} of ${l.maxRounds || 'no limit'}${l.reopened ? ` (reopened ${l.reopened}x)` : ''}`);
     }
     const L = Engine.ledgerOf(s).items;
     if (L.length) {
@@ -2586,7 +2677,7 @@ export function createFactoryRunner({
    * factory_control, from the Manager's chat: pause or resume the run, or
    * change its usage limits, when the person asks (or to stay inside them).
    */
-  async function controlFromManager(chatId, { action, reason = '', limits = null, mode = '', resumeOnReset = false, worker = '' } = {}) {
+  async function controlFromManager(chatId, { action, reason = '', limits = null, mode = '', resumeOnReset = false, worker = '', edges = null, maxMinutes, maxHandoffs } = {}) {
     const info = chatInfo(chatId);
     if (!info || info.employeeId !== MANAGER_ID) return { ok: false, error: 'Only the Manager of a factory run can do this.' };
     if (action === 'pause') {
@@ -2613,7 +2704,13 @@ export function createFactoryRunner({
       const r = await moveToServer(info.runId, { worker });
       return r.ok ? { ok: true, message: 'Moved: those steps run on the Crundi server from the run\'s worktree now, and those people stay on the server for the rest of the run.' } : r;
     }
-    return { ok: false, error: 'action is pause, resume, limits or move-to-server.' };
+    if (action === 'run-limits') {
+      // On the person's word: this run's loop limits and caps (not the factory's).
+      const r = await setRunLimits(info.runId, { edges, maxMinutes, maxHandoffs }, { by: 'manager' });
+      if (!r.ok) return r;
+      return { ok: true, message: r.message + ' Loops now: ' + (r.run.loops.map(l => `${l.from} -> ${l.to} (${l.edgeId}) ${l.used} of ${l.maxRounds || 'no limit'}`).join('; ') || 'none') + `. Caps: ${r.run.caps.maxMinutes} minutes (${r.run.caps.usedMinutes} used), ${r.run.caps.maxHandoffs} handoffs (${r.run.caps.handoffs} made).` };
+    }
+    return { ok: false, error: 'action is pause, resume, limits, run-limits or move-to-server.' };
   }
 
   /**
@@ -2832,7 +2929,7 @@ export function createFactoryRunner({
   /** Which of a run's listed secrets are unlocked now (ids, never PINs). */
   function unlockedSecrets(runId) { return vault.unlocked(runId); }
 
-  return { load, startRun, tellFromTrigger, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, moveToServer, messageFromManager, tickFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose, secretContext, askSecret, rememberSecret, forgetSecret, relockSecret, secretUsed, unlockedSecrets };
+  return { load, startRun, tellFromTrigger, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, setRunLimits, controlFromManager, moveToServer, messageFromManager, tickFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose, secretContext, askSecret, rememberSecret, forgetSecret, relockSecret, secretUsed, unlockedSecrets };
 }
 
 /**

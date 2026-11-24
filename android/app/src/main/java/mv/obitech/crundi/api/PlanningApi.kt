@@ -192,6 +192,20 @@ class FactoriesApi internal constructor(private val rpc: Rpc) {
             throw e
         }
     }
+    /**
+     * Raise (or lift) this run's own limits: [edges] by connection id (rounds,
+     * 0 = no limit), [maxMinutes] and [maxHandoffs] (the run's whole limit).
+     * Needs 'factory-run-limits'; an older server answers "Unknown factory run
+     * action", which throws [ApiException] saying it is not supported.
+     */
+    suspend fun setRunLimits(id: String, edges: Map<String, Int> = emptyMap(), maxMinutes: Int? = null, maxHandoffs: Int? = null): FactoryRun {
+        try {
+            return runAct("runLimits", id, "edges" to edges.takeIf { it.isNotEmpty() }, "maxMinutes" to maxMinutes, "maxHandoffs" to maxHandoffs)
+        } catch (e: mv.obitech.crundi.api.ApiException) {
+            if (e.status == 400 && e.message.startsWith("Unknown factory run action", ignoreCase = true)) throw mv.obitech.crundi.api.ApiException(e.status, "Not supported by this server", e.body)
+            throw e
+        }
+    }
     /** Answer an Ask step. */
     suspend fun answerAsk(id: String, tokenId: String, replyId: String, note: String? = null) = runAct("ask", id, "tokenId" to tokenId, "replyId" to replyId, "note" to note)
     /** End a Wait step now: outcome done or timeout. */

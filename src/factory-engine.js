@@ -399,6 +399,48 @@ export function reopen(run, reason, { asMessage = true } = {}) {
   return finishCtx(r, ctx);
 }
 
+/** The most rounds a running run's loop may be given (the editor allows LIMITS.rounds). */
+export const RUN_ROUNDS_MAX = 1000;
+
+/**
+ * The person changed a loop's limit for this run only: the run's own copy of
+ * the flow (its snapshot) gets the new maxRounds. 0 means no limit. It may not
+ * go below the rounds already used. A loop that is open again (no limit, or
+ * rounds left) loses its exhausted count, so the Manager may route through it
+ * again, and twice more when it runs out once more.
+ */
+export function setLoopLimit(run, edgeId, maxRounds) {
+  const e = run.snapshot.edges.find(x => x.id === edgeId);
+  if (!e || e.kind === 'note') return { ok: false, error: `There is no connection "${edgeId}" in this run's flow.` };
+  const n = Number(maxRounds);
+  if (!Number.isInteger(n) || n < 0 || n > RUN_ROUNDS_MAX) return { ok: false, error: `A loop's limit is a whole number from 0 (no limit) to ${RUN_ROUNDS_MAX}.` };
+  const used = run.edgeCounts[edgeId] || 0;
+  if (n > 0 && n < used) return { ok: false, error: `That loop has already gone round ${used} time${used === 1 ? '' : 's'}; its limit cannot be less than that.` };
+  const r = clone(run);
+  const edge = r.snapshot.edges.find(x => x.id === edgeId);
+  const before = edge.maxRounds || 0;
+  edge.maxRounds = n;
+  if (n === 0 || n > used) delete r.exhausted[edgeId];
+  return { ok: true, run: r, before, used };
+}
+
+/**
+ * The run's loops: every connection with a limit, and any whose limit was
+ * changed on this run (also when it was lifted), with what each has used.
+ */
+export function loopsOf(run, alsoIds = []) {
+  const ix = index(run.snapshot);
+  const also = new Set(alsoIds);
+  return run.snapshot.edges.filter(e => e.kind !== 'note' && (e.maxRounds > 0 || also.has(e.id))).map(e => ({
+    edgeId: e.id,
+    from: nodeLabel(ix, ix.nodes.get(e.source)),
+    to: nodeLabel(ix, ix.nodes.get(e.target)),
+    maxRounds: e.maxRounds || 0,
+    used: run.edgeCounts[e.id] || 0,
+    reopened: run.exhausted[e.id] || 0,
+  }));
+}
+
 /** The tokens currently waiting on a given person (work or answer). */
 export function tokensFor(run, rosterId) {
   const ix = index(run.snapshot);
@@ -573,7 +615,7 @@ function traverse(ctx, t, e, who, carryMsg = '') {
       const what = `"${nodeLabel(ix, src)}" → "${nodeLabel(ix, dst)}"`;
       const reopened = r.exhausted[e.id] || 0;
       if (ctx.isManager && reopened >= MANAGER_REOPEN_LIMIT) {
-        ctx.errors.push(`The path ${what} has used all ${e.maxRounds} of its rounds and is now closed. Choose another answer, finish, or ask the person.`);
+        ctx.errors.push(`The path ${what} has used all ${e.maxRounds} of its rounds and is now closed. Choose another answer, finish, or ask the person (they can raise its limit for this run).`);
         return;
       }
       r.exhausted[e.id] = reopened + 1;

@@ -465,6 +465,10 @@ data class FactoryRun(
     val waitingForSeat: List<RunSeat> = emptyList(),
     /** PCs holding steps that are offline now (newer servers); each can be moved to this server. */
     val pcsAway: List<RunPcAway> = emptyList(),
+    /** The run's loops, with their limits and use ('factory-run-limits'; an older server sends none). */
+    val loops: List<RunLoop> = emptyList(),
+    /** The run's time and handoff limits in force, and what is used ('factory-run-limits'). */
+    val caps: RunCaps? = null,
     // Only from /get:
     val history: List<RunHistoryItem> = emptyList(),
     /** The factory as it was when the run started: the graph to draw. */
@@ -476,6 +480,14 @@ data class FactoryRun(
     /** Ended with its work to decide on (merge, keep, discard). */
     val awaitingFinish get() = status == "finished" && outcome?.how.isNullOrEmpty()
 }
+
+/** One loop of a run: the connection [edgeId] from [from] to [to], its limit ([maxRounds], 0 = none) and the rounds [used]. */
+@Serializable data class RunLoop(val edgeId: String, val from: String = "", val to: String = "", val maxRounds: Int = 0, val used: Int = 0, val reopened: Int = 0) {
+    val usedUp get() = maxRounds in 1..used
+}
+
+/** A run's caps in force: minutes of work and handoffs, each with what is used. */
+@Serializable data class RunCaps(val maxMinutes: Int = 0, val usedMinutes: Int = 0, val maxHandoffs: Int = 0, val handoffs: Int = 0)
 
 /** GET /api/factory-runs/precheck: where a run would start from. */
 @Serializable data class RunPrecheck(val top: String = "", val branch: String = "", val commit: String = "", val dirty: Boolean = false, val active: FactoryRunBrief? = null)

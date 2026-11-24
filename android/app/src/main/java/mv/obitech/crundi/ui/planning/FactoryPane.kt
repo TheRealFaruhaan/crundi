@@ -266,7 +266,8 @@ fun FactoryLiveRoute(id: String, onEnded: () -> Unit = {}) {
     LaunchedEffect(status) { if (status != null && status !in LIVE_STATUSES) ended() }
     val shell by LocalAppServices.current.shell.state.collectAsStateWithLifecycle()
     val pauseOptions = PauseOptions.supported(shell.capabilities)
-    val cb = remember(id, pauseOptions) {
+    val runLimits = RunLimits.supported(shell.capabilities)
+    val cb = remember(id, pauseOptions, runLimits) {
         RunCallbacks(
             onPause = { actions.run { api.factories.pause(id) } },
             onPauseWith = { now, reset -> actions.run { api.factories.pause(id, now, reset) } },
@@ -292,6 +293,8 @@ fun FactoryLiveRoute(id: String, onEnded: () -> Unit = {}) {
             onDiff = { nav.to(FactoryRoutes.diff(id)) },
             onRetry = { loader.refresh() },
             onMoveToServer = { w -> actions.run { api.factories.moveToServer(id, w) } },
+            runLimits = runLimits,
+            onRunLimits = { e, m, h -> actions.run { api.factories.setRunLimits(id, e, m, h) } },
         )
     }
     Box(Modifier.fillMaxSize()) {

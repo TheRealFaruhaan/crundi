@@ -84,6 +84,10 @@ class RunCallbacks(
     val onRetry: () -> Unit = {},
     /** Move an offline PC's steps to this server ([FactoryRun.pcsAway], by worker id). */
     val onMoveToServer: (String) -> Unit = {},
+    /** Offer to change this run's loop limits and caps (the server lists 'factory-run-limits'). */
+    val runLimits: Boolean = false,
+    /** This run's limits: loops by connection id (0 = no limit), and the time and handoff caps; only what changed. */
+    val onRunLimits: (edges: Map<String, Int>, maxMinutes: Int?, maxHandoffs: Int?) -> Unit = { _, _, _ -> },
 )
 
 enum class RunTab(val label: String) { Run("Run"), Timeline("Timeline") }
@@ -96,9 +100,10 @@ fun FactoryRunRoute(id: String, onAllRuns: (() -> Unit)? = null) {
     val actions = rememberActions { loader.refresh() }
     val shell by LocalAppServices.current.shell.state.collectAsStateWithLifecycle()
     val pauseOptions = PauseOptions.supported(shell.capabilities)
+    val runLimits = RunLimits.supported(shell.capabilities)
     // The desktop polls every 4 s while a run is open; events do most of it here, this is the safety net.
     LaunchedEffect(loader) { while (true) { delay(10_000); if (loader.load.valueOrNull?.active != false) loader.refresh() } }
-    val cb = remember(id, pauseOptions) {
+    val cb = remember(id, pauseOptions, runLimits) {
         RunCallbacks(
             onBack = { onAllRuns?.invoke() ?: nav.back() },
             onPause = { actions.run { api.factories.pause(id) } },
@@ -116,6 +121,8 @@ fun FactoryRunRoute(id: String, onAllRuns: (() -> Unit)? = null) {
             onDiff = { nav.to(FactoryRoutes.diff(id)) },
             onRetry = { loader.refresh() },
             onMoveToServer = { w -> actions.run { api.factories.moveToServer(id, w) } },
+            runLimits = runLimits,
+            onRunLimits = { e, m, h -> actions.run { api.factories.setRunLimits(id, e, m, h) } },
         )
     }
     Box(Modifier.fillMaxSize()) {
@@ -183,6 +190,70 @@ private fun RunControls(r: FactoryRun, cb: RunCallbacks, onStop: () -> Unit) {
     if (choosing) PauseChoiceDialog({ choosing = false }) { now, reset -> choosing = false; cb.onPauseWith(now, reset) }
 }
 
+/** This run's own loop limits and caps can be changed only when the server lists it; an older one hides the card. */
+internal object RunLimits {
+    const val CAPABILITY = "factory-run-limits"
+    fun supported(capabilities: Set<String>): Boolean = CAPABILITY in capabilities
+
+    /** What [edges], [maxMinutes] and [maxHandoffs] change against [r]: only the values that differ. */
+    fun changes(r: FactoryRun, edges: Map<String, Int>, maxMinutes: Int, maxHandoffs: Int): Triple<Map<String, Int>, Int?, Int?> {
+        val e = r.loops.mapNotNull { l -> edges[l.edgeId]?.takeIf { it != l.maxRounds }?.let { l.edgeId to it } }.toMap()
+        val caps = r.caps ?: return Triple(e, null, null)
+        return Triple(e, maxMinutes.takeIf { it != caps.maxMinutes }, maxHandoffs.takeIf { it != caps.maxHandoffs })
+    }
+
+    fun summary(r: FactoryRun): String {
+        val c = r.caps ?: return ""
+        val full = r.loops.count { it.usedUp }
+        return "${c.usedMinutes} of ${c.maxMinutes} min · ${c.handoffs} of ${c.maxHandoffs} handoffs" +
+            if (r.loops.isEmpty()) "" else " · ${r.loops.size} loop${if (r.loops.size == 1) "" else "s"}" + if (full > 0) ", $full used up" else ""
+    }
+}
+
+/**
+ * This run's loop limits and caps, as the web's Run limits: each loop with
+ * what it used, the time and handoff limits; for this run only.
+ */
+@Composable
+internal fun RunLimitsCard(r: FactoryRun, cb: RunCallbacks) {
+    val caps = r.caps ?: return
+    var open by remember { mutableStateOf(false) }
+    val key = r.loops.joinToString { "${it.edgeId}:${it.maxRounds}" } + "|${caps.maxMinutes}|${caps.maxHandoffs}"
+    var edges by remember(key) { mutableStateOf(r.loops.associate { it.edgeId to it.maxRounds.toString() }) }
+    var minutes by remember(key) { mutableStateOf(caps.maxMinutes.toString()) }
+    var handoffs by remember(key) { mutableStateOf(caps.maxHandoffs.toString()) }
+    val digits = { v: String -> v.filter { it.isDigit() }.take(5) }
+    CrundiCard(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().clickable { open = !open }, verticalAlignment = Alignment.CenterVertically) {
+            CrundiIcon("sliders", size = 16.dp, tint = CrundiColors.TextSecondary)
+            Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                Text("Run limits", style = CrundiType.Body.copy(fontWeight = FontWeight.SemiBold))
+                Text(RunLimits.summary(r), style = CrundiType.Meta)
+            }
+            CrundiIcon(if (open) "chevron-up" else "chevron-down", size = 16.dp, tint = CrundiColors.TextSecondary)
+        }
+        if (open) Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (l in r.loops) {
+                Text("${l.from} \u2192 ${l.to}: ${l.used} used" + (if (l.usedUp) " (used up)" else "") + " · rounds, 0: no limit", style = CrundiType.Small)
+                CrundiTextField(edges[l.edgeId].orEmpty(), { v -> edges = edges + (l.edgeId to digits(v)) }, Modifier.width(120.dp), mono = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+            }
+            Text("Time limit, minutes (${caps.usedMinutes} used)", style = CrundiType.Small)
+            CrundiTextField(minutes, { minutes = digits(it) }, Modifier.width(120.dp), mono = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+            Text("Handoff limit (${caps.handoffs} made)", style = CrundiType.Small)
+            CrundiTextField(handoffs, { handoffs = digits(it) }, Modifier.width(120.dp), mono = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+            Text("For this run only; the factory keeps its own. The Manager is told, and a run stopped at a limit carries on once the new one leaves room.", style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans))
+            CrundiButton("Apply to this run", {
+                val (e, m, h) = RunLimits.changes(r, edges.mapValues { it.value.toIntOrNull() ?: 0 }, minutes.toIntOrNull() ?: 0, handoffs.toIntOrNull() ?: 0)
+                if (e.isNotEmpty() || m != null || h != null) cb.onRunLimits(e, m, h)
+                open = false
+            }, kind = ButtonKind.Primary)
+        }
+    }
+}
+
 /** Pause's choices are offered only when the server lists them; an older one does a plain pause. */
 internal object PauseOptions {
     const val CAPABILITY = "factory-pause-options"
@@ -233,6 +304,7 @@ internal fun ColumnScope.RunPane(r: FactoryRun, cb: RunCallbacks, now: Long, hin
     if (r.capHit != null) Panel("It reached its limit", CrundiColors.Yellow) {
         Text("It reached its limit (${r.capHit.str("reason") ?: r.capHit.str("kind") ?: "time or handoffs"}).", style = CrundiType.Small.copy(color = CrundiColors.TextPrimary))
         CrundiButton("Let it carry on", cb.onResume, kind = ButtonKind.Primary)
+        if (cb.runLimits && r.caps != null) Text("Or raise the limit for this run under Run limits.", style = CrundiType.Small)
     }
     for (a in r.pcsAway) PcAwayCard(a, cb)
     for (a in r.asks) AskCard(a, cb)
@@ -250,6 +322,7 @@ internal fun ColumnScope.RunPane(r: FactoryRun, cb: RunCallbacks, now: Long, hin
     KV("Sessions", "$live live")
     KV("Spent", "${money(r.usage.costUsd)} · ${r.usage.turns} turns" + if (r.usage.chats > 0) " in ${r.usage.chats} chats" else "")
     if (r.createdAtMs > 0) KV("Running for", duration(now - r.createdAtMs))
+    if (cb.runLimits && r.active && r.caps != null) RunLimitsCard(r, cb)
     if (r.managerChatId.isNotEmpty()) {
         Text("The Manager is talking to you in its chat.", style = CrundiType.Small)
         CrundiButton("Open the Manager's chat", { cb.onOpenChat(r.managerChatId) }, icon = "crown")
