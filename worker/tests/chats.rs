@@ -484,6 +484,73 @@ async fn git_chat_pull_gives_a_bundle_and_a_patch() {
     assert_eq!(std::fs::read_to_string(wt.join("a.txt")).unwrap(), "one\nchanged\n");
     send(&mut ws, json!({"type": "chat.kill", "chat": "g1"})).await;
     exit_of(&mut ws, "g1").await;
+
+    // A newer server asks for the patch in pieces (chunks): a big binary the
+    // server's old 4 MB message limit could not take comes in several, in order.
+    // Incompressible (xorshift), like a screenshot.
+    let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+    let big: Vec<u8> = (0..1_500_000)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 24) as u8
+        })
+        .collect();
+    std::fs::write(wt.join("shot.png"), &big).unwrap();
+    send(&mut ws, json!({"type": "chat.pull", "chat": "g1", "req": "r4", "base": c1, "have": [pc_head], "chunks": true})).await;
+    let b = recv_type(&mut ws, "chat.bundle").await;
+    // The server said it has pc_head: no commits to send.
+    assert_eq!(b["last"], true);
+    assert_eq!(b["b64"], "");
+    assert_eq!(b["head"], pc_head.as_str());
+    let mut patch4 = Vec::new();
+    let mut seq = 0;
+    loop {
+        let v = recv_type(&mut ws, "chat.patch").await;
+        assert_eq!(v["req"], "r4");
+        assert!(v.get("error").is_none(), "{v}");
+        assert_eq!(v["seq"], seq);
+        seq += 1;
+        patch4.extend(B64.decode(v["b64"].as_str().unwrap()).unwrap());
+        if v["last"] == true {
+            break;
+        }
+    }
+    assert!(seq >= 3, "the big patch came in {seq} pieces");
+    git(&check, &["checkout", "-q", "--", "."]);
+    git(&check, &["clean", "-fdq"]);
+    std::fs::write(&patch, &patch4).unwrap();
+    git(&check, &["apply", "--binary", patch.to_str().unwrap()]);
+    assert_eq!(std::fs::read(check.join("shot.png")).unwrap(), big);
+    std::fs::remove_file(wt.join("shot.png")).unwrap();
+
+    // Only the commits the server lacks: with pc_head in `have`, a new commit
+    // comes in a bundle that needs pc_head and carries just itself.
+    std::fs::write(wt.join("c.txt"), "third\n").unwrap();
+    git(&wt, &["add", "c.txt"]);
+    git(&wt, &["commit", "-q", "-m", "more pc work"]);
+    let pc_head2 = git(&wt, &["rev-parse", "HEAD"]);
+    send(&mut ws, json!({"type": "chat.pull", "chat": "g1", "req": "r5", "base": c1, "have": [pc_head, "not-a-sha"], "chunks": true})).await;
+    let mut bundle5 = Vec::new();
+    loop {
+        let v = recv_type(&mut ws, "chat.bundle").await;
+        bundle5.extend(B64.decode(v["b64"].as_str().unwrap()).unwrap());
+        if v["last"] == true {
+            assert_eq!(v["head"], pc_head2.as_str());
+            break;
+        }
+    }
+    let v = recv_type(&mut ws, "chat.patch").await;
+    assert_eq!(v["req"], "r5");
+    let b5 = t.dir.join("pull5.bundle");
+    std::fs::write(&b5, &bundle5).unwrap();
+    let heads = String::from_utf8_lossy(&std::process::Command::new("git").args(["bundle", "verify", b5.to_str().unwrap()]).current_dir(&check).output().unwrap().stderr).to_string()
+        + &String::from_utf8_lossy(&std::process::Command::new("git").args(["bundle", "verify", b5.to_str().unwrap()]).current_dir(&check).output().unwrap().stdout);
+    assert!(heads.contains(&pc_head), "the bundle needs pc_head (it is not in it): {heads}");
+    git(&check, &["fetch", "-q", b5.to_str().unwrap(), "refs/heads/pc/g1:refs/heads/from-pc2"]);
+    assert_eq!(git(&check, &["rev-list", "--count", &format!("{pc_head}..from-pc2")]), "1");
+
     // An unknown chat's pull says so.
     send(&mut ws, json!({"type": "chat.pull", "chat": "nope", "req": "r3", "base": ""})).await;
     let e = recv_type(&mut ws, "chat.patch").await;

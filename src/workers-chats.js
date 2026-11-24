@@ -35,6 +35,10 @@ import { chatToken } from './chat-token.js';
 
 const LOST_AFTER_MS = 30 * 60 * 1000;
 const PULL_TIMEOUT_MS = 10 * 60 * 1000;
+/** A pull whose PC dropped waits this long for it to come back, then asks again. */
+const PULL_GRACE_MS = 2 * 60 * 1000;
+/** At most this many tries of one pull (each try is cut short only by a drop). */
+const PULL_TRIES = 4;
 const KEEP_CHATS = 200;
 const QUEUE_MAX = 16 * 1024 * 1024;
 
@@ -108,6 +112,7 @@ export function createChats({
   api = () => ({ url: '', key: '' }),   // this server's own loopback API and its internal key
   serveSource = null,           // workers-jobs.js's serveSource: a chat's folder is prepared like a job's
   changed = () => {}, log = () => {},
+  pullGraceMs = PULL_GRACE_MS, pullTries = PULL_TRIES,   // tests shorten these
 }) {
   const DIR = join(dataDir, 'workers');
   const FILE = join(DIR, 'chats.json');
@@ -367,23 +372,87 @@ export function createChats({
     return join(WORKTREES, slug(c.project) || 'project', c.chat);
   }
 
+  // A PC that drops and comes back within pullGraceMs does not fail a pull:
+  // it is asked again (a new req, so pieces of the cut-off try are ignored).
+  const backWaiters = new Map();   // worker id -> Set<(back: boolean) => void>
+  /** Resolves true when the PC is (back) online, false after `ms`. */
+  function waitBack(workerId, ms) {
+    return new Promise((resolve) => {
+      if (worker(workerId)?.online) { resolve(true); return; }
+      let set = backWaiters.get(workerId);
+      if (!set) backWaiters.set(workerId, (set = new Set()));
+      const fn = (back) => {
+        clearTimeout(t); set.delete(fn);
+        if (!set.size && backWaiters.get(workerId) === set) backWaiters.delete(workerId);
+        resolve(back);
+      };
+      const t = setTimeout(() => fn(false), Math.max(0, ms));
+      t.unref?.();
+      set.add(fn);
+    });
+  }
+  function wakeBack(workerId, back) {
+    for (const fn of [...(backWaiters.get(workerId) || [])]) fn(back);
+  }
+
+  const mins = (ms) => (ms >= 60_000 ? `${Math.round(ms / 60_000)} minute${Math.round(ms / 60_000) === 1 ? '' : 's'}` : `${Math.round(ms / 1000)} seconds`);
+
   /**
-   * Ask the PC for the chat's work since `base` and wait for it.
+   * Ask the PC for the chat's work since `base` and wait for it, through
+   * short drops: a PC that goes away mid-transfer and is back within
+   * pullGraceMs is asked again (up to pullTries). `have`: commits this
+   * server has, so the PC's bundle holds only what is missing here.
    * Resolves { ok, head, bundle: path|'', patch: Buffer, files: path|'', removed } (temp files: the caller removes).
    */
-  function requestPull(c, base) {
+  async function requestPull(c, base, have, { waitOffline = true } = {}) {
+    let tries = 0, last = '';
+    for (;;) {
+      if (!worker(c.workerId)?.online) {
+        if (!waitOffline && !tries) return { ok: false, offline: true, error: `${c.workerName} is offline.` };
+        if (!(await waitBack(c.workerId, pullGraceMs))) {
+          return { ok: false, offline: true, transfer: true, tries, error: last
+            ? `${c.workerName} disconnected while sending the work (${tries} ${tries === 1 ? 'try' : 'tries'}) and did not come back within ${mins(pullGraceMs)}.`
+            : `${c.workerName} is offline and did not come back within ${mins(pullGraceMs)}.` };
+        }
+      }
+      tries++;
+      const r = await pullOnce(c, base, have);
+      if (r.ok || !r.dropped) return { ...r, tries, transfer: !r.ok && !!r.transfer };
+      last = r.error;
+      // Still shown online (the link is closing): a moment before asking again.
+      if (worker(c.workerId)?.online) await new Promise((res) => { const t = setTimeout(res, 500); t.unref?.(); });
+      log(`[workers] pull ${c.chat} from ${c.workerName}: ${r.error} (try ${tries} of ${pullTries})`);
+      if (tries >= pullTries) {
+        return { ok: false, transfer: true, tries, error: `${c.workerName} disconnected while sending the work, ${tries} times in a row.` };
+      }
+    }
+  }
+
+  /** One try: chat.pull and its answer. A drop resolves { ok: false, dropped: true }. */
+  function pullOnce(c, base, have) {
     return new Promise((resolve) => {
-      if (c.offline || !worker(c.workerId)?.online) { resolve({ ok: false, error: `${c.workerName} is offline.` }); return; }
       const req = 'p' + randomBytes(6).toString('hex');
       const p = {
         req, chat: c.chat, workerId: c.workerId, resolve, head: '', removed: [],
         bundleFile: join(tmpdir(), `crundi-pull-${req}.bundle`), bundleSeq: 0, bundleDone: false, bundleBytes: 0,
         filesFile: join(tmpdir(), `crundi-pull-${req}.tar`), filesSeq: 0,
-        timer: setTimeout(() => done(p, { ok: false, error: `${c.workerName} did not send the chat's work in time.` }), PULL_TIMEOUT_MS),
+        patchFile: join(tmpdir(), `crundi-pull-${req}.patch`), patchSeq: 0,
+        timer: null,
       };
-      p.timer.unref?.();
+      // Quiet for this long (no piece arriving): the PC is not sending. A big
+      // transfer that keeps arriving is never cut off by it.
+      p.touch = () => {
+        clearTimeout(p.timer);
+        p.timer = setTimeout(() => done(p, { ok: false, transfer: true, error: `${c.workerName} stopped sending the chat's work (nothing for ${mins(PULL_TIMEOUT_MS)}).` }), PULL_TIMEOUT_MS);
+        p.timer.unref?.();
+      };
+      p.touch();
       pulls.set(req, p);
-      if (!sendTo(c.workerId, { type: 'chat.pull', chat: c.chat, req, base: base || c.base || '' })) done(p, { ok: false, error: `Could not reach ${c.workerName}.` });
+      // chunks: the PC may send its uncommitted work (chat.patch) in numbered
+      // pieces like the bundle; an older worker ignores it and sends one.
+      if (!sendTo(c.workerId, { type: 'chat.pull', chat: c.chat, req, base: base || c.base || '', have: have || [], chunks: true })) {
+        done(p, { ok: false, dropped: true, error: `Could not reach ${c.workerName}.` });
+      }
     });
   }
   function done(p, r) {
@@ -391,11 +460,13 @@ export function createChats({
     pulls.delete(p.req);
     clearTimeout(p.timer);
     if (!r.ok) { for (const f of [p.bundleFile, p.filesFile]) { try { unlinkSync(f); } catch { /* none */ } } }
+    try { unlinkSync(p.patchFile); } catch { /* none */ }
     p.resolve(r);
   }
   function onPullPiece(w, m) {
     const p = pulls.get(String(m.req || ''));
     if (!p || p.workerId !== w.id || p.chat !== m.chat) return;
+    p.touch();
     const b = typeof m.b64 === 'string' ? Buffer.from(m.b64, 'base64') : Buffer.alloc(0);
     if (m.type === 'chat.bundle') {
       if (m.seq !== p.bundleSeq) return;
@@ -408,7 +479,16 @@ export function createChats({
     // A pull that failed on the PC says so on its patch (git) or its last files chunk (copy).
     if ((m.type === 'chat.patch' || (m.type === 'chat.files' && m.last)) && m.error) { done(p, { ok: false, error: `${worker(p.workerId)?.name || 'The PC'}: ${str(m.error, 400)}` }); return; }
     if (m.type === 'chat.patch') {
-      done(p, { ok: true, kind: 'git', head: p.head, bundle: p.bundleBytes ? p.bundleFile : '', patch: b });
+      let patch = b;
+      if (typeof m.seq === 'number') {
+        // In pieces (a newer worker, asked with chunks): kept until the last.
+        if (m.seq !== p.patchSeq) return;
+        p.patchSeq++;
+        try { writeFileSync(p.patchFile, b, { flag: p.patchSeq === 1 ? 'w' : 'a' }); } catch (err) { done(p, { ok: false, error: `Could not keep the patch: ${err.message}` }); return; }
+        if (!m.last) return;
+        try { patch = readFileSync(p.patchFile); } catch (err) { done(p, { ok: false, error: `Could not read the patch: ${err.message}` }); return; }
+      }
+      done(p, { ok: true, kind: 'git', head: p.head, bundle: p.bundleBytes ? p.bundleFile : '', patch });
       return;
     }
     if (m.type === 'chat.files') {
@@ -419,6 +499,33 @@ export function createChats({
       return;
     }
     if (m.type === 'chat.pullError' || m.error) done(p, { ok: false, error: str(m.error, 400) || 'The PC could not send the chat\'s work.' });
+  }
+
+  /** Commits this server has that the PC's bundle need not carry (the PC uses those it knows). */
+  async function havesFor(c, opts) {
+    const out = [];
+    const add = (sha) => { const x = String(sha || '').trim(); if (/^[0-9a-f]{40}$/.test(x) && !out.includes(x)) out.push(x); };
+    add(opts.base); add(c.base);
+    if (!c.repoRoot || !existsSync(c.repoRoot)) return out;
+    const wt = opts.intoWorktree || worktreeOf(c);
+    if (existsSync(wt)) add((await git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], wt)).out);
+    add((await git(['rev-parse', '--verify', '--quiet', `refs/crundi-pc/${c.chat}^{commit}`], c.repoRoot)).out);
+    const known = [];
+    for (const sha of out.slice(0, 16)) if ((await git(['cat-file', '-e', `${sha}^{commit}`], c.repoRoot)).ok) known.push(sha);
+    return known;
+  }
+
+  /** Where the chat's work is on the PC (worker/src/chats.rs prepare_chat), for an error that says so. */
+  function whereOnPc(c) {
+    const w = worker(c.workerId);
+    const wd = String(w?.info?.workDir || '').replace(/[\\/]+$/, '');
+    const s = w?.info?.os === 'windows' ? '\\' : '/';
+    const folder = c.source === 'copy' ? `${c.project || 'project'}@copy-${c.chat}` : `${c.project || 'project'}@${c.chat}`;
+    const dir = wd ? `${wd}${s}${folder}` : `the folder ${folder} in its work folder`;
+    const pc = c.workerName || 'the PC';
+    if (c.source !== 'git') return `Nothing is lost: the work is still on ${pc} in ${dir}. Try again once ${pc} stays connected.`;
+    return `Nothing is lost: the work is still on ${pc} in ${dir} (commits on branch pc/${c.chat}, plus its uncommitted changes). `
+      + `Try again once ${pc} stays connected; if it keeps failing, commit and push it from that PC (git -C "${dir}" push origin HEAD:refs/heads/pc/${c.chat}) and fetch that branch here.`;
   }
 
   /** The ref in a bundle that is at `head` (or its only one). */
@@ -544,8 +651,14 @@ export function createChats({
     if (!c) return Promise.resolve({ ok: false, error: 'That chat does not run on a PC.' });
     const prev = pulling.get(c.chat) || Promise.resolve();
     const p = prev.catch(() => {}).then(async () => {
-      const got = await requestPull(c, opts.base);
-      if (!got.ok) return got;
+      const have = await havesFor(c, opts).catch(() => []);
+      const got = await requestPull(c, opts.base, have, { waitOffline: opts.waitOffline !== false });
+      if (!got.ok) {
+        // A transfer that never made it: say where the work is and what to do.
+        const r = got.transfer ? { ...got, error: `${got.error} ${whereOnPc(c)}` } : got;
+        if (!opts.intoWorktree) { c.lastPull = { at: iso(), ok: false, head: '', error: r.error || '' }; save(); changed(); }
+        return r;
+      }
       let r;
       try { r = await apply(c, got, opts); } catch (err) { r = { ok: false, error: err.message }; }
       if (!opts.intoWorktree) {
@@ -687,6 +800,8 @@ export function createChats({
       if (c.workerId !== w.id || !live.has(c.chat) || there.has(c.chat)) continue;
       if (c.offline) ended(c, null, null, `${c.workerName} no longer had this chat when it came back.`);
     }
+    // Pulls cut off by its drop ask again now.
+    wakeBack(w.id, true);
     save(); changed();
   }
 
@@ -700,7 +815,8 @@ export function createChats({
       l.lostTimer = setTimeout(() => ended(c, null, null, `${c.workerName} was away for more than 30 minutes; the chat is shown as ended.`), LOST_AFTER_MS);
       l.lostTimer.unref?.();
     }
-    for (const p of [...pulls.values()]) if (p.workerId === workerId) done(p, { ok: false, error: 'The PC disconnected.' });
+    // A pull in flight is asked again when the PC is back (requestPull waits for it).
+    for (const p of [...pulls.values()]) if (p.workerId === workerId) done(p, { ok: false, dropped: true, error: 'The PC disconnected.' });
     for (const [req, x] of [...syncs]) if (x.workerId === workerId) { syncs.delete(req); clearTimeout(x.timer); x.resolve({ ok: false, offline: true, error: 'The PC disconnected.' }); }
     changed();
   }
@@ -765,6 +881,7 @@ export function createChats({
   function dispose() {
     for (const l of live.values()) if (l.lostTimer) clearTimeout(l.lostTimer);
     for (const p of [...pulls.values()]) done(p, { ok: false, error: 'The server is stopping.' });
+    for (const id of [...backWaiters.keys()]) wakeBack(id, false);
     if (saveTimer) {
       clearTimeout(saveTimer); saveTimer = null;
       try { writeFileSync(FILE, JSON.stringify({ chats: [...chats.values()] }, null, 1)); } catch { /* fine */ }

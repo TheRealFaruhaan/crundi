@@ -1311,8 +1311,17 @@ async fn pull(inner: &Inner, v: &Value) {
         .and_then(|b| serde_json::from_slice(&b).ok());
     let source = meta.as_ref().map(|m| s(m, "source").to_string()).unwrap_or_default();
     let dir = meta.as_ref().map(|m| PathBuf::from(s(m, "dir"))).unwrap_or_default();
+    // Commits the server already has (newer servers): left out of the bundle.
+    let have: Vec<String> = v
+        .get("have")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).filter(|x| is_sha(x)).take(16).map(str::to_string).collect())
+        .unwrap_or_default();
+    // The server takes the patch in numbered pieces (newer servers ask; an
+    // older one gets it as one message, as before).
+    let chunks = v.get("chunks").and_then(Value::as_bool) == Some(true);
     let res = match source.as_str() {
-        "git" => pull_git(inner, &chat, &req, &base, &dir).await,
+        "git" => pull_git(inner, &chat, &req, &base, &have, chunks, &dir).await,
         "copy" => pull_copy(inner, &chat, &req, &dir).await,
         "" => Err(anyhow!("this PC does not know chat {chat}")),
         other => Err(anyhow!("a chat with source {other} has nothing to pull")),
@@ -1335,12 +1344,22 @@ async fn git_ok(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// A full commit id (40 hex digits).
+fn is_sha(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// Send a file as numbered chunks; `extra` goes into every chunk, `last_extra` into the last.
 async fn send_chunks(inner: &Inner, path: Option<&Path>, base: Value, last_extra: Value) -> Result<()> {
     let data = match path {
         Some(p) => std::fs::read(p)?,
         None => Vec::new(),
     };
+    send_bytes(inner, &data, base, last_extra).await
+}
+
+/// Send bytes as numbered chunks of `CHUNK` (one empty chunk when there are none).
+async fn send_bytes(inner: &Inner, data: &[u8], base: Value, last_extra: Value) -> Result<()> {
     let chunks: Vec<&[u8]> = if data.is_empty() { vec![&[][..]] } else { data.chunks(CHUNK).collect() };
     let n = chunks.len();
     for (i, c) in chunks.into_iter().enumerate() {
@@ -1362,7 +1381,8 @@ async fn send_chunks(inner: &Inner, path: Option<&Path>, base: Value, last_extra
     Ok(())
 }
 
-async fn pull_git(inner: &Inner, chat: &str, req: &Value, base: &str, dir: &Path) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+async fn pull_git(inner: &Inner, chat: &str, req: &Value, base: &str, have: &[String], chunks: bool, dir: &Path) -> Result<()> {
     let branch = format!("refs/heads/pc/{chat}");
     let head = String::from_utf8_lossy(&git_ok(dir, &["rev-parse", "--verify", &format!("{branch}^{{commit}}")]).await?)
         .trim()
@@ -1372,16 +1392,24 @@ async fn pull_git(inner: &Inner, chat: &str, req: &Value, base: &str, dir: &Path
     let base_known = !base.is_empty()
         && !base.starts_with('-')
         && git_raw(dir, &["cat-file", "-e", &format!("{base}^{{commit}}")]).await.is_ok_and(|r| r.0);
-    if head == base {
+    // Only what the server lacks: every commit it says it has (and this PC
+    // knows) is left out, like the bundle the server sends the other way.
+    let mut negs: Vec<String> = Vec::new();
+    if base_known {
+        negs.push(format!("^{base}"));
+    }
+    for h in have {
+        if h != base && git_raw(dir, &["cat-file", "-e", &format!("{h}^{{commit}}")]).await.is_ok_and(|r| r.0) {
+            negs.push(format!("^{h}"));
+        }
+    }
+    if head == base || have.iter().any(|h| *h == head) {
         // git refuses an empty bundle: one empty last chunk, head == base.
         send_chunks(inner, None, bundle_msg, json!({})).await?;
     } else {
         let t = tmp.to_string_lossy().into_owned();
-        let neg = format!("^{base}");
         let mut args = vec!["bundle", "create", t.as_str(), branch.as_str()];
-        if base_known {
-            args.push(&neg);
-        }
+        args.extend(negs.iter().map(String::as_str));
         let made = git_ok(dir, &args).await;
         let r = match made {
             Ok(_) => send_chunks(inner, Some(&tmp), bundle_msg, json!({})).await,
@@ -1413,6 +1441,11 @@ async fn pull_git(inner: &Inner, chat: &str, req: &Value, base: &str, dir: &Path
         let _ = std::fs::remove_file(&spec_file);
     }
     let diff = diff?;
+    if chunks {
+        // In pieces: a big patch (screenshots, binaries) as one message went
+        // over the server's message limit and closed the link on every try.
+        return send_bytes(inner, &diff, json!({"type": "chat.patch", "chat": chat, "req": req}), json!({})).await;
+    }
     if !inner.out.send(json!({"type": "chat.patch", "chat": chat, "req": req, "b64": B64.encode(&diff)})).await {
         bail!("the link dropped while sending");
     }

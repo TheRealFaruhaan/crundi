@@ -315,6 +315,11 @@ Server -> worker:
   `chat.patch { chat, req, b64 }` (`git diff --binary HEAD`, uncommitted
   work, may be empty). Copy source: `chat.files { chat, req, seq, b64, last, removed:[] }`
   (a tar of files changed since the copy, by the copy manifest) instead.
+  Newer servers add `have:[sha]` (commits the server has: the PC leaves out
+  every one it knows, `^have`, so only missing commits travel) and
+  `chunks:true` (the PC sends the patch as `chat.patch { chat, req, seq, b64, last }`
+  in 512 KB pieces, like the bundle). An older worker ignores both and sends
+  one `chat.patch`; the server takes either (messages up to 64 MB).
 - `mcp.tools { req, tools }`, `mcp.result { req, result }`.
 
 Worker -> server:
@@ -359,7 +364,16 @@ as with factory runs. Nothing writes into the server's main checkout.
   without `syntax_check` (the files are on the PC); a call runs as
   /api/mcp/call with the chat's own project, session id and chat token.
 - A pull that fails on the PC says so with `error` on `chat.patch` (git) or
-  the last `chat.files` (copy); no answer: it times out after 10 minutes.
+  the last `chat.files` (copy); nothing arriving for 10 minutes: it fails.
+- A pull survives a short drop: when the PC's link drops mid-pull, the
+  server waits up to 2 minutes for it to come back and sends `chat.pull`
+  again with a new `req` (pieces of the cut-off try are ignored), at most 4
+  tries. A pull asked while the PC is away waits the same way (except
+  "Bring changes back", which answers at once). When it finally fails, the
+  error says where the work is on the PC (`<workDir>/<project>@<chat>`,
+  branch `pc/<chat>`) and how to get it. Any message from the PC counts as a
+  sign of life for the link (not only pongs), so a long transfer never
+  makes it look dead.
 - `mcp.list` / `mcp.call` resent with the same `req` (after a reconnect) are
   answered again from the first answer; a tool never runs twice.
 - `chat.exit {unknown:true}` (the PC did not know the chat at `chat.attach`)

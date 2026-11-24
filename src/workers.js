@@ -32,6 +32,10 @@ const LOGS_KEEP = 200;
 const MAX_TERMS = 8;
 const PING_MS = 25_000;
 const DEAD_MS = 60_000;
+// The largest message a worker may send. An older worker sends a chat's
+// uncommitted work (chat.patch) as ONE message: at 4 MB a few screenshots
+// closed the link (1009) on every try. Newer workers send it in 512 KB pieces.
+const MAX_PAYLOAD = 64 * 1024 * 1024;
 const JOIN_FAILS = 10;
 const JOIN_WINDOW_MS = 10 * 60 * 1000;
 const LABEL_RE = /^[a-z0-9][a-z0-9:._-]{0,39}$/;
@@ -140,7 +144,7 @@ export function cleanLabels(v) {
   return out;
 }
 
-export function createWorkersService({ dataDir, file, now = () => Date.now(), serverVersion = '', onChange = () => {}, log = () => {}, onJob = () => {}, mcpApi = () => ({ url: '', key: '' }) } = {}) {
+export function createWorkersService({ dataDir, file, now = () => Date.now(), serverVersion = '', onChange = () => {}, log = () => {}, onJob = () => {}, mcpApi = () => ({ url: '', key: '' }), chatsOptions = {} } = {}) {
   const FILE = file || join(dataDir, 'workers.json');
   let d = { version: 1, workers: [] };
   try { const raw = JSON.parse(readFileSync(FILE, 'utf8')); if (Array.isArray(raw.workers)) d = { version: 1, workers: raw.workers }; } catch { /* first run */ }
@@ -267,7 +271,7 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
   }
 
   // ── The link ──
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
   function handleUpgrade(req, socket, head) {
     let url;
     try { url = new URL(req.url, 'http://localhost'); } catch { return false; }
@@ -305,6 +309,7 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
   const presence = new Set();   // listeners: (workerId, online)
   function told(id, online) { for (const cb of presence) { try { cb(id, online); } catch { /* a listener */ } } }
   const chats = createChats({
+    ...chatsOptions,   // tests: pullGraceMs, pullTries
     dataDir: dataDir || join(FILE, '..'), now, log, changed, sendTo, api: mcpApi,
     serveSource: (...a) => jobs.serveSource(...a),
     bufferedOf: (id) => links.get(id)?.ws.bufferedAmount || 0,
@@ -328,6 +333,9 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
     }, PING_MS);
     ping.unref?.();
     ws.on('message', (raw, isBinary) => {
+      // Anything from the PC shows it is there: a long transfer (its pong
+      // queued behind the pieces) never counts as a dead link.
+      link.lastPong = now();
       if (isBinary) return;   // phase 2 streams
       let m; try { m = JSON.parse(raw.toString()); } catch { return; }
       if (!m || typeof m.type !== 'string') return;
@@ -443,7 +451,7 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
     if (a === 'job-log') { const v = jobs.view(String(body.job || ''), Math.min(1024 * 1024, Number(body.tailBytes) || 65536)); return v ? { ok: true, job: v } : { ok: false, status: 404, error: 'No such job.' }; }
     if (a === 'job-cancel') return jobs.cancel(String(body.job || ''));
     // A chat on a PC: bring its work back now ("Bring changes back"), and where it is.
-    if (a === 'chat-pull') return chats.pull(String(body.chat || ''));
+    if (a === 'chat-pull') return chats.pull(String(body.chat || ''), { waitOffline: false });
     if (a === 'chat-info') { const v = chats.view(String(body.chat || '')); return v ? { ok: true, chat: v } : { ok: false, status: 404, error: 'That chat does not run on a PC.' }; }
     if (a === 'chat-places') return { ok: true, places: chats.offer(d.workers.filter(w => !w.revoked).map(w => { const l = links.get(w.id); return { id: w.id, name: w.name, online: !!(l && l.hello), caps: l ? l.caps : [], allowChats: w.allowChats !== false, info: w.info }; })) };
     if (a === 'join-self') {
