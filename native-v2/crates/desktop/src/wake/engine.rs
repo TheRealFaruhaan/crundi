@@ -503,7 +503,7 @@ mod tests {
             let recs: Vec<Vec<f32>> = pairs.iter().map(|p| p.0.clone()).collect();
             let raws: Vec<Vec<f32>> = pairs.iter().map(|p| p.1.clone()).collect();
             let (profile, _) = train_with_voice_raw(&recs, Some(&raws)).unwrap_or_else(|(why, redo)| panic!("noise {noise_rms}: training: {why} {redo:?}"));
-            eprintln!("noise {noise_rms}: trained: threshold {} modelHeard {} phraseFrames {}", profile["keywordsThreshold"], profile["modelHeard"], profile["phraseFrames"]);
+            eprintln!("noise {noise_rms}: trained: threshold {} modelHeard {} phraseFrames {} spellings {}", profile["keywordsThreshold"], profile["modelHeard"], profile["phraseFrames"], profile["spellings"]);
             assert!(profile["modelHeard"].as_f64().unwrap_or(0.0) >= 3.0, "noise {noise_rms}: the model hears the phrase in most takes");
             let heard = |s: (Vec<f32>, Vec<f32>)| -> bool { let mut w = Wake::new(&profile).unwrap(); s.0.chunks(1600).zip(s.1.chunks(1600)).any(|(c, r)| w.accept_both(c, r).is_some_and(|h| h.ok)) };
             assert!(heard(wav("draco-pos-heycru").unwrap()), "noise {noise_rms}: the owner's Hey Cru wakes through the microphone path");

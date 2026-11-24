@@ -10,6 +10,11 @@ use serde_json::{json, Value};
 pub const RATE: usize = 16000;
 pub const SAMPLES_NEEDED: usize = 5;
 pub const SPELLINGS: [&str; 3] = ["▁HE Y ▁C RU", "▁HE Y ▁K RU", "▁HE Y ▁C RE W"];
+/// More ways "Hey Cru" can sound (V2, the owner: "widen the words"): kroo,
+/// krus, hi cru, a cru (the h dropped), hey krew. Training keeps each one
+/// the model hears in any of the owner's takes, so it listens for the way
+/// he says it.
+pub const MORE_SPELLINGS: [&str; 7] = ["▁HE Y ▁K R U", "▁HE Y ▁C R U", "▁HE Y ▁K RU S", "▁HE Y ▁C RU S", "▁HI ▁C RU", "▁A ▁C RU", "▁HE Y ▁K RE W"];
 pub const WAKE: &str = "HEY_CRU";
 pub const DECOYS: &[(&str, &str)] = &[
     ("YOU", "▁HE Y ▁YOU"), ("YOUR", "▁HE Y ▁YOUR"), ("WHO", "▁HE Y ▁WHO"), ("HOO", "▁HE Y ▁HO O"), ("HUGH", "▁HE Y ▁ H UGH"),
@@ -41,14 +46,16 @@ pub type Feats = Vec<Vec<f64>>;
 
 fn fmt(x: f32) -> String { let s = format!("{x}"); s }
 
-pub fn keyword_lines(threshold: f32, score: f32) -> String {
-    SPELLINGS.iter().map(|sp| format!("{sp} :{} #{} @HEY_CRU", fmt(score), fmt(threshold))).collect::<Vec<_>>().join("\n")
+pub fn keyword_lines(threshold: f32, score: f32) -> String { keyword_lines_with(&SPELLINGS, threshold, score) }
+pub fn keyword_lines_with(spellings: &[&str], threshold: f32, score: f32) -> String {
+    spellings.iter().map(|sp| format!("{sp} :{} #{} @HEY_CRU", fmt(score), fmt(threshold))).collect::<Vec<_>>().join("\n")
 }
 pub fn decoy_lines(threshold: f32, score: f32, decoys: &[(&str, &str)]) -> String {
     decoys.iter().map(|(n, sp)| format!("{sp} :{} #{} @NOT_{n}", fmt(score), fmt(threshold))).collect::<Vec<_>>().join("\n")
 }
-pub fn competing_lines(threshold: f32, score: f32, decoys: &[(&str, &str)]) -> String {
-    if decoys.is_empty() { keyword_lines(threshold, score) } else { format!("{}\n{}", keyword_lines(threshold, score), decoy_lines(threshold, score, decoys)) }
+pub fn competing_lines(threshold: f32, score: f32, decoys: &[(&str, &str)]) -> String { competing_lines_with(&SPELLINGS, threshold, score, decoys) }
+pub fn competing_lines_with(spellings: &[&str], threshold: f32, score: f32, decoys: &[(&str, &str)]) -> String {
+    if decoys.is_empty() { keyword_lines_with(spellings, threshold, score) } else { format!("{}\n{}", keyword_lines_with(spellings, threshold, score), decoy_lines(threshold, score, decoys)) }
 }
 
 /// The decoys a profile keeps (all, for a profile from before).
@@ -64,7 +71,14 @@ pub fn listen_lines(profile: &Value) -> String {
     let kw = profile.get("keyword").and_then(|k| k.as_str()).unwrap_or("").to_string();
     if d.is_empty() { kw } else { format!("{kw}\n{}", decoy_lines(pf(profile, "keywordsThreshold") as f32, pf(profile, "keywordsScore") as f32, &d)) }
 }
-pub fn confirm_lines(profile: &Value) -> String { competing_lines(CONFIRM_THRESHOLD, pf(profile, "keywordsScore") as f32, &decoys_of(profile)) }
+pub fn confirm_lines(profile: &Value) -> String { competing_lines_with(&spellings_of(profile), CONFIRM_THRESHOLD, pf(profile, "keywordsScore") as f32, &decoys_of(profile)) }
+/// The spellings a profile listens for (its own, else the three).
+pub fn spellings_of(profile: &Value) -> Vec<&str> {
+    match profile.get("spellings").and_then(|v| v.as_array()) {
+        Some(a) if !a.is_empty() => a.iter().filter_map(|v| v.as_str()).filter_map(|x| SPELLINGS.iter().chain(MORE_SPELLINGS.iter()).find(|s| **s == x).copied()).collect(),
+        _ => SPELLINGS.to_vec(),
+    }
+}
 
 // ─── MFCC (26 mels, 12 cepstra, their deltas) ───
 
@@ -414,11 +428,17 @@ pub fn train_raw(recordings: &[Vec<f32>], raw: Option<&[Vec<f32>]>, make: &mut d
     let mut lens: Vec<usize> = templates.iter().map(|t| t.len()).collect(); lens.sort();
     let frames = lens[lens.len() / 2];
 
+    // The spellings the model hears in his takes (V2), with the three always.
+    let mut spellings: Vec<&str> = SPELLINGS.to_vec();
+    for sp in MORE_SPELLINGS {
+        let Some(mut spot) = make(&keyword_lines_with(&[sp], CONFIRM_THRESHOLD, KEYWORDS_SCORE), CONFIRM_THRESHOLD) else { break };
+        if heard.iter().any(|c| spotted(spot.as_mut(), &levelled(c)).iter().any(|k| k == WAKE)) { spellings.push(sp); }
+    }
     // The decoys the owner's own "Hey Cru" sets off are dropped (up to three rounds).
     let mut dropped: std::collections::HashSet<&str> = Default::default();
     for _ in 0..3 {
         let use_: Vec<(&str, &str)> = DECOYS.iter().copied().filter(|(n, _)| !dropped.contains(n)).collect();
-        let lines = competing_lines(CONFIRM_THRESHOLD, KEYWORDS_SCORE, &use_);
+        let lines = competing_lines_with(&spellings, CONFIRM_THRESHOLD, KEYWORDS_SCORE, &use_);
         let Some(mut spot) = make(&lines, CONFIRM_THRESHOLD) else { return Trained::No { why: "The keyword spotter could not be created (model files missing or damaged)".into(), redo: vec![] } };
         let mut more = false;
         for c in &heard {
@@ -433,7 +453,7 @@ pub fn train_raw(recordings: &[Vec<f32>], raw: Option<&[Vec<f32>]>, make: &mut d
     // The strictest threshold that hears the most takes, then two notches looser.
     let (mut best, mut most) = (THRESHOLDS.len() - 1, 0);
     for (t, th) in THRESHOLDS.iter().enumerate() {
-        let Some(mut spot) = make(&competing_lines(*th, KEYWORDS_SCORE, &decoys), *th) else { continue };
+        let Some(mut spot) = make(&competing_lines_with(&spellings, *th, KEYWORDS_SCORE, &decoys), *th) else { continue };
         let n = heard.iter().filter(|c| spotted(spot.as_mut(), c).iter().any(|k| k == WAKE)).count();
         if n > most { most = n; best = t; }
         if n == clips.len() { break; }
@@ -444,7 +464,8 @@ pub fn train_raw(recordings: &[Vec<f32>], raw: Option<&[Vec<f32>]>, make: &mut d
     let tpl: Vec<Vec<Vec<f64>>> = all.iter().map(|t| t.iter().map(|f| f.iter().map(|x| r3(*x)).collect()).collect()).collect();
     Trained::Ok(json!({
         "version": 4,
-        "keyword": keyword_lines(threshold, KEYWORDS_SCORE),
+        "keyword": keyword_lines_with(&spellings, threshold, KEYWORDS_SCORE),
+        "spellings": spellings,
         "keywordsScore": KEYWORDS_SCORE,
         "keywordsThreshold": threshold,
         "limit": r3(spread * LIMIT_MARGIN),
