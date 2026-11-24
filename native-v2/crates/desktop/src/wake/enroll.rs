@@ -283,6 +283,32 @@ pub fn window_distance(a: &Feats, b: &Feats) -> f64 {
 }
 
 /// How much of the loud part is voiced (a pitch).
+/// How much of a consonant a clip has (V2): the highest zero-crossing rate
+/// two frames running hold (20 ms frames) among its frames with any energy.
+/// "Hey Cru" has the breath of its h and the burst of its k (0.2 and up); a
+/// hum, voiced all through, has none (under 0.1).
+pub fn consonance(clip: &[f32]) -> f64 {
+    let (n, h) = (320usize, 160usize);
+    if clip.len() < n * 2 { return 0.0; }
+    let mut frames = vec![];
+    let mut i = 0;
+    while i + n <= clip.len() {
+        let f = &clip[i..i + n];
+        let e = f.iter().map(|x| (*x as f64).powi(2)).sum::<f64>();
+        let z = f.windows(2).filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0)).count() as f64 / n as f64;
+        frames.push((e, z));
+        i += h;
+    }
+    let peak = frames.iter().map(|f| f.0).fold(0.0, f64::max);
+    if peak <= 0.0 { return 0.0; }
+    frames.windows(2).filter(|w| w[0].0 >= peak * 0.01 && w[1].0 >= peak * 0.01).map(|w| w[0].1.min(w[1].1)).fold(0.0, f64::max)
+}
+
+/// The least consonant a wake may be: its takes' least, with room, never
+/// under the hum floor.
+const HUM_FLOOR: f64 = 0.12;
+pub fn consonance_needed(p: &Value) -> f64 { (pf(p, "consonance") * 0.6).max(HUM_FLOOR) }
+
 pub fn voiced_share(clip: &[f32]) -> f64 {
     let (n, h) = (480, 240);
     let energy = |i: usize| (0..n).map(|k| (clip[i + k] as f64).powi(2)).sum::<f64>();
@@ -427,6 +453,7 @@ pub fn train_raw(recordings: &[Vec<f32>], raw: Option<&[Vec<f32>]>, make: &mut d
         "modelHeard": most,
         "decoys": decoys.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
         "windowLimit": window_limit_of(&templates),
+        "consonance": r3(clips.iter().map(|c| consonance(c)).fold(f64::INFINITY, f64::min)),
         "templates": tpl,
         "trainedAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
     }))
@@ -484,10 +511,20 @@ pub fn match_phrase_raw(p: &Value, tpl: &[Feats], segment: &[f32], raw: Option<&
         let w = tpl.iter().map(|t| window_distance(t, &feats).max(window_distance(&feats, t))).fold(f64::INFINITY, f64::min);
         if w > wl { return (false, score, "onset"); }
     }
-    if let Some(c) = confirm {
-        let names = c(&levelled(heard));
-        if !names.iter().any(|k| k == WAKE) { return (false, score, if names.is_empty() { "no word" } else { "decoy" }); }
-        if (p.get("modelHeard").and_then(|v| v.as_i64()).unwrap_or(0)) < MODEL_TRUSTED && names.iter().any(|k| k != WAKE) { return (false, score, "decoy"); }
+    // V2, the owner: "the way I say Hey Cru is what it should train on".
+    // Where the model hears this voice (most of the takes), it must hear
+    // "Hey Cru" here too and no decoy beside it. Where it doesn't, its word
+    // is no veto: the owner's own takes decide (the phrase, its onset, and
+    // the voice check after this), and the hum a model-less match once let
+    // through (12 Nov) is kept out by the consonants his takes have.
+    let trusted = p.get("modelHeard").and_then(|v| v.as_i64()).unwrap_or(0) >= MODEL_TRUSTED;
+    if trusted {
+        if let Some(c) = confirm {
+            let names = c(&levelled(heard));
+            if !names.iter().any(|k| k == WAKE) { return (false, score, if names.is_empty() { "no word" } else { "decoy" }); }
+        }
+    } else if consonance(clip) < consonance_needed(p) {
+        return (false, score, "hum");
     }
     (true, score, "")
 }
@@ -522,6 +559,18 @@ impl Segmenter {
 
 #[cfg(test)]
 mod tests {
+    /// V2: a hum has no consonant; a burst of breath and a click has.
+    #[test]
+    fn consonance_tells_a_hum() {
+        let hum: Vec<f32> = (0..RATE * 6 / 10).map(|i| { let t = i as f32 / RATE as f32; let env = (std::f32::consts::PI * t / 0.6).sin(); env * 0.3 * ((2.0 * std::f32::consts::PI * 150.0 * t).sin() + 0.5 * (2.0 * std::f32::consts::PI * 300.0 * t).sin() + 0.25 * (2.0 * std::f32::consts::PI * 450.0 * t).sin()) }).collect();
+        assert!(consonance(&hum) < HUM_FLOOR, "a hum: {}", consonance(&hum));
+        let mut seed = 1u32;
+        let mut noise = || { seed = seed.wrapping_mul(1664525).wrapping_add(1013904223); ((seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5) * 0.2 };
+        let breath: Vec<f32> = (0..RATE / 10).map(|_| noise()).collect();
+        let word = [breath, hum.clone()].concat();
+        assert!(consonance(&word) >= HUM_FLOOR, "breath then voice: {}", consonance(&word));
+    }
+
     use super::*;
 
     fn tone(ms: usize, hz: f32, amp: f32) -> Vec<f32> { (0..RATE * ms / 1000).map(|i| amp * (2.0 * std::f32::consts::PI * hz * i as f32 / RATE as f32).sin()).collect() }

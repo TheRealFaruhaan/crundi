@@ -507,6 +507,15 @@ mod tests {
             assert!(heard(wav("draco-pos-heycru").unwrap()), "noise {noise_rms}: the owner's Hey Cru wakes through the microphone path");
             assert!(!heard(wav("draco-neg-heyyou").unwrap()), "noise {noise_rms}: other speech does not wake");
             assert!(!heard(mic(vec![0.0; RATE * 3])), "noise {noise_rms}: silence (and the fan) does not wake");
+            // V2: a voice the model can't hear (the owner's: modelHeard 1):
+            // the takes decide, the hum guard keeps a hum out.
+            let mut own = profile.clone();
+            own["modelHeard"] = serde_json::json!(0);
+            eprintln!("noise {noise_rms}: consonance of the takes {}, needed {}", own["consonance"], enroll::consonance_needed(&own));
+            let heard_own = |s: (Vec<f32>, Vec<f32>)| -> bool { let mut w = Wake::new(&own).unwrap(); s.0.chunks(1600).zip(s.1.chunks(1600)).any(|(c, r)| w.accept_both(c, r).is_some_and(|h| h.ok)) };
+            assert!(heard_own(wav("draco-pos-heycru").unwrap()), "noise {noise_rms}: untrusted model: the owner's Hey Cru wakes");
+            assert!(!heard_own(mic(vec![0.0; RATE * 3])), "noise {noise_rms}: untrusted model: silence and the fan do not wake");
+            eprintln!("noise {noise_rms}: untrusted model, 'hey you' wakes: {}", heard_own(wav("draco-neg-heyyou").unwrap()));
         }
     }
 }
