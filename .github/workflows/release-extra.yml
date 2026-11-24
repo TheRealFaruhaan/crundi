@@ -45,6 +45,10 @@ jobs:
     # A job that hangs should die in minutes, not burn six hours of the
     # default. A test with an unbounded scan hung every Windows job here.
     timeout-minutes: 25
+    # The staging folder has no .npmrc: onnxruntime-node's CUDA download
+    # (404s since 1.21.8-dev.8) is skipped here the same way (.npmrc, docker).
+    env:
+      npm_config_onnxruntime_node_install_cuda: skip
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -137,6 +141,10 @@ jobs:
     # A job that hangs should die in minutes, not burn six hours of the
     # default. A test with an unbounded scan hung every Windows job here.
     timeout-minutes: 25
+    # The staging folder has no .npmrc: onnxruntime-node's CUDA download
+    # (404s since 1.21.8-dev.8) is skipped here the same way (.npmrc, docker).
+    env:
+      npm_config_onnxruntime_node_install_cuda: skip
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

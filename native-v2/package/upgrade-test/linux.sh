@@ -114,7 +114,14 @@ check "client running after $i s" "kill -0 $CPID 2>/dev/null"
 check "the client reports version $VERSION" "grep -q '\[lifecycle\] version=$VERSION ' '$CLOG'"
 UPD=$(grep -oE '\[update\] (Up to date|Available: .*|check failed.*)' "$CLOG" | tail -1); echo "  updater: $UPD"
 OFFER=$(echo "$UPD" | sed -n 's/^\[update\] Available: //p')
-check "it offers no update to its own version or older ($UPD)" "[ \"\$UPD\" = '[update] Up to date' ] || [[ '$OFFER' != *-* && -n '$OFFER' && '$VERSION' == '$OFFER'-* ]] || { [ -n '$OFFER' ] && [ '$OFFER' != '$VERSION' ] && [ \"\$(printf '%s\n%s\n' '$VERSION' '$OFFER' | sort -V | tail -1)\" = '$OFFER' ]; }"
+# GitHub's API answers 403/429 to a runner whose shared address used up its
+# unauthenticated rate limit: then the check never ran, which says nothing
+# about the client (version_gt and pick_dev have their own unit tests).
+if [[ "$UPD" =~ check\ failed:\ GitHub\ returned\ (403|429) ]]; then
+  echo "skip  it offers no update to its own version or older (GitHub rate-limited this runner: $UPD)"
+else
+  check "it offers no update to its own version or older ($UPD)" "[ \"\$UPD\" = '[update] Up to date' ] || [[ '$OFFER' != *-* && -n '$OFFER' && '$VERSION' == '$OFFER'-* ]] || { [ -n '$OFFER' ] && [ '$OFFER' != '$VERSION' ] && [ \"\$(printf '%s\n%s\n' '$VERSION' '$OFFER' | sort -V | tail -1)\" = '$OFFER' ]; }"
+fi
 # T2: the bundled fonts load (gpui's SVG renderer asks the asset source for them).
 check "no asset missing in the client's log" "! grep -h 'could not find asset\|Bundled font not found' '$CLOG' /tmp/client.log"
 # T6: the window's X11 class is the installed desktop entry's StartupWMClass
