@@ -309,7 +309,8 @@ fn heard(verdict: &str, keyword: &str, score: f64, via: &str, voice: Value) {
     log(format!("heard {keyword} (match {score}) via {via}, owner's voice {voice}"));
     with(|s| s.last_heard = Some((keyword.to_string(), Instant::now())));
     kit::raise();
-    if !voice_open() { crate::cru::open(false); }
+    // V7: a wake by voice is voice mode, even if Cru was last used by keyboard.
+    crate::cru::open_by_voice();
     redraw();
 }
 

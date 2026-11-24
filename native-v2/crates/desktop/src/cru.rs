@@ -654,6 +654,19 @@ fn voice_refused() {
     render();
 }
 
+/// Woken by "Hey Cru" (the owner, V7): always voice mode, whatever was
+/// used last. Opening, keyboard mode is let go first (and remembered, as a
+/// choice of voice); already open in keyboard mode, it goes to the voice.
+pub fn open_by_voice() {
+    if with(|c| c.open) {
+        if with(|c| c.keyboard) { set_keyboard(false); }
+        return;
+    }
+    with(|c| c.keyboard = false);
+    save_prefs();
+    open(false);
+}
+
 pub fn set_keyboard(on: bool) {
     if !on && !with(|c| c.voice_usable) { voice_refused(); return; }
     with(|c| { c.keyboard = on; c.listen = None; if on { if c.unavailable.is_empty() { c.phase = "listen".into(); } c.interim.clear(); } });
