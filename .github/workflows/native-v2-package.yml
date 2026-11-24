@@ -2,8 +2,11 @@
 # build the native client, its browser host and the worker, lay out the
 # install (stage.mjs), wrap it (Windows: NSIS one-click per-user installer;
 # Linux: the .deb), and run the upgrade test from the latest Electron release.
-# Builds only: nothing here publishes or uploads an installer. Releases are
-# tags built by release.yml, and only the owner makes them.
+# On a branch push it only builds and tests. Called by release.yml with the
+# release tag, it also attaches the installers and their update feeds
+# (latest.yml, client.yml, latest-linux.yml, client-linux.yml) to that
+# release, and only when the upgrade tests passed: an Electron install updates
+# itself into the native client from these files. Only the owner tags.
 name: native-v2-package
 
 on:
@@ -11,9 +14,15 @@ on:
     branches: ['factory/replace-electron-with-the-native-client-*']
     paths: ['native-v2/**', 'worker/**', 'src/**', 'package.json', 'package-lock.json', '.github/workflows/native-v2-package.yml']
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'The release to attach the installers to (empty: build and test only)'
+        type: string
+        default: ''
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   windows:
@@ -115,6 +124,14 @@ jobs:
           $old = (Get-ChildItem "$env:RUNNER_TEMP\electron\Crundi-Client-Setup-*.exe")[0].FullName
           ./native-v2/package/upgrade-test/windows.ps1 -Old $old -New "$env:RUNNER_TEMP\dist\Crundi-Client-Setup-$v.exe" -Version $v -Edition client
 
+      # Only after every check above passed (no always()): an updater must
+      # never be offered an installer that failed its upgrade test.
+      - name: Attach to the release
+        if: inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-upload.mjs --tag "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --upload "$RUNNER_TEMP"/dist/*.exe "$RUNNER_TEMP"/dist/*.yml
+
       - name: Sizes
         if: always()
         run: |
@@ -185,7 +202,14 @@ jobs:
 
       - name: Package check (.debs and the Docker upgrade test)
         run: |
+          set -o pipefail   # check.sh's result, not tee's
           mkdir -p ~/.cache
           CRUNDI_NATIVE_BIN=$PWD/native-v2/target/release ELECTRON_REF=$RUNNER_TEMP/electron PACK_OUT=$RUNNER_TEMP/pack \
             native-v2/package/check.sh both | tee "$RUNNER_TEMP/check.log"
           sed -n '/== Sizes/,$p' "$RUNNER_TEMP/check.log" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach to the release
+        if: inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-upload.mjs --tag "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --upload "$RUNNER_TEMP"/pack/dist/*.deb "$RUNNER_TEMP"/pack/dist/*.yml
