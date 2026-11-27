@@ -18,7 +18,8 @@
 import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { readFile, readdir, statfs } from 'fs/promises';
+import { readFile, statfs } from 'fs/promises';
+import { readdirSync, openSync, readSync, closeSync } from 'fs';
 
 const execP = promisify(exec);
 const isLinux = process.platform === 'linux';
@@ -44,6 +45,48 @@ export function pushHistory(arr, value) {
 
 // ─── Per-process sampling ───
 
+// The cost of a read grows with the number of processes on the WHOLE machine,
+// not with the number of services, and that number is not ours to bound: a
+// container running Chromium under a PID 1 that never reaps left 5,500 zombies
+// behind, and reading all of them at once (every file opened together, one
+// promise each, every 3 s, with nothing stopping a slow read from overlapping
+// the next) pinned the server's one thread and timed out logins. So a read is
+// shared by everyone who asks while it runs, never overlaps another, and is
+// spaced by its own cost: one that took a second is not started again for
+// READ_GAP_FACTOR seconds, and in between the last snapshot is handed out.
+
+/** /proc files read between yields to the event loop. */
+export const PROC_READ_BATCH = 100;
+/** A read is not repeated until this many times its own duration has passed. */
+export const READ_GAP_FACTOR = 4;
+
+let procInflight = null;
+let procLast = null;        // { at, procs, tookMs }
+
+/**
+ * The latest process snapshot as { at, procs }, or null where there is no way
+ * to read one. `at` is when it was read, so a snapshot handed out twice is
+ * recognisable as the same one rather than a new sample with no CPU in it.
+ */
+export function readProcessSnapshot() {
+  if (procInflight) return procInflight;
+  if (procLast && Date.now() - procLast.at < procLast.tookMs * READ_GAP_FACTOR) {
+    return Promise.resolve(procLast);
+  }
+  const started = Date.now();
+  procInflight = (async () => {
+    let procs = null;
+    try { procs = await readAllProcesses(); } catch { procs = null; }
+    if (!procs) return null;
+    procLast = { at: Date.now(), procs, tookMs: Date.now() - started };
+    return procLast;
+  })().finally(() => { procInflight = null; });
+  return procInflight;
+}
+
+/** Tests only: forget the shared snapshot. */
+export function resetProcessSnapshot() { procInflight = null; procLast = null; }
+
 /**
  * One entry per process on the box: { pid, ppid, rss, ticks }.
  * `ticks` is cumulative CPU time in clock ticks (Linux) or in the same unit
@@ -55,38 +98,66 @@ async function readAllProcesses() {
   return null;
 }
 
-async function readProcfs() {
+/** Every process under `root` (a /proc layout; a fixture in tests). */
+export async function readProcfs(root = '/proc') {
+  // Synchronous reads in small batches, yielding between them. An async
+  // readFile is four thread-pool round trips (open, fstat, read, close) and a
+  // promise per file; for /proc's tiny in-memory files that overhead is the
+  // whole cost. Measured on 6,000 entries: async, eight at a time, 4.3 s;
+  // all at once, about 1 s with the loop held for 250-380 ms; these batches,
+  // 50-150 ms with no gap over about 16 ms.
   let names;
-  try { names = await readdir('/proc'); } catch { return null; }
+  try { names = readdirSync(root); } catch { return null; }
   const out = [];
-  await Promise.all(names.map(async (name) => {
+  for (let i = 0; i < names.length; i++) {
+    if (i > 0 && i % PROC_READ_BATCH === 0) await new Promise((r) => setImmediate(r));
+    const name = names[i];
     // /proc holds far more than pids (self, net, meminfo, ...); only all-digit
     // names are processes.
-    if (name.charCodeAt(0) < 48 || name.charCodeAt(0) > 57) return;
+    if (name.charCodeAt(0) < 48 || name.charCodeAt(0) > 57) continue;
     const pid = Number(name);
-    if (!Number.isInteger(pid)) return;
-    let raw;
+    if (!Number.isInteger(pid)) continue;
     // A process can exit between readdir and read; that is normal, not an error.
-    try { raw = await readFile('/proc/' + name + '/stat', 'utf8'); } catch { return; }
+    const raw = readStat(root + '/' + name + '/stat');
+    if (raw === null) continue;
     // comm is parenthesised and may itself contain spaces or ')', so the only
     // safe split point is the LAST ')'.
     const close = raw.lastIndexOf(')');
-    if (close < 0) return;
+    if (close < 0) continue;
     const f = raw.slice(close + 2).split(' ');
     // f[0] is field 3 (state), so field N is at f[N - 3].
     const ppid = parseInt(f[1], 10);
     const utime = parseInt(f[11], 10);
     const stime = parseInt(f[12], 10);
     const rssPages = parseInt(f[21], 10);
-    if (!Number.isFinite(rssPages)) return;
+    if (!Number.isFinite(rssPages)) continue;
     out.push({
       pid,
       ppid: Number.isFinite(ppid) ? ppid : 0,
       rss: rssPages * 4096,
       ticks: num(utime) + num(stime),
     });
-  }));
+  }
   return out;
+}
+
+// One buffer for every read: a stat line is a few hundred bytes.
+const statBuf = Buffer.allocUnsafe(4096);
+
+/** The text of a small /proc file, or null if it could not be read. */
+function readStat(path) {
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+    const len = readSync(fd, statBuf, 0, statBuf.length, 0);
+    // latin1, not utf8: only the numbers after the last ')' are used, and a
+    // comm cut mid-character must not become a decoding problem.
+    return statBuf.toString('latin1', 0, len);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) { try { closeSync(fd); } catch { /* already gone */ } }
+  }
 }
 
 // UserModeTime/KernelModeTime are cumulative 100ns units — a different scale
@@ -156,7 +227,7 @@ async function readWindowsProcesses() {
   } catch { return null; }
 }
 
-// rootPid -> { ticks, at } from the previous sample, for the CPU rate.
+// rootPid -> { ticks, at, cpuPct } from the previous sample, for the CPU rate.
 const lastTree = new Map();
 
 /**
@@ -172,8 +243,9 @@ export async function sampleProcessTrees(rootPids) {
   const result = new Map();
   if (!rootPids.length) { lastTree.clear(); return result; }
 
-  const procs = await readAllProcesses();
-  if (!procs) return result;
+  const snap = await readProcessSnapshot();
+  if (!snap) return result;
+  const { procs } = snap;
 
   const children = new Map();
   const byPid = new Map();
@@ -184,7 +256,9 @@ export async function sampleProcessTrees(rootPids) {
     kids.push(p.pid);
   }
 
-  const now = Date.now();
+  // The time of the READ, not of this call: a snapshot handed out again while
+  // reads are spaced out must not count as a fresh sample with no CPU in it.
+  const now = snap.at;
   const live = new Set(rootPids);
   for (const [pid] of lastTree) if (!live.has(pid)) lastTree.delete(pid);
 
@@ -206,6 +280,12 @@ export async function sampleProcessTrees(rootPids) {
     if (!found) { lastTree.delete(rootPid); continue; }
 
     const prev = lastTree.get(rootPid);
+    if (prev && prev.at === now) {
+      // The same snapshot as last time: repeat the last answer, and keep the
+      // baseline it was measured against.
+      result.set(rootPid, { rssBytes: rss, cpuPct: prev.cpuPct });
+      continue;
+    }
     let cpuPct = null;
     if (prev) {
       const secs = (now - prev.at) / 1000;
@@ -214,7 +294,7 @@ export async function sampleProcessTrees(rootPids) {
       // there is no honest rate to report for it — clamp to 0.
       if (secs > 0.05) cpuPct = Math.max(0, (ticks - prev.ticks) / CLK_TCK / secs * 100);
     }
-    lastTree.set(rootPid, { ticks, at: now });
+    lastTree.set(rootPid, { ticks, at: now, cpuPct });
     result.set(rootPid, { rssBytes: rss, cpuPct });
   }
   return result;
